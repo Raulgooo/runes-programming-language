@@ -69,7 +69,7 @@ static Token make_token(Lexer *L, TokenKind kind) {
   return token;
 }
 
-static Token error_token(Lexer *L, const char *message) {
+static Token error_token(Lexer *L) {
   Token token;
   token.kind = TOKEN_INVALID;
   token.start = L->start;
@@ -363,10 +363,10 @@ static Token identifier(Lexer *L) {
 static Token number(Lexer *L) {
   if (L->start[0] == '0' && (peek(L) == 'x' || peek(L) == 'X')) {
     if (!is_hex_digit(peek_next(L))) {
-        // Just '0' followed by 'x' which is NOT a hex digit.
-        // We should probably return '0' and let 'x' be the next token or error.
-        // But the specified requirement was to just fix the logic.
-        return make_token(L, TOKEN_INT_LITERAL); // Returns "0"
+      // Just '0' followed by 'x' which is NOT a hex digit.
+      // We should probably return '0' and let 'x' be the next token or error.
+      // But the specified requirement was to just fix the logic.
+      return make_token(L, TOKEN_INT_LITERAL); // Returns "0"
     }
     advance(L); // x
     while (is_at_end(L) == false && is_hex_digit(peek(L)))
@@ -402,7 +402,7 @@ static Token string(Lexer *L) {
   }
 
   if (is_at_end(L))
-    return error_token(L, "Unterminated string.");
+    return error_token(L);
 
   // The closing quote.
   advance(L);
@@ -415,7 +415,7 @@ static Token char_literal(Lexer *L) {
   advance(L);   // character
 
   if (peek(L) != '\'')
-    return error_token(L, "Unterminated character literal.");
+    return error_token(L);
 
   // The closing quote.
   advance(L);
@@ -520,7 +520,7 @@ static Token token_next(Lexer *L) {
     return char_literal(L);
   }
 
-  return error_token(L, "Unexpected character.");
+  return error_token(L);
 }
 
 Token lexer_next_token(Lexer *L) { return token_next(L); }
@@ -607,6 +607,8 @@ const char *token_kind_to_string(TokenKind kind) {
     return "true";
   case TOKEN_FALSE:
     return "false";
+  case TOKEN_J:
+    return "J";
   case TOKEN_I8:
     return "i8";
   case TOKEN_I16:
