@@ -7,6 +7,7 @@
 #define ASSERT_TOKEN(L, expected_kind, expected_lexeme) \
     do { \
         Token token = lexer_next_token(L); \
+        printf("[%s] '%.*s'\n", token_kind_to_string(token.kind), (int)token.length, token.start); \
         if (token.kind != expected_kind) { \
             fprintf(stderr, "Test failed: line %d. Expected kind %s, got %s\n", \
                     __LINE__, token_kind_to_string(expected_kind), token_kind_to_string(token.kind)); \
