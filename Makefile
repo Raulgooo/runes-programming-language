@@ -1,13 +1,16 @@
-CC = tcc
-CFLAGS = -Isrc
+CC = gcc
+CFLAGS = -Isrc -Wall -Wextra
 
-all: lexer_test.exe
+SRCS = src/lexer.c src/tests/lexer_test.c
+TARGET = lexer_test
 
-lexer_test.exe: src/lexer.c src/tests/lexer_test.c
-	$(CC) $(CFLAGS) src/lexer.c src/tests/lexer_test.c -o lexer_test.exe
+all: $(TARGET)
 
-test: lexer_test.exe
-	./lexer_test.exe
+$(TARGET): $(SRCS)
+	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET)
+
+test: $(TARGET)
+	./$(TARGET)
 
 clean:
-	del /f /q lexer_test.exe test_output.txt
+	rm -f $(TARGET) lexer_test.exe *.o

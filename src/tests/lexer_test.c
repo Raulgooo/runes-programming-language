@@ -6,11 +6,7 @@
 // Define a simple test macro
 #define ASSERT_TOKEN(L, expected_kind, expected_lexeme) \
     do { \
-        printf("DEBUG: Calling lexer_next_token for %s...\n", expected_lexeme); \
-        fflush(stdout); \
         Token token = lexer_next_token(L); \
-        printf("Token: kind=%s, lexeme='%.*s'\n", token_kind_to_string(token.kind), (int)token.length, token.start); \
-        fflush(stdout); \
         if (token.kind != expected_kind) { \
             fprintf(stderr, "Test failed: line %d. Expected kind %s, got %s\n", \
                     __LINE__, token_kind_to_string(expected_kind), token_kind_to_string(token.kind)); \
@@ -26,11 +22,10 @@
 void test_basic_tokens() {
     printf("Running test_basic_tokens...\n");
     Lexer L;
-    const char *source = "f";
+    const char *source = "f main() { return 42; }";
     lexer_init(&L, source);
+
     ASSERT_TOKEN(&L, TOKEN_F, "f");
-    printf("test_basic_tokens passed!\n");
-    return; // Stop here for now
     ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "main");
     ASSERT_TOKEN(&L, TOKEN_LPAREN, "(");
     ASSERT_TOKEN(&L, TOKEN_RPAREN, ")");

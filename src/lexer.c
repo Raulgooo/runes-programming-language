@@ -1,5 +1,4 @@
 #include "lexer.h"
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
@@ -86,10 +85,6 @@ static void skip_whitespace_and_comments(Lexer *L) {
                         advance(L); // -
                         advance(L); // -
                         while (!(peek(L) == '-' && peek_next(L) == '-' && peek_after_next(L) == '-') && !is_at_end(L)) {
-                            if (peek(L) == '\n') {
-                                L->line++;
-                                L->column = 1;
-                            }
                             advance(L);
                         }
                         if (!is_at_end(L)) {
@@ -348,18 +343,12 @@ static Token char_literal(Lexer *L) {
 }
 
 static Token token_next(Lexer *L) {
-    printf("DEBUG: token_next start\n");
-    fflush(stdout);
     skip_whitespace_and_comments(L);
-    printf("DEBUG: after skip_whitespace\n");
-    fflush(stdout);
     L->start = L->current;
 
     if (is_at_end(L)) return make_token(L, TOKEN_EOF);
 
     char c = advance(L);
-    printf("DEBUG: advance returned '%c'\n", c);
-    fflush(stdout);
 
     if (is_alpha(c)) return identifier(L);
     if (is_digit(c)) return number(L);
