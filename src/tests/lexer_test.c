@@ -109,8 +109,9 @@ void test_control_flow_and_errors() {
 void test_function() {
   Lexer L;
   const char *source = "dynamic f alloc_buf(size: u64) = ptr: *u8 {
-      ptr =
-          raw_alloc(size)-- caller must raw_free(ptr)
+      ptr = raw_alloc(size)
+
+          -- caller must free raw_alloc
 }
 ";
     lexer_init(&L, source);
