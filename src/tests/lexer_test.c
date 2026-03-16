@@ -156,6 +156,7 @@ int main() {
   test_memory_scopes();
   test_os_features();
   test_control_flow_and_errors();
+  test_dynamic_function();
   printf("--- All tests passed successfully! ---\n");
   return 0;
 }
