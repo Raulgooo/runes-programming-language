@@ -1,0 +1,3 @@
+use std.core
+
+print("hello world")
