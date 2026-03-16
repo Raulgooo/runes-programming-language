@@ -106,6 +106,43 @@ void test_control_flow_and_errors() {
   printf("test_control_flow_and_errors passed!\n");
 }
 
+void test_function() {
+  Lexer L;
+  const char *source = "dynamic f alloc_buf(size: u64) = ptr: *u8 {
+      ptr =
+          raw_alloc(size)-- caller must raw_free(ptr)
+}
+";
+    lexer_init(&L, source);
+
+ASSERT_TOKEN(&L, TOKEN_DYNAMIC, "dynamic");
+ASSERT_TOKEN(&L, TOKEN_F, "f");
+ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "alloc_buf");
+ASSERT_TOKEN(&L, TOKEN_LPAREN, "(");
+ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "size");
+ASSERT_TOKEN(&L, TOKEN_COLON, ":");
+ASSERT_TOKEN(&L, TOKEN_U64, "u64");
+ASSERT_TOKEN(&L, TOKEN_RPAREN, ")");
+ASSERT_TOKEN(&L, TOKEN_EQUAL, "=");
+ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "ptr");
+ASSERT_TOKEN(&L, TOKEN_COLON, ":");
+ASSERT_TOKEN(&L, TOKEN_STAR, "*");
+ASSERT_TOKEN(&L, TOKEN_U8, "u8");
+ASSERT_TOKEN(&L, TOKEN_LBRACE, "{");
+ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "ptr");
+ASSERT_TOKEN(&L, TOKEN_EQUAL, "=");
+ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "raw_alloc");
+ASSERT_TOKEN(&L, TOKEN_LPAREN, "(");
+ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "size");
+ASSERT_TOKEN(&L, TOKEN_MINUS_MINUS, "--");
+ASSERT_TOKEN(&L, TOKEN_RPAREN, ")");
+ASSERT_TOKEN(&L, TOKEN_NEWLINE, "\n");
+ASSERT_TOKEN(&L, TOKEN_SEMICOLON, ";");
+ASSERT_TOKEN(&L, TOKEN_RBRACE, "}");
+
+ASSERT_TOKEN(&L, TOKEN_EOF, "");
+printf("test_function passed!\n");
+}
 int main() {
   printf("--- Starting Runes Lexer Tests ---\n");
   test_memory_scopes();
