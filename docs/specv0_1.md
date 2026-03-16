@@ -1,4 +1,4 @@
-# Runes Language Specification — v0.6 (Draft)
+# Runes Language Specification — v0.8 (Draft)
 
 > Systems-level language with high-level ergonomics.
 > Designed for writing operating systems without sacrificing expressiveness.
@@ -88,6 +88,7 @@ All functions use `f`, optionally preceded by a memory strategy keyword.
 | `dynamic f`   | Raw heap — like C `malloc`/`free`, no compiler help  |
 | `regional f`  | Region — arena bump allocator, freed at scope exit   |
 | `gc f`        | GC tracked — for userspace / high-level code         |
+| `flex f`      | Inherits caller's memory strategy                  |
 
 ```runes
 -- Stack (default) — named return required
@@ -153,7 +154,8 @@ f bar() = v {
 ## 5. Memory Model
 
 The memory strategy keyword before `f` defines how everything inside that function
-is allocated. There is no local override — the function's strategy is its contract.
+is allocated. Violations of nesting rules are **compile errors** — the type checker
+rejects invalid combinations.
 
 | Keyword      | Allocator                    | Who frees             |
 |--------------|------------------------------|-----------------------|
@@ -161,32 +163,119 @@ is allocated. There is no local override — the function's strategy is its cont
 | `dynamic f`  | Raw heap (`raw_alloc`)       | Caller, explicitly    |
 | `regional f` | Arena bump allocator         | Auto at scope exit    |
 | `gc f`       | GC heap                      | GC runtime            |
+| `flex f`     | Inherits caller's strategy   | Whoever caller is     |
+
+### Nesting rules
+
+Each function type has strict rules about what can be nested inside it.
+The type checker enforces these at compile time.
+
+| Outer function | Can contain                              | Cannot contain              |
+|----------------|------------------------------------------|-----------------------------|
+| `f` (top-level)| other `f` only                          | `dynamic f`, `regional f`, `gc f`, `flex f` |
+| `f` (nested)   | other `f` only                          | any other strategy          |
+| `dynamic f`    | `f`, other `dynamic f`, `gc f`          | `regional f`                |
+| `regional f`   | `f` only                                | `dynamic f`, `gc f`, `flex f` |
+| `gc f`         | `f`, other `gc f`                       | `dynamic f`, `regional f`   |
+| `flex f`       | inherits — same rules as caller         | whatever caller cannot have |
 
 ```runes
--- Stack
-f process(x: i32) = result: i32 {
-    [64]u8 buf          -- stack, zero overhead
-    result = compute(buf, x)
+-- ✅ f contains only f
+f kernel_main() {
+    f setup() {           -- ok: f inside f
+        i32 x = 5
+    }
+    setup()
 }
 
--- Dynamic — malloc style
-dynamic f setup_dma() = buf: *u8 {
-    buf = raw_alloc(4096)
-    -- caller must call raw_free(buf)
+-- ✅ dynamic f contains f and gc f
+dynamic f init_driver() {
+    f helper() {          -- ok: f inside dynamic f
+        i32 x = 5
+    }
+    gc f parse_config() = r: Node {   -- ok: gc f inside dynamic f
+        r = build_ast()
+    }
 }
 
--- Regional — entire arena freed when function returns
-regional f build_page_tables() = pml4: *PageTable {
-    PageTable root = PageTable()
-    PageTable pdpt = PageTable()
-    root.map(&pdpt)
-    pml4 = &root
-}   -- pdpt freed here, root freed here (caller gets a dangling ptr unless promoted)
+-- ✅ regional f contains only f
+regional f build_tables() {
+    f zero(p: *u8) {      -- ok: f inside regional f
+        *p = 0
+    }
+}
 
--- GC
-gc f parse(input: str) = ast: Node {
-    sl tokens = tokenize(input)
-    ast = build_ast(tokens)
+-- ✅ gc f contains f and gc f
+gc f run_shell() {
+    f validate(s: str) = r: bool {   -- ok: f inside gc f
+        r = s.len > 0
+    }
+    gc f parse(s: str) = r: Node {   -- ok: gc f inside gc f
+        r = build_ast(s)
+    }
+}
+
+-- ❌ compile error — regional f inside f (top-level)
+f kernel_main() {
+    regional f bad() {    -- ERROR: regional f cannot nest inside f
+        PageTable t = PageTable()
+    }
+}
+
+-- ❌ compile error — regional f inside dynamic f
+dynamic f init() {
+    regional f bad() {    -- ERROR: regional f cannot nest inside dynamic f
+        PageTable t = PageTable()
+    }
+}
+
+-- ❌ compile error — dynamic f inside regional f
+regional f build() {
+    dynamic f bad() {     -- ERROR: dynamic f cannot nest inside regional f
+        *u8 p = raw_alloc(64)
+    }
+}
+```
+
+### `flex f` — inherits caller strategy
+
+`flex f` takes on the memory strategy of whatever function calls it.
+Designed for stdlib functions that should work in any context.
+
+```runes
+-- flex f — works in any context
+flex f make_node(val: i32) = r: *Node {
+    r = alloc(sizeof(Node))   -- uses caller's allocator
+    r.val = val
+}
+
+-- called from regional f → make_node uses arena
+regional f build_ast() {
+    *Node n = make_node(42)   -- arena allocated
+}
+
+-- called from gc f → make_node uses GC
+gc f parse() {
+    *Node n = make_node(42)   -- GC allocated
+}
+
+-- called from dynamic f → make_node uses raw heap
+dynamic f init() {
+    *Node n = make_node(42)   -- raw heap allocated
+}
+```
+
+`flex f` nesting rules follow the caller — if called from `regional f`,
+it obeys `regional f` rules. If called from `dynamic f`, it obeys
+`dynamic f` rules.
+
+```runes
+-- flex f inside regional f → becomes regional, can only nest f
+regional f build() {
+    flex f helper() {     -- becomes regional here
+        f inner() { }     -- ok: f inside regional (via flex)
+        -- dynamic f inner() { }  ← ERROR
+    }
 }
 ```
 
@@ -682,7 +771,125 @@ pub f kernel_main() {
 
 ---
 
-## 13. Modules
+## 13. JSON and Schemas
+
+### The `J` type
+
+`J` is a built-in type representing a JSON value. Any `type` or `schema` can be
+converted to `J` using `as J`. The compiler generates the serializer at compile
+time — zero runtime reflection, zero overhead.
+
+```runes
+-- J methods
+j.string()        -- compact JSON string: {"name":"raul","age":18}
+j.pretty()        -- indented JSON string
+j.get("key")      -- access field by name
+j.set("key", val) -- mutate field
+j.has("key")      -- bool, check if field exists
+```
+
+### `as J` — serialize any type to JSON
+
+```runes
+type Point = { x: f32, y: f32 }
+
+Point p = Point(x: 1.0, y: 2.0)
+j = p as J
+
+print(j.string())    -- {"x":1.0,"y":2.0}
+print(j.pretty())
+-- {
+--   "x": 1.0,
+--   "y": 2.0
+-- }
+
+f32 x = j.get("x")  -- 1.0
+j.set("x", 5.0)
+```
+
+### `as T` — deserialize JSON back to a type
+
+```runes
+str raw = "{\"x\":3.0,\"y\":4.0}"
+J j     = raw as J       -- parse string → J
+Point p = j as Point     -- J → struct, fields validated at runtime
+```
+
+### `schema` — type with inheritance for validation
+
+`schema` is like `type` but supports inheritance. A function that expects a
+`schema` parent accepts any child schema — exactly like Pydantic.
+
+```runes
+schema Shoe = {
+    brand: str,
+    size:  f32,
+}
+
+schema RedShoe : Shoe = {   -- inherits brand and size
+    color: str = "red",     -- extra field with default
+}
+
+-- function expects Shoe — accepts any child schema
+f process(shoe: Shoe) {
+    print(shoe.brand)
+}
+
+f handle_request() {
+    RedShoe s = RedShoe(brand: "Nike", size: 10.5)
+    process(s)              -- ✅ RedShoe satisfies Shoe
+
+    j = s as J              -- serialize
+    print(j.string())       -- {"brand":"Nike","size":10.5,"color":"red"}
+
+    RedShoe s2 = j as RedShoe  -- deserialize back
+}
+```
+
+### Field annotations
+
+```runes
+schema User = {
+    name:     str,
+    age:      i32,
+    #[json("email_address")]   -- custom JSON key name
+    email:    str,
+    #[json_skip]               -- excluded from JSON output
+    password: str,
+}
+
+User u = User(name: "raul", age: 18, email: "r@x.com", password: "secret")
+j = u as J
+print(j.string())   -- {"name":"raul","age":18,"email_address":"r@x.com"}
+                    -- password is not included
+```
+
+### Nested schemas
+
+```runes
+schema Address = {
+    street: str,
+    city:   str,
+}
+
+schema Person = {
+    name:    str,
+    address: Address,
+}
+
+Person p = Person(
+    name: "raul",
+    address: Address(street: "Av. Morones", city: "Monterrey")
+)
+
+j = p as J
+print(j.string())
+-- {"name":"raul","address":{"street":"Av. Morones","city":"Monterrey"}}
+```
+
+---
+
+## 14. Modules
 
 ```runes
 -- Define
@@ -722,7 +929,7 @@ f add(x: i32, y: i32) = result: i32 {
 
 ---
 
-## 15. Full OS Example
+## 16. Full OS Example
 
 ```runes
 use kernel.arch.x86
@@ -777,14 +984,15 @@ pub f kernel_main() {
 
 ---
 
-## 16. Keyword Reference
+## 17. Keyword Reference
 
 | Keyword      | Meaning                                        |
 |--------------|------------------------------------------------|
 | `f`          | Stack function                                 |
 | `dynamic f`  | Raw heap function (C-style malloc)             |
 | `regional f` | Arena/region allocated function                |
-| `gc f`       | Garbage collected function                     |
+| `gc f`       | Garbage collected function                             |
+| `flex f`     | Inherits caller's memory strategy (monomorphized v0.2)  |                     |
 | `method`     | Method block for a type                        |
 | `interface`  | Interface definition                           |
 | `type`       | Type definition (struct or variant)            |
@@ -803,13 +1011,15 @@ pub f kernel_main() {
 | `catch`      | Handle error inline                            |
 | `unsafe`     | Unsafe block                                   |
 | `asm`        | Inline assembly                                |
+| `schema`     | Schema definition (type with inheritance + JSON)       |
+| `J`          | Built-in JSON type                                     |
 | `extern`     | Foreign function / variable declaration                |
 | `volatile`   | Prevent compiler optimization of memory access         |
 | `promote`    | Escape value from region scope (unsafe)                |
 
 ---
 
-## 17. Feature Roadmap
+## 18. Feature Roadmap
 
 | Feature                        | Version |
 |-------------------------------|---------|
@@ -818,6 +1028,8 @@ pub f kernel_main() {
 | Structs, variants, interfaces  | v0.1    |
 | Pattern matching               | v0.1    |
 | Generics                       | v0.1    |
+| flex f (stack only, v0.1)      | v0.1    |
+| flex f (full monomorphization) | v0.2    |
 | Error handling (!T, try/catch) | v0.1    |
 | Memory model (f modifiers)     | v0.1    |
 | Inline assembly, unsafe        | v0.1    |
@@ -826,6 +1038,7 @@ pub f kernel_main() {
 | volatile                       | v0.1    |
 | #[section] / #[link_name]      | v0.1    |
 | #[callconv] / #[interrupt]     | v0.1    |
+| JSON (`as J`, `schema`)        | v0.1    |
 | HTTP / web stdlib              | v0.2    |
 | Async / await                  | v0.2    |
 | Macros                         | v0.3    |
@@ -833,4 +1046,4 @@ pub f kernel_main() {
 
 ---
 
-*Runes — v0.6 draft. Backend: LLVM IR. Compiler: C bootstrap → self-hosted.*
+*Runes — v0.8 draft. Backend: LLVM IR. Compiler: C bootstrap → self-hosted.*

@@ -152,12 +152,49 @@ void test_dynamic_function() {
   printf("test_dynamic_function passed!\n");
 }
 
+void test_lexer_bugs() {
+  printf("Running test_lexer_bugs...\n");
+  Lexer L;
+
+  // Bug 1: Keyword length (tryabc should be identifier)
+  const char *s1 = "tryabc";
+  lexer_init(&L, s1);
+  ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "tryabc");
+  ASSERT_TOKEN(&L, TOKEN_EOF, "");
+
+  // Bug 2: Invalid hex literal (0x followed by space)
+  const char *s2 = "0x ";
+  lexer_init(&L, s2);
+  // Current behavior is INT_LITERAL "0x", we want it to be either error or '0' followed by 'x'
+  // For now let's just see what it does. I expect this to fail once I fix it or if I change expectations.
+  Token t = lexer_next_token(&L);
+  if (t.kind == TOKEN_INT_LITERAL && t.length == 2) {
+      printf("Confirmed Bug: 0x parsed as INT_LITERAL\n");
+  }
+
+  // Bug 3: Column tracking for multiline strings
+  const char *s3 = "\"multi\nline\"";
+  lexer_init(&L, s3);
+  Token t3 = lexer_next_token(&L);
+  ASSERT_TOKEN(&L, TOKEN_STRING_LITERAL, "\"multi\nline\"");
+  // The column should be 1 (start of line 1) or relative to the start.
+  // make_token currently does: L->column - token.length
+  // For this string, L->line will be 2, L->column will be 6 (after "line\"")
+  // 6 - 12 = -6. This is definitely wrong.
+  if (t3.column <= 0) {
+      printf("Confirmed Bug: Negative column for multiline token: %d\n", t3.column);
+  }
+
+  printf("test_lexer_bugs completed (some bugs verified)!\n");
+}
+
 int main() {
   printf("--- Starting Runes Lexer Tests ---\n");
   test_memory_scopes();
   test_os_features();
   test_control_flow_and_errors();
   test_dynamic_function();
+  test_lexer_bugs();
   printf("--- All tests passed successfully! ---\n");
   return 0;
 }
