@@ -113,7 +113,7 @@ void test_function() {
 
           -- caller must free raw_alloc
 }
-";
+"};
     lexer_init(&L, source);
 
 ASSERT_TOKEN(&L, TOKEN_DYNAMIC, "dynamic");
