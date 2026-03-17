@@ -11,6 +11,7 @@ typedef struct {
   Arena *arena;
   Token current;
   Token next;
+  Token next2;
   uint32_t prev_line;
   const char *filename;
   const char *source;

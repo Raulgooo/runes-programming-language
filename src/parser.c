@@ -53,9 +53,10 @@ static AstNode *parse_unsafe_block(Parser *p);
 // ───────────────────────────────────────────────────────────────
 static Token advance(Parser *p) {
   Token prev = p->current;
-  p->prev_line = prev.line;
+  p->prev_line = p->current.line;
   p->current = p->next;
-  p->next = lexer_next_token(p->lexer);
+  p->next = p->next2;
+  p->next2 = lexer_next_token(p->lexer);
   return prev;
 }
 
@@ -166,10 +167,10 @@ void parser_init(Parser *p, Lexer *lexer, Arena *arena, const char *filename,
   p->had_error = false;
   p->panic_mode = false;
   p->error_count = 0;
-  p->current = (Token){0};
-  p->next = lexer_next_token(lexer); // prime the buffer
+  p->current = lexer_next_token(lexer);
+  p->next = lexer_next_token(lexer);
+  p->next2 = lexer_next_token(lexer);
   p->prev_line = 1;
-  advance(p); // current = first token, next = second
 }
 
 void parser_free(Parser *p) { (void)p; }
@@ -351,45 +352,51 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
 // Spec §2: [const] [volatile] Type name = init
 //   i32 x = 42 / const i32 MAX = 512 / volatile *u32 uart = 0x10000000
 static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile) {
-  Token start_tok = p->current;
-  AstNode *type = NULL;
-  Token name_tok = {0};
-  AstNode *init = NULL;
+  AstNode *head = NULL, *tail = NULL;
 
-  // We are already past 'const' and 'volatile' if they were matched by caller.
-  // BUT we need to check if we have a type or if it's inferred.
+  do {
+    AstNode *type = NULL;
+    bool has_type = false;
+    if (is_type_keyword(p->current.kind) ||
+        (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER) ||
+        check(p, TOKEN_STAR) || check(p, TOKEN_LBRACKET) ||
+        check(p, TOKEN_BANG) || check(p, TOKEN_LPAREN)) {
+      has_type = true;
+    }
 
-  bool has_type = false;
-  if (is_type_keyword(p->current.kind) ||
-      (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER) ||
-      check(p, TOKEN_STAR) || check(p, TOKEN_LBRACKET) ||
-      check(p, TOKEN_BANG) || check(p, TOKEN_LPAREN)) {
-    has_type = true;
-  }
+    if (has_type) {
+      type = parse_type_expr(p);
+      if (!type)
+        return NULL;
+    }
 
-  if (has_type) {
-    type = parse_type_expr(p);
-    if (!type)
-      return NULL;
-    name_tok = expect(p, TOKEN_IDENTIFIER, "expected variable name");
-  } else {
-    // Inferred type: const LIMIT = 1024
-    name_tok = expect(p, TOKEN_IDENTIFIER, "expected variable name");
+    Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected variable name");
     if (p->panic_mode)
       return NULL;
-  }
+
+    AstNode *n = ast_new_var_decl(p->arena, is_const, is_volatile,
+                                  name_tok.str_val.ptr, type, NULL);
+    n->line = name_tok.line;
+    n->col = name_tok.column;
+
+    if (!head) {
+      head = tail = n;
+    } else {
+      tail->next = n;
+      tail = n;
+    }
+  } while (match(p, TOKEN_COMMA));
 
   if (match(p, TOKEN_EQUAL)) {
-    init = parse_expr(p);
+    AstNode *init = parse_expr(p);
     if (!init)
       return NULL;
+    // For now, we apply the initializer to the whole list (tuple destructure).
+    // semantically this means head is initialized by the tuple.
+    head->as.var_decl.init = init;
   }
 
-  AstNode *n = ast_new_var_decl(p->arena, is_const, is_volatile,
-                                name_tok.str_val.ptr, type, init);
-  n->line = name_tok.line;
-  n->col = name_tok.column;
-  return n;
+  return head;
 }
 
 // Spec §7: type Vec2 = { x: f32, y: f32 } or type Vec2 = x: f32, y: f32
@@ -620,11 +627,13 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
       continue;
     }
     if (!methods) {
-      methods = mtail = fn;
+      methods = fn;
     } else {
       mtail->next = fn;
-      mtail = fn;
     }
+    mtail = fn;
+    while (mtail->next)
+      mtail = mtail->next;
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
   if (p->panic_mode)
@@ -658,11 +667,13 @@ static AstNode *parse_interface_decl(Parser *p, bool is_pub) {
       continue;
     }
     if (!methods) {
-      methods = mtail = fn;
+      methods = fn;
     } else {
       mtail->next = fn;
-      mtail = fn;
     }
+    mtail = fn;
+    while (mtail->next)
+      mtail = mtail->next;
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
   if (p->panic_mode)
@@ -732,11 +743,13 @@ static AstNode *parse_mod_decl(Parser *p, bool is_pub) {
       continue;
     }
     if (!decls) {
-      decls = dtail = d;
+      decls = d;
     } else {
       dtail->next = d;
-      dtail = d;
     }
+    dtail = d;
+    while (dtail->next)
+      dtail = dtail->next;
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
   if (p->panic_mode)
@@ -889,11 +902,14 @@ AstNode *parser_parse(Parser *p) {
       continue;
     }
     if (!head) {
-      head = tail = d;
+      head = d;
     } else {
       tail->next = d;
-      tail = d;
     }
+    // update tail to end of new sublist
+    tail = d;
+    while (tail->next)
+      tail = tail->next;
   }
   return ast_new_program(p->arena, head);
 }
@@ -962,11 +978,13 @@ static AstNode *parse_block(Parser *p) {
       continue;
     }
     if (!head) {
-      head = tail = s;
+      head = s;
     } else {
       tail->next = s;
-      tail = s;
     }
+    tail = s;
+    while (tail->next)
+      tail = tail->next;
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
   if (p->panic_mode)
@@ -1161,23 +1179,16 @@ static bool is_var_decl_lookahead(Parser *p) {
     return true;
   if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER)
     return true;
-
   if (check(p, TOKEN_STAR) || check(p, TOKEN_BANG)) {
-    if (is_type_keyword(peek(p).kind))
+    if (is_type_keyword(p->next.kind))
       return true;
-    if (peek(p).kind == TOKEN_IDENTIFIER) {
-      Lexer l = *p->lexer;
-      Token t = lexer_next_token(&l);
+    if (p->next.kind == TOKEN_IDENTIFIER) {
       // *IDENT IDENT -> decl (e.g. *Node n)
+      // *IDENT , -> multi-var decl (e.g. *Node n, m = ...)
       // *IDENT = -> expr
       // *IDENT . -> expr
-      // *IDENT ( -> decl if type, expr if call? Wait, tuple type ptr?
-      return t.kind == TOKEN_IDENTIFIER;
+      return p->next2.kind == TOKEN_IDENTIFIER || p->next2.kind == TOKEN_COMMA;
     }
-    // *(expr) is always an expression. *(tuple_type) wouldn't be followed by an
-    // identifier normally unless it's a cast or something? Actually, *(T) name
-    // is rare. Let's assume *( is expr to be safe.
-    return false;
   }
 
   if (check(p, TOKEN_LBRACKET) || check(p, TOKEN_LPAREN)) {
@@ -1417,6 +1428,11 @@ static AstNode *parse_primary(Parser *p) {
     n->line = tok.line;
     n->col = tok.column;
     return n;
+  }
+
+  // ── match expression ────────────────────────────────────────────────
+  if (check(p, TOKEN_MATCH)) {
+    return parse_match_stmt(p);
   }
 
   // ── self keyword — Spec §7: method Vec2 { f length(self) ... } ──────
@@ -1848,8 +1864,6 @@ static AstNode *parse_logical_and(Parser *p) {
     return NULL;
 
   while (check(p, TOKEN_AND)) {
-    if (p->current.line > p->prev_line)
-      break;
     Token op = advance(p);
     AstNode *right = parse_equality(p);
     if (!right)
@@ -1868,8 +1882,6 @@ static AstNode *parse_logical_or(Parser *p) {
     return NULL;
 
   while (check(p, TOKEN_OR)) {
-    if (p->current.line > p->prev_line)
-      break;
     Token op = advance(p);
     AstNode *right = parse_logical_and(p);
     if (!right)
