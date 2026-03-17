@@ -14,6 +14,7 @@ typedef struct {
   const char *filename;
   const char *source;
   bool had_error;
+  bool panic_mode;
   int error_count;
 } Parser;
 

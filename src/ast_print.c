@@ -195,6 +195,129 @@ void ast_print_ext(AstNode *node, int level) {
             ast_print_ext(node->as.assign.value, level + 2);
             break;
 
+        case AST_FIELD_EXPR:
+            printf("FieldExpr field='%s'\n", node->as.field.field ? node->as.field.field : "(null)");
+            ast_print_ext(node->as.field.target, level + 1);
+            break;
+
+        case AST_INDEX_EXPR:
+            printf("IndexExpr\n");
+            indent(level + 1); printf("Target:\n");
+            ast_print_ext(node->as.index.target, level + 2);
+            indent(level + 1); printf("Index:\n");
+            ast_print_ext(node->as.index.index, level + 2);
+            break;
+
+        case AST_CAST_EXPR:
+            printf("CastExpr kind=%d\n", node->as.cast.kind);
+            indent(level + 1); printf("Expr:\n");
+            ast_print_ext(node->as.cast.expr, level + 2);
+            indent(level + 1); printf("Target Type:\n");
+            ast_print_ext(node->as.cast.target_type, level + 2);
+            break;
+
+        case AST_PROMOTE_EXPR:
+            printf("PromoteExpr target=%s\n", realm_to_string(node->as.promote.target));
+            ast_print_ext(node->as.promote.expr, level + 1);
+            break;
+
+        case AST_MATCH_STMT:
+            printf("MatchStmt\n");
+            indent(level + 1); printf("Subject:\n");
+            ast_print_ext(node->as.match_stmt.subject, level + 2);
+            indent(level + 1); printf("Arms:\n");
+            ast_print_ext(node->as.match_stmt.arms, level + 2);
+            break;
+
+        case AST_MATCH_ARM:
+            printf("MatchArm\n");
+            indent(level + 1); printf("Pattern:\n");
+            ast_print_ext(node->as.match_arm.pattern, level + 2);
+            if (node->as.match_arm.guard) {
+                indent(level + 1); printf("Guard:\n");
+                ast_print_ext(node->as.match_arm.guard, level + 2);
+            }
+            indent(level + 1); printf("Body:\n");
+            ast_print_ext(node->as.match_arm.body, level + 2);
+            break;
+
+        case AST_FOR_STMT:
+            printf("ForStmt cap_kind=%d cap_value='%s' cap_index='%s'\n",
+                   node->as.for_stmt.cap_kind,
+                   node->as.for_stmt.cap_value ? node->as.for_stmt.cap_value : "(null)",
+                   node->as.for_stmt.cap_index ? node->as.for_stmt.cap_index : "(null)");
+            indent(level + 1); printf("Iter:\n");
+            ast_print_ext(node->as.for_stmt.iter, level + 2);
+            indent(level + 1); printf("Body:\n");
+            ast_print_ext(node->as.for_stmt.body, level + 2);
+            break;
+
+        case AST_WHILE_STMT:
+            printf("WhileStmt\n");
+            indent(level + 1); printf("Condition:\n");
+            ast_print_ext(node->as.while_stmt.condition, level + 2);
+            indent(level + 1); printf("Body:\n");
+            ast_print_ext(node->as.while_stmt.body, level + 2);
+            break;
+
+        case AST_LOOP_STMT:
+            printf("LoopStmt\n");
+            indent(level + 1); printf("Body:\n");
+            ast_print_ext(node->as.loop_stmt.body, level + 2);
+            break;
+
+        case AST_ARRAY_LITERAL:
+            printf("ArrayLiteral\n");
+            ast_print_ext(node->as.array_literal.elems, level + 1);
+            break;
+
+        case AST_TUPLE_EXPR:
+            printf("TupleExpr\n");
+            ast_print_ext(node->as.tuple_expr.elems, level + 1);
+            break;
+
+        case AST_NAMED_ARG:
+            printf("NamedArg name='%s'\n", node->as.named_arg.name ? node->as.named_arg.name : "(null)");
+            ast_print_ext(node->as.named_arg.value, level + 1);
+            break;
+
+        case AST_TRY_EXPR:
+            printf("TryExpr\n");
+            ast_print_ext(node->as.try_expr.expr, level + 1);
+            break;
+
+        case AST_CATCH_EXPR:
+            printf("CatchExpr err_name='%s'\n", node->as.catch_expr.err_name ? node->as.catch_expr.err_name : "(null)");
+            indent(level + 1); printf("Expr:\n");
+            ast_print_ext(node->as.catch_expr.expr, level + 2);
+            indent(level + 1); printf("Handler:\n");
+            ast_print_ext(node->as.catch_expr.handler, level + 2);
+            break;
+
+        case AST_ERROR_EXPR:
+            printf("ErrorExpr\n");
+            ast_print_ext(node->as.error_expr.path, level + 1);
+            break;
+
+        case AST_ASM_EXPR:
+            printf("AsmExpr code='%s' output='%s'\n",
+                   node->as.asm_expr.code ? node->as.asm_expr.code : "(null)",
+                   node->as.asm_expr.output ? node->as.asm_expr.output : "(none)");
+            break;
+
+        case AST_VOLATILE_EXPR:
+            printf("VolatileExpr\n");
+            ast_print_ext(node->as.volatile_expr.expr, level + 1);
+            break;
+
+        case AST_RANGE_EXPR:
+            printf("RangeExpr inclusive=%s\n", node->as.range_expr.inclusive ? "true" : "false");
+            indent(level + 1); printf("Start:\n");
+            ast_print_ext(node->as.range_expr.start, level + 2);
+            indent(level + 1); printf("End:\n");
+            ast_print_ext(node->as.range_expr.end, level + 2);
+            break;
+
         default:
             printf("Node kind=%d (printing not fully implemented)\n", node->kind);
             break;

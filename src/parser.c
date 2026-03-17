@@ -47,9 +47,10 @@ static AstNode *parse_unsafe_block(Parser *p);
 // ── Scaffolding
 // ───────────────────────────────────────────────────────────────
 static Token advance(Parser *p) {
+  Token prev = p->current;
   p->current = p->next;
   p->next = lexer_next_token(p->lexer);
-  return p->current;
+  return prev;
 }
 
 static Token peek(Parser *p) { return p->next; }
@@ -65,6 +66,8 @@ static bool match(Parser *p, TokenKind kind) {
 }
 
 static void parser_error(Parser *p, const char *msg) {
+  if (p->panic_mode) return;
+  p->panic_mode = true;
   fprintf(stderr, "[Error] %s:%d:%d: %s\n", p->filename, p->current.line,
           p->current.column, msg);
   p->had_error = true;
@@ -80,6 +83,7 @@ static Token expect(Parser *p, TokenKind kind, const char *msg) {
 }
 
 static void synchronize(Parser *p) {
+  p->panic_mode = false;
   advance(p); // skip the fucked up token
 
   while (p->current.kind != TOKEN_EOF) {
@@ -151,6 +155,7 @@ void parser_init(Parser *p, Lexer *lexer, Arena *arena, const char *filename,
   p->filename = filename;
   p->source = source;
   p->had_error = false;
+  p->panic_mode = false;
   p->error_count = 0;
   p->current = (Token){0};
   p->next = lexer_next_token(lexer); // prime the buffer
@@ -191,7 +196,7 @@ static AstNode *parse_type_expr(Parser *p) {
     if (!size)
       return NULL;
     expect(p, TOKEN_RBRACKET, "expected ']' after array size");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *elem = parse_type_expr(p);
     if (!elem)
@@ -219,7 +224,7 @@ static AstNode *parse_type_expr(Parser *p) {
       } while (match(p, TOKEN_COMMA));
     }
     expect(p, TOKEN_RPAREN, "expected ')' after tuple type");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *n = ast_new_type_tuple(p->arena, head);
     n->line = T.line;
@@ -266,18 +271,18 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr 
   Token f_tok = advance(p); // consume 'f'
 
   Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected function name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   bool is_main = (name_tok.str_val.ptr && strcmp(name_tok.str_val.ptr, "main") == 0);
 
   // parameter list — f name(params)
   expect(p, TOKEN_LPAREN, "expected '(' after function name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   AstNode *params = parse_param_list(p);
   expect(p, TOKEN_RPAREN, "expected ')' after parameters");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   // optional named return: = name: type
@@ -290,11 +295,11 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr 
     has_return = true;
     Token ret_name_tok =
         expect(p, TOKEN_IDENTIFIER, "expected return value name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     ret_name = ret_name_tok.str_val.ptr;
     expect(p, TOKEN_COLON, "expected ':' after return name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     ret_type = parse_type_expr(p);
     if (!ret_type)
@@ -356,11 +361,10 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile) {
   } else {
     // Inferred type: const LIMIT = 1024
     name_tok = expect(p, TOKEN_IDENTIFIER, "expected variable name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
   }
 
-  AstNode *init = NULL;
   if (match(p, TOKEN_EQUAL)) {
     init = parse_expr(p);
     if (!init)
@@ -378,10 +382,10 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile) {
 static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
   Token t = advance(p); // consume 'type'
   Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected type name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   expect(p, TOKEN_EQUAL, "expected '=' after type name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   // check for variant: type Color = | Red | Green ...
@@ -402,10 +406,10 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
     // optional volatile
     bool fvol = match(p, TOKEN_VOLATILE);
     Token fname = expect(p, TOKEN_IDENTIFIER, "expected field name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     expect(p, TOKEN_COLON, "expected ':' after field name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *ftype = parse_type_expr(p);
     if (!ftype)
@@ -431,7 +435,7 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
 
   if (braced) {
     expect(p, TOKEN_RBRACE, "expected '}' after type fields");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
   }
 
@@ -456,7 +460,7 @@ static AstNode *parse_variant_decl(Parser *p, bool is_pub) {
   AstNode *arms = NULL, *atail = NULL;
   while (match(p, TOKEN_PIPE)) {
     Token vname = expect(p, TOKEN_IDENTIFIER, "expected variant name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *vfields = NULL;
     if (match(p, TOKEN_LPAREN)) {
@@ -473,7 +477,7 @@ static AstNode *parse_variant_decl(Parser *p, bool is_pub) {
         }
       } while (match(p, TOKEN_COMMA));
       expect(p, TOKEN_RPAREN, "expected ')' after variant fields");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
       vfields = vfh;
     }
@@ -497,33 +501,33 @@ static AstNode *parse_variant_decl(Parser *p, bool is_pub) {
 static AstNode *parse_schema_decl(Parser *p, bool is_pub) {
   Token s = advance(p); // consume 'schema'
   Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected schema name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   // optional parent: schema RedShoe : Shoe
   const char *parent = NULL;
   if (match(p, TOKEN_COLON)) {
     Token parent_tok = expect(p, TOKEN_IDENTIFIER, "expected parent schema");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     parent = parent_tok.str_val.ptr;
   }
 
   expect(p, TOKEN_EQUAL, "expected '=' after schema name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   expect(p, TOKEN_LBRACE, "expected '{' for schema body");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *fields = NULL, *ftail = NULL;
   while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
     Attr *attrs = parse_attrs(p);
     Token fname = expect(p, TOKEN_IDENTIFIER, "expected field name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     expect(p, TOKEN_COLON, "expected ':'");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *ftype = parse_type_expr(p);
     if (!ftype)
@@ -547,7 +551,7 @@ static AstNode *parse_schema_decl(Parser *p, bool is_pub) {
     match(p, TOKEN_COMMA);
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *n = ast_new_schema_decl(p->arena, is_pub, name_tok.str_val.ptr,
@@ -562,7 +566,7 @@ static AstNode *parse_schema_decl(Parser *p, bool is_pub) {
 static AstNode *parse_method_decl(Parser *p, bool is_pub) {
   Token m = advance(p); // consume 'method'
   Token type_tok = expect(p, TOKEN_IDENTIFIER, "expected type name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   const char *iface = NULL;
@@ -570,12 +574,12 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
     // method Drawable for Vec2 — iface = "Drawable", type = "Vec2"
     iface = type_tok.str_val.ptr;
     type_tok = expect(p, TOKEN_IDENTIFIER, "expected type name after 'for'");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
   }
 
   expect(p, TOKEN_LBRACE, "expected '{' for method block");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *methods = NULL, *mtail = NULL;
@@ -605,7 +609,7 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
     }
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *n = ast_new_method_decl(p->arena, is_pub, type_tok.str_val.ptr,
@@ -619,10 +623,10 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
 static AstNode *parse_interface_decl(Parser *p, bool is_pub) {
   Token i = advance(p); // consume 'interface'
   Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected interface name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   expect(p, TOKEN_LBRACE, "expected '{'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *methods = NULL, *mtail = NULL;
@@ -641,7 +645,7 @@ static AstNode *parse_interface_decl(Parser *p, bool is_pub) {
     }
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *n =
@@ -655,19 +659,19 @@ static AstNode *parse_interface_decl(Parser *p, bool is_pub) {
 static AstNode *parse_error_decl(Parser *p, bool is_pub) {
   Token e = advance(p); // consume 'error'
   Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected error set name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   expect(p, TOKEN_EQUAL, "expected '='");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   expect(p, TOKEN_LBRACE, "expected '{'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *variants = NULL, *vtail = NULL;
   while (match(p, TOKEN_PIPE)) {
     Token vname = expect(p, TOKEN_IDENTIFIER, "expected error variant");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *v = ast_new_identifier(p->arena, vname.str_val.ptr);
     v->line = vname.line;
@@ -680,7 +684,7 @@ static AstNode *parse_error_decl(Parser *p, bool is_pub) {
     }
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *n =
@@ -694,10 +698,10 @@ static AstNode *parse_error_decl(Parser *p, bool is_pub) {
 static AstNode *parse_mod_decl(Parser *p, bool is_pub) {
   Token m = advance(p);
   Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected module name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   expect(p, TOKEN_LBRACE, "expected '{'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *decls = NULL, *dtail = NULL;
@@ -715,7 +719,7 @@ static AstNode *parse_mod_decl(Parser *p, bool is_pub) {
     }
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *n = ast_new_mod_decl(p->arena, is_pub, name_tok.str_val.ptr, decls);
@@ -731,7 +735,7 @@ static AstNode *parse_use_decl(Parser *p) {
   AstNode *head = NULL, *tail = NULL;
   do {
     Token seg = expect(p, TOKEN_IDENTIFIER, "expected module path");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *s = ast_new_identifier(p->arena, seg.str_val.ptr);
     s->line = seg.line;
@@ -759,25 +763,25 @@ static AstNode *parse_extern_decl(Parser *p) {
     // extern function
     advance(p); // consume 'f'
     Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected function name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     expect(p, TOKEN_LPAREN, "expected '('");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *params = parse_param_list(p);
     expect(p, TOKEN_RPAREN, "expected ')'");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     // optional return: = name: type
     const char *ret_name = NULL;
     AstNode *ret_type = NULL;
     if (match(p, TOKEN_EQUAL)) {
       Token rn = expect(p, TOKEN_IDENTIFIER, "expected return name");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
       ret_name = rn.str_val.ptr;
       expect(p, TOKEN_COLON, "expected ':'");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
       ret_type = parse_type_expr(p);
       if (!ret_type)
@@ -794,7 +798,7 @@ static AstNode *parse_extern_decl(Parser *p) {
     if (!vtype)
       return NULL;
     Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected variable name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *n = ast_new_extern_decl(p->arena, false, name_tok.str_val.ptr,
                                      NULL, NULL, NULL, vtype);
@@ -880,11 +884,11 @@ static Attr *parse_attrs(Parser *p) {
   while (check(p, TOKEN_HASH)) {
     advance(p); // consume #
     expect(p, TOKEN_LBRACKET, "expected '[' after '#'");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
 
     Token name = expect(p, TOKEN_IDENTIFIER, "expected attribute name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
 
     // optional argument — #[align(4096)] or #[section(".text.boot")]
@@ -894,12 +898,12 @@ static Attr *parse_attrs(Parser *p) {
       if (!arg)
         return NULL;
       expect(p, TOKEN_RPAREN, "expected ')' after attribute argument");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
     }
 
     expect(p, TOKEN_RBRACKET, "expected ']' after attribute");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
 
     Attr *a = attr_new(p->arena, name.str_val.ptr, arg);
@@ -928,7 +932,7 @@ static bool is_type_keyword(TokenKind k) {
 // Spec §generic: { stmt* }
 static AstNode *parse_block(Parser *p) {
   Token open = expect(p, TOKEN_LBRACE, "expected '{'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   AstNode *head = NULL, *tail = NULL;
   while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
@@ -945,7 +949,7 @@ static AstNode *parse_block(Parser *p) {
     }
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   AstNode *n = ast_new_block(p->arena, head);
   n->line = open.line;
@@ -996,18 +1000,18 @@ static AstNode *parse_while_stmt(Parser *p) {
 static AstNode *parse_for_stmt(Parser *p) {
   Token f = advance(p); // consume 'for'
   expect(p, TOKEN_LPAREN, "expected '(' after 'for'");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   AstNode *iter = parse_expr(p);
   if (!iter)
     return NULL;
   expect(p, TOKEN_RPAREN, "expected ')' after for iterator");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   // capture: |val| or |*val| or |val, idx|
   expect(p, TOKEN_PIPE, "expected '|' for capture");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   CaptureKind cap_kind = CAPTURE_VALUE;
@@ -1018,20 +1022,20 @@ static AstNode *parse_for_stmt(Parser *p) {
     cap_kind = CAPTURE_PTR; // |*n|
   }
   Token val_tok = expect(p, TOKEN_IDENTIFIER, "expected capture name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   cap_value = val_tok.str_val.ptr;
 
   if (match(p, TOKEN_COMMA)) {
     cap_kind = CAPTURE_INDEXED; // |n, i|
     Token idx_tok = expect(p, TOKEN_IDENTIFIER, "expected index name");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     cap_index = idx_tok.str_val.ptr;
   }
 
   expect(p, TOKEN_PIPE, "expected '|' after capture");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *body = parse_block(p);
@@ -1072,7 +1076,7 @@ static AstNode *parse_match_arm(Parser *p) {
   }
 
   expect(p, TOKEN_ARROW, "expected '->' after match pattern");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *body = parse_expr(p);
@@ -1091,7 +1095,7 @@ static AstNode *parse_match_stmt(Parser *p) {
   if (!subject)
     return NULL;
   expect(p, TOKEN_LBRACE, "expected '{' after match subject");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *head = NULL, *tail = NULL;
@@ -1110,7 +1114,7 @@ static AstNode *parse_match_stmt(Parser *p) {
     match(p, TOKEN_COMMA); // optional trailing comma
   }
   expect(p, TOKEN_RBRACE, "expected '}' after match arms");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
 
   AstNode *n = ast_new_match_stmt(p->arena, subject, head);
@@ -1129,6 +1133,41 @@ static AstNode *parse_unsafe_block(Parser *p) {
   n->line = u.line;
   n->col = u.column;
   return n;
+}
+
+static bool is_var_decl_lookahead(Parser *p) {
+  if (check(p, TOKEN_CONST) || check(p, TOKEN_VOLATILE) || is_type_keyword(p->current.kind)) return true;
+  if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER) return true;
+  
+  if (check(p, TOKEN_STAR) || check(p, TOKEN_BANG)) {
+    if (is_type_keyword(peek(p).kind)) return true;
+    if (peek(p).kind == TOKEN_IDENTIFIER) {
+      Lexer l = *p->lexer;
+      Token t = lexer_next_token(&l);
+      return t.kind == TOKEN_IDENTIFIER;
+    }
+    return false;
+  }
+  
+  if (check(p, TOKEN_LBRACKET) || check(p, TOKEN_LPAREN)) {
+    Lexer l = *p->lexer;
+    Token t = p->next;
+    TokenKind open = p->current.kind;
+    TokenKind close = (open == TOKEN_LBRACKET) ? TOKEN_RBRACKET : TOKEN_RPAREN;
+    int depth = 1;
+    while (t.kind != TOKEN_EOF && depth > 0) {
+      if (t.kind == open) depth++;
+      else if (t.kind == close) depth--;
+      if (depth > 0) t = lexer_next_token(&l);
+    }
+    t = lexer_next_token(&l);
+    if (open == TOKEN_LBRACKET) {
+      return is_type_keyword(t.kind) || t.kind == TOKEN_IDENTIFIER || t.kind == TOKEN_STAR || t.kind == TOKEN_BANG || t.kind == TOKEN_LBRACKET || t.kind == TOKEN_LPAREN;
+    } else {
+      return t.kind == TOKEN_IDENTIFIER;
+    }
+  }
+  return false;
 }
 
 // Top-level statement dispatcher
@@ -1180,21 +1219,7 @@ static AstNode *parse_stmt(Parser *p) {
       check(p, TOKEN_METHOD) || check(p, TOKEN_INTERFACE))
     return parse_decl(p);
 
-  // Variable declarations routing
-  bool is_decl = false;
-  if (check(p, TOKEN_CONST) || check(p, TOKEN_VOLATILE) ||
-      is_type_keyword(p->current.kind) ||
-      check(p, TOKEN_STAR) || check(p, TOKEN_LBRACKET) ||
-      check(p, TOKEN_BANG) || check(p, TOKEN_LPAREN)) {
-    is_decl = true;
-  } else if (check(p, TOKEN_IDENTIFIER)) {
-    // Lookahead for IDENT IDENT pattern
-    if (peek(p).kind == TOKEN_IDENTIFIER) {
-      is_decl = true;
-    }
-  }
-
-  if (is_decl) {
+  if (is_var_decl_lookahead(p)) {
     bool is_const = match(p, TOKEN_CONST);
     bool is_volatile = match(p, TOKEN_VOLATILE);
     return parse_var_decl(p, is_const, is_volatile);
@@ -1240,11 +1265,11 @@ static AstNode *parse_catch(Parser *p) {
     if (match(p, TOKEN_PIPE)) {
       // catch |e| { ... } form
       Token err = expect(p, TOKEN_IDENTIFIER, "expected error name after '|'");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
       err_name = err.str_val.ptr;
       expect(p, TOKEN_PIPE, "expected '|' after error name");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
       handler = parse_block(p);
     } else {
@@ -1275,10 +1300,10 @@ static AstNode *parse_param(Parser *p) {
   }
 
   Token name = expect(p, TOKEN_IDENTIFIER, "expected parameter name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   expect(p, TOKEN_COLON, "expected ':' after parameter name");
-  if (p->had_error)
+  if (p->panic_mode)
     return NULL;
   AstNode *type = parse_type_expr(p);
   if (!type)
@@ -1304,7 +1329,7 @@ static AstNode *parse_param_list(Parser *p) {
     }
     if (!check(p, TOKEN_RPAREN)) {
       expect(p, TOKEN_COMMA, "expected ',' or ')' in parameter list");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
     }
   }
@@ -1370,16 +1395,16 @@ static AstNode *parse_primary(Parser *p) {
   if (check(p, TOKEN_PROMOTE)) {
     Token prom_tok = advance(p);
     expect(p, TOKEN_LPAREN, "expected '(' after 'promote'");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *expr = parse_expr(p);
     if (!expr)
       return NULL;
     expect(p, TOKEN_RPAREN, "expected ')' after promote expression");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     expect(p, TOKEN_AS, "expected 'as' after promote()");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     // target realm keyword
     MemoryRealm target;
@@ -1405,7 +1430,7 @@ static AstNode *parse_primary(Parser *p) {
     AstNode *head = NULL, *tail = NULL;
     while (match(p, TOKEN_DOT)) {
       Token seg = expect(p, TOKEN_IDENTIFIER, "expected error name after '.'");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
       AstNode *seg_node = ast_new_identifier(p->arena, seg.str_val.ptr);
       seg_node->line = seg.line;
@@ -1470,7 +1495,7 @@ static AstNode *parse_primary(Parser *p) {
       elems = head;
     }
     expect(p, TOKEN_RBRACKET, "expected ']' after array literal");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     AstNode *n = ast_new_array_literal(p->arena, elems);
     n->line = tok.line;
@@ -1495,7 +1520,7 @@ static AstNode *parse_primary(Parser *p) {
         tail = elem;
       } while (match(p, TOKEN_COMMA));
       expect(p, TOKEN_RPAREN, "expected ')' after tuple");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
       AstNode *n = ast_new_tuple_expr(p->arena, head);
       n->line = tok.line;
@@ -1503,7 +1528,7 @@ static AstNode *parse_primary(Parser *p) {
       return n;
     }
     expect(p, TOKEN_RPAREN, "expected ')' after expression");
-    if (p->had_error)
+    if (p->panic_mode)
       return NULL;
     return first; // grouped expression
   }
@@ -1532,7 +1557,7 @@ static AstNode *parse_postfix(Parser *p) {
       Token open = advance(p);
       AstNode *args = parse_arg_list(p);
       expect(p, TOKEN_RPAREN, "expected ')' after arguments");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
       AstNode *n = ast_new_call(p->arena, left, args);
       n->line = open.line;
@@ -1546,7 +1571,7 @@ static AstNode *parse_postfix(Parser *p) {
       if (!index)
         return NULL;
       expect(p, TOKEN_RBRACKET, "expected ']' after index");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
       AstNode *n = ast_new_index(p->arena, left, index);
       n->line = open.line;
@@ -1558,7 +1583,7 @@ static AstNode *parse_postfix(Parser *p) {
       Token dot = advance(p);
       Token field =
           expect(p, TOKEN_IDENTIFIER, "expected field name after '.'");
-      if (p->had_error)
+      if (p->panic_mode)
         return NULL;
       AstNode *n = ast_new_field(p->arena, left, field.str_val.ptr);
       n->line = dot.line;
