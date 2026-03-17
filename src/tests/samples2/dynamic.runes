@@ -1,0 +1,4 @@
+
+flex f test() {
+    dynamic f test2() {}    
+}

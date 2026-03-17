@@ -146,6 +146,8 @@ static TokenKind identifier_kind(Lexer *L) {
   case 'a':
     if (L->current - L->start > 1) {
       switch (L->start[1]) {
+      case 'n':
+        return check_keyword(L, 2, 1, "d", TOKEN_AND);
       case 's':
         if (L->current - L->start == 2)
           return TOKEN_AS;
@@ -155,6 +157,8 @@ static TokenKind identifier_kind(Lexer *L) {
       }
     }
     break;
+  case 'o':
+    return check_keyword(L, 1, 1, "r", TOKEN_OR);
   case 'b':
     if (L->current - L->start > 1) {
       switch (L->start[1]) {

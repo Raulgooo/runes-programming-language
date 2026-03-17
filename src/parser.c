@@ -25,7 +25,8 @@ static AstNode *parse_decl(Parser *p);
 static AstNode *parse_stmt(Parser *p);
 static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
                                 Attr *attrs, bool body_allowed);
-static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile, Attr *attrs);
+static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile,
+                               Attr *attrs);
 static bool is_var_decl_lookahead(Parser *p);
 static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs);
 static AstNode *parse_variant_decl(Parser *p, bool is_pub);
@@ -258,20 +259,22 @@ static AstNode *parse_type_expr(Parser *p) {
       check(p, TOKEN_STR) || check(p, TOKEN_CHAR) || check(p, TOKEN_USIZE) ||
       check(p, TOKEN_VOID)) {
     Token name_tok = advance(p);
-    
+
     // Check for qualified type: Module.Type
     if (name_tok.kind == TOKEN_IDENTIFIER && check(p, TOKEN_DOT)) {
       Token module_tok = name_tok;
       advance(p); // consume '.'
-      Token type_tok = expect(p, TOKEN_IDENTIFIER, "expected type name after '.'");
+      Token type_tok =
+          expect(p, TOKEN_IDENTIFIER, "expected type name after '.'");
       if (p->panic_mode)
         return NULL;
-      AstNode *n = ast_new_type_qualified(p->arena, module_tok.str_val.ptr, type_tok.str_val.ptr);
+      AstNode *n = ast_new_type_qualified(p->arena, module_tok.str_val.ptr,
+                                          type_tok.str_val.ptr);
       n->line = module_tok.line;
       n->col = module_tok.column;
       return n;
     }
-    
+
     const char *name;
     if (name_tok.kind == TOKEN_IDENTIFIER) {
       name = name_tok.str_val.ptr;
@@ -372,7 +375,8 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
 
 // Spec §2: [const] [volatile] Type name = init
 //   i32 x = 42 / const i32 MAX = 512 / volatile *u32 uart = 0x10000000
-static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile, Attr *attrs) {
+static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile,
+                               Attr *attrs) {
   AstNode *head = NULL, *tail = NULL;
 
   do {
@@ -1163,7 +1167,8 @@ static AstNode *parse_struct_pattern(Parser *p) {
     uint32_t field_line = 0, field_col = 0;
 
     // Check if this is a named field (Identifier:) or positional field
-    if ((check(p, TOKEN_IDENTIFIER) || check(p, TOKEN_F)) && peek(p).kind == TOKEN_COLON) {
+    if ((check(p, TOKEN_IDENTIFIER) || check(p, TOKEN_F)) &&
+        peek(p).kind == TOKEN_COLON) {
       // Named field: name: pattern
       Token name_tok;
       if (check(p, TOKEN_IDENTIFIER)) {
@@ -1223,9 +1228,10 @@ static AstNode *parse_struct_pattern(Parser *p) {
 // Forward declaration
 static AstNode *parse_pattern(Parser *p);
 
-// Parse a primary pattern (literals, identifiers, struct patterns, variant constructors)
-// In pattern context, Name(...) is ALWAYS parsed as a StructPattern.
-// The type checker will distinguish between struct patterns and variant patterns.
+// Parse a primary pattern (literals, identifiers, struct patterns, variant
+// constructors) In pattern context, Name(...) is ALWAYS parsed as a
+// StructPattern. The type checker will distinguish between struct patterns and
+// variant patterns.
 static AstNode *parse_primary_pattern(Parser *p) {
   // Struct/variant pattern: Vec2(x: 0.0, y) or RGB(r, g, b)
   if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_LPAREN) {
@@ -1244,13 +1250,14 @@ static AstNode *parse_pattern(Parser *p) {
   AstNode *left = parse_primary_pattern(p);
   if (!left)
     return NULL;
-  
+
   // Handle postfix operators like field access and calls
   while (true) {
     if (check(p, TOKEN_DOT)) {
       // Field access: MapError.AlreadyMapped
       Token dot = advance(p);
-      Token field = expect(p, TOKEN_IDENTIFIER, "expected field name after '.'");
+      Token field =
+          expect(p, TOKEN_IDENTIFIER, "expected field name after '.'");
       if (p->panic_mode)
         return NULL;
       AstNode *n = ast_new_field(p->arena, left, field.str_val.ptr);
@@ -1272,7 +1279,7 @@ static AstNode *parse_pattern(Parser *p) {
       break;
     }
   }
-  
+
   return left;
 }
 
@@ -1369,7 +1376,7 @@ static bool is_var_decl_lookahead(Parser *p) {
     // Need to check if there's a variable name after the type
     // Use lookahead lexer to check what comes after Module.Type
     Lexer l = *p->lexer;
-    Token t = p->next2; // Type name
+    Token t = p->next2;       // Type name
     t = lexer_next_token(&l); // Should be the variable name
     if (t.kind == TOKEN_IDENTIFIER)
       return true;
@@ -1389,12 +1396,13 @@ static bool is_var_decl_lookahead(Parser *p) {
   if (check(p, TOKEN_LBRACKET)) {
     // Array type: [N]T name or [N]Type name
     // Check if next is int literal or identifier (the size), and next2 is ]
-    if ((p->next.kind == TOKEN_INT_LITERAL || p->next.kind == TOKEN_IDENTIFIER) &&
+    if ((p->next.kind == TOKEN_INT_LITERAL ||
+         p->next.kind == TOKEN_IDENTIFIER) &&
         p->next2.kind == TOKEN_RBRACKET) {
       return true;
     }
   }
-  
+
   if (check(p, TOKEN_LPAREN)) {
     // Tuple type: (T, U) name
     // Use lookahead lexer to find the closing )
@@ -1684,6 +1692,7 @@ static AstNode *parse_primary(Parser *p) {
   // ── promote(expr) as realm — Spec §5: promote(&t) as dynamic ────────
   if (check(p, TOKEN_PROMOTE)) {
     Token prom_tok = advance(p);
+    skip_newlines(p);
     expect(p, TOKEN_LPAREN, "expected '(' after 'promote'");
     if (p->panic_mode)
       return NULL;
@@ -1717,6 +1726,7 @@ static AstNode *parse_primary(Parser *p) {
   // ── sizeof(T) — compile-time type size ──────────────────────────────
   if (check(p, TOKEN_SIZEOF)) {
     Token tok = advance(p);
+    skip_newlines(p);
     expect(p, TOKEN_LPAREN, "expected '(' after 'sizeof'");
     if (p->panic_mode)
       return NULL;
@@ -1735,6 +1745,7 @@ static AstNode *parse_primary(Parser *p) {
   // ── alignof(T) — compile-time type alignment ────────────────────────
   if (check(p, TOKEN_ALIGNOF)) {
     Token tok = advance(p);
+    skip_newlines(p);
     expect(p, TOKEN_LPAREN, "expected '(' after 'alignof'");
     if (p->panic_mode)
       return NULL;
@@ -1834,9 +1845,11 @@ static AstNode *parse_primary(Parser *p) {
   // ── parenthesized expression or tuple — Spec §5: (a, b) ────────────
   if (check(p, TOKEN_LPAREN)) {
     Token tok = advance(p);
+    skip_newlines(p);
     AstNode *first = parse_expr(p);
     if (!first)
       return NULL;
+    skip_newlines(p);
     if (match(p, TOKEN_COMMA)) {
       // tuple: (a, b, ...)
       AstNode *head = first, *tail = first;
@@ -1892,10 +1905,13 @@ static AstNode *parse_postfix(Parser *p) {
 
   while (true) {
     // ── call: foo(a, b) — Spec §4 ─────────────────────────────────────
+    // Note: No line check for calls to allow multi-line function calls
     if (check(p, TOKEN_LPAREN)) {
-      if (p->current.line > p->prev_line)
+      if (p->current.line > p->prev_line && left->kind != AST_IDENTIFIER &&
+          left->kind != AST_FIELD_EXPR)
         break;
       Token open = advance(p);
+      skip_newlines(p);
       AstNode *args = parse_arg_list(p);
       expect(p, TOKEN_RPAREN, "expected ')' after arguments");
       if (p->panic_mode)
@@ -1907,7 +1923,8 @@ static AstNode *parse_postfix(Parser *p) {
 
       // ── index: arr[0] — Spec §3 ───────────────────────────────────────
     } else if (check(p, TOKEN_LBRACKET)) {
-      if (p->current.line > p->prev_line)
+      if (p->current.line > p->prev_line && left->kind != AST_IDENTIFIER &&
+          left->kind != AST_FIELD_EXPR && left->kind != AST_INDEX_EXPR)
         break;
       Token open = advance(p);
       AstNode *index = parse_expr(p);
@@ -1935,8 +1952,6 @@ static AstNode *parse_postfix(Parser *p) {
 
       // ── range: 0..10 or 0..=10 — Spec §6 ─────────────────────────────
     } else if (check(p, TOKEN_RANGE)) {
-      if (p->current.line > p->prev_line)
-        break;
       Token range_tok = advance(p);
       AstNode *end = parse_additive(p); // range binds tighter than comparison
       if (!end)
@@ -1947,8 +1962,6 @@ static AstNode *parse_postfix(Parser *p) {
       left = n;
 
     } else if (check(p, TOKEN_RANGE_INC)) {
-      if (p->current.line > p->prev_line)
-        break;
       Token range_tok = advance(p);
       AstNode *end = parse_additive(p);
       if (!end)
@@ -1971,8 +1984,6 @@ static AstNode *parse_cast(Parser *p) {
     return NULL;
 
   while (check(p, TOKEN_AS)) {
-    if (p->current.line > p->prev_line)
-      break;
     Token as_tok = advance(p);
     AstNode *target = parse_type_expr(p);
     if (!target)
@@ -2167,6 +2178,7 @@ static AstNode *parse_try(Parser *p) {
 static AstNode *parse_arg_list(Parser *p) {
   AstNode *head = NULL, *tail = NULL;
 
+  skip_newlines(p);
   while (!check(p, TOKEN_RPAREN) && !check(p, TOKEN_EOF)) {
     AstNode *arg = NULL;
     // Named argument: x: 1.0
