@@ -385,6 +385,13 @@ AstNode *ast_new_asm_expr(Arena *arena, const char *code, const char *output) {
   return n;
 }
 
+AstNode *ast_new_named_arg(Arena *arena, const char *name, AstNode *value) {
+  AstNode *n = ast_alloc(arena, AST_NAMED_ARG);
+  n->as.named_arg.name = arena_strdup(arena, name);
+  n->as.named_arg.value = value;
+  return n;
+}
+
 AstNode *ast_new_volatile_expr(Arena *arena, AstNode *expr) {
   AstNode *n = ast_alloc(arena, AST_VOLATILE_EXPR);
   n->as.volatile_expr.expr = expr;

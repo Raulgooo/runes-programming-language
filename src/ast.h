@@ -143,6 +143,8 @@ typedef enum {
 
   // expressions — JSON (v0.1 placeholder; methods resolved as AST_CALL_EXPR)
   AST_JSON_EXPR,
+
+  AST_NAMED_ARG,
 } AstKind;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -468,6 +470,12 @@ typedef struct AstNode {
       char *output; // bound output register name; NULL if no -> binding
     } asm_expr;
 
+    // x: 1.0 (inside call)
+    struct {
+      char *name;
+      struct AstNode *value;
+    } named_arg;
+
     // volatile pointer read/write expression
     struct {
       struct AstNode *expr;
@@ -578,6 +586,7 @@ AstNode *ast_new_catch_expr(Arena *arena, AstNode *expr, const char *err_name,
                             AstNode *handler);
 AstNode *ast_new_error_expr(Arena *arena, AstNode *path);
 AstNode *ast_new_asm_expr(Arena *arena, const char *code, const char *output);
+AstNode *ast_new_named_arg(Arena *arena, const char *name, AstNode *value);
 AstNode *ast_new_volatile_expr(Arena *arena, AstNode *expr);
 
 // type expressions
