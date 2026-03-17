@@ -28,7 +28,7 @@ int main(int argc, char **argv) {
     fclose(f);
 
     Arena arena;
-    arena_init(&arena, 1024 * 1024);
+    arena_init(&arena);
 
     Lexer lexer;
     lexer_init(&lexer, source, NULL);
@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to parse %s\n", filename);
     }
 
-    arena_free(&arena);
+    arena_destroy(&arena);
     free(source);
 
     return 0;

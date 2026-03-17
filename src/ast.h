@@ -603,4 +603,11 @@ AstNode *ast_new_type_j(Arena *arena);
 // attributes
 Attr *attr_new(Arena *arena, const char *name, AstNode *arg);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Pretty Print
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ast_print(AstNode *node);
+void ast_print_ext(AstNode *node, int indent);
+
 #endif // RUNES_AST_H
