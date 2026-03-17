@@ -57,24 +57,23 @@ static bool match(Lexer *L, char expected) {
 // make_token — does NOT set union fields; caller must fill them in if needed.
 static Token make_token(Lexer *L, TokenKind kind) {
   Token token;
+  memset(&token, 0, sizeof(Token));
   token.kind = kind;
   token.start = L->start;
   token.length = (size_t)(L->current - L->start);
   token.line = L->line;
-  token.column = L->start_column;
-  // zero-initialize the union so callers that never set it get 0/NULL
-  token.int_val = 0;
+  token.column = L->column - (int)token.length;
   return token;
 }
 
 static Token error_token(Lexer *L) {
   Token token;
+  memset(&token, 0, sizeof(Token));
   token.kind = TOKEN_INVALID;
   token.start = L->start;
   token.length = (size_t)(L->current - L->start);
   token.line = L->line;
   token.column = L->column - (int)token.length;
-  token.int_val = 0;
   return token;
 }
 

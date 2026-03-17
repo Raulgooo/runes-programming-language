@@ -333,26 +333,26 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr 
 // Spec §2: [const] [volatile] Type name = init
 //   i32 x = 42 / const i32 MAX = 512 / volatile *u32 uart = 0x10000000
 static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile) {
-  if (is_const)
-    advance(p); // consume 'const'
-  if (is_volatile)
-    advance(p); // consume 'volatile'
-
+  Token start_tok = p->current;
   AstNode *type = NULL;
-  Token name_tok;
+  Token name_tok = {0};
+  AstNode *init = NULL;
 
-  // Resolve ambiguity: explicit type vs inferred type
-  // Explicit: Type name = ... (e.g. i32 x = 5, *u8 p, Vec2 v)
-  // Inferred: name = ...      (e.g. LIMIT = 1000)
+  // We are already past 'const' and 'volatile' if they were matched by caller.
+  // BUT we need to check if we have a type or if it's inferred.
+  
+  bool has_type = false;
   if (is_type_keyword(p->current.kind) ||
       (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER) ||
       check(p, TOKEN_STAR) || check(p, TOKEN_LBRACKET) ||
       check(p, TOKEN_BANG) || check(p, TOKEN_LPAREN)) {
+    has_type = true;
+  }
 
+  if (has_type) {
     type = parse_type_expr(p);
+    if (!type) return NULL;
     name_tok = expect(p, TOKEN_IDENTIFIER, "expected variable name");
-    if (p->had_error)
-      return NULL;
   } else {
     // Inferred type: const LIMIT = 1024
     name_tok = expect(p, TOKEN_IDENTIFIER, "expected variable name");
@@ -1171,7 +1171,7 @@ static AstNode *parse_stmt(Parser *p) {
     return parse_match_stmt(p);
   if (check(p, TOKEN_UNSAFE))
     return parse_unsafe_block(p);
-  // declarations
+  // declarations or expression statements
   if (check(p, TOKEN_PUB) || check(p, TOKEN_F) || check(p, TOKEN_TYPE) ||
       check(p, TOKEN_SCHEMA) || check(p, TOKEN_ERROR) || check(p, TOKEN_MOD) ||
       check(p, TOKEN_USE) || check(p, TOKEN_EXTERN) || check(p, TOKEN_HASH) ||
@@ -1179,25 +1179,27 @@ static AstNode *parse_stmt(Parser *p) {
       check(p, TOKEN_GC) || check(p, TOKEN_FLEX) || check(p, TOKEN_STACK) ||
       check(p, TOKEN_METHOD) || check(p, TOKEN_INTERFACE))
     return parse_decl(p);
-  // Spec §2: const i32 x = 5
-  if (check(p, TOKEN_CONST))
-    return parse_var_decl(p, true, false);
-  // Spec §12: volatile *u32 uart = ...
-  if (check(p, TOKEN_VOLATILE))
-    return parse_var_decl(p, false, true);
-  // Spec §2: i32 x = 5 — type-keyword var decl
-  if (is_type_keyword(p->current.kind))
-    return parse_var_decl(p, false, false);
-  // Spec §2: Vec2 v = Vec2(...) — user-type var decl (IDENT IDENT)
-  if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER)
-    return parse_var_decl(p, false, false);
-  // Spec §3: [5]i32 nums = ... — array type var decl
-  if (check(p, TOKEN_LBRACKET))
-    return parse_var_decl(p, false, false);
-  // Pointer/Fallible/Tuple decls
-  if (check(p, TOKEN_STAR) || check(p, TOKEN_BANG) || check(p, TOKEN_LPAREN))
-    return parse_var_decl(p, false, false);
-  // expression statement
+
+  // Variable declarations routing
+  bool is_decl = false;
+  if (check(p, TOKEN_CONST) || check(p, TOKEN_VOLATILE) ||
+      is_type_keyword(p->current.kind) ||
+      check(p, TOKEN_STAR) || check(p, TOKEN_LBRACKET) ||
+      check(p, TOKEN_BANG) || check(p, TOKEN_LPAREN)) {
+    is_decl = true;
+  } else if (check(p, TOKEN_IDENTIFIER)) {
+    // Lookahead for IDENT IDENT pattern
+    if (peek(p).kind == TOKEN_IDENTIFIER) {
+      is_decl = true;
+    }
+  }
+
+  if (is_decl) {
+    bool is_const = match(p, TOKEN_CONST);
+    bool is_volatile = match(p, TOKEN_VOLATILE);
+    return parse_var_decl(p, is_const, is_volatile);
+  }
+
   return parse_expr(p);
 }
 
