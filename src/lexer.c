@@ -437,7 +437,7 @@ static Token number(Lexer *L) {
     len = sizeof(buf) - 1;
   memcpy(buf, L->start, len);
   buf[len] = '\0';
-  tok.int_val = (int64_t)strtoll(buf, NULL, 10);
+  tok.int_val = (uint64_t)strtoull(buf, NULL, 0);
   (void)is_hex;
   return tok;
 }

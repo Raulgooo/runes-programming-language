@@ -345,8 +345,8 @@ typedef struct AstNode {
                                //   (_) AST_CALL_EXPR         → Variant(a, b, c)
                                //   AST_INT/FLOAT/STR_LIT → literal pattern
                                //   AST_FIELD_EXPR        → struct destructure
-      struct AstNode *guard; // NULL unless "pat if expr" guard form
-      struct AstNode *body;  // expression or AST_BLOCK
+      struct AstNode *guard;   // NULL unless "pat if expr" guard form
+      struct AstNode *body;    // expression or AST_BLOCK
     } match_arm;
 
     struct {
@@ -358,7 +358,7 @@ typedef struct AstNode {
     // ── Literals ─────────────────────────────────────────────────────────
 
     struct {
-      long long value;
+      unsigned long long value;
     } int_literal;
     struct {
       double value;

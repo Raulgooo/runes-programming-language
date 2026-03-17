@@ -114,18 +114,18 @@ typedef enum {
 } TokenKind;
 
 typedef struct {
-  TokenKind   kind;
-  const char *start;  /* pointer into source text */
-  size_t      length; /* byte length of the raw lexeme */
-  int         line;
-  int         column;
+  TokenKind kind;
+  const char *start; /* pointer into source text */
+  size_t length;     /* byte length of the raw lexeme */
+  int line;
+  int column;
   union {
-    int64_t  int_val;   /* TOKEN_INT_LITERAL */
-    double   float_val; /* TOKEN_FLOAT_LITERAL */
-    uint32_t char_val;  /* TOKEN_CHAR_LITERAL — Unicode codepoint */
+    uint64_t int_val;  /* TOKEN_INT_LITERAL */
+    double float_val;  /* TOKEN_FLOAT_LITERAL */
+    uint32_t char_val; /* TOKEN_CHAR_LITERAL — Unicode codepoint */
     struct {
       const char *ptr; /* interned, NUL-terminated, arena-owned */
-      size_t      len; /* byte length (not counting NUL) */
+      size_t len;      /* byte length (not counting NUL) */
     } str_val;         /* TOKEN_STRING_LITERAL, TOKEN_IDENTIFIER */
   };
 } Token;
@@ -134,10 +134,10 @@ typedef struct {
   const char *source;
   const char *current;
   const char *start;
-  int         line;
-  int         column;
-  int         start_column;
-  StrTab     *strtab; /* string-interning table, NULL → no interning */
+  int line;
+  int column;
+  int start_column;
+  StrTab *strtab; /* string-interning table, NULL → no interning */
 } Lexer;
 
 /* Pass strtab=NULL if you do not need interned identifiers/strings */
