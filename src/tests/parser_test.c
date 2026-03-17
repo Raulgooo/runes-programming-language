@@ -9,7 +9,7 @@
 void test_attributes() {
     printf("Running test_attributes...\n");
     Arena arena;
-    arena_init(&arena, 1024 * 1024);
+    arena_init(&arena);
 
     const char *source = 
         "#[align(4096)]\n"
@@ -24,7 +24,7 @@ void test_attributes() {
     Parser parser;
     parser_init(&parser, &lexer, &arena, "test.runes", source);
     
-    AstNode *program = parse_program(&parser);
+    AstNode *program = parser_parse(&parser);
     assert(program != NULL);
     assert(program->kind == AST_PROGRAM);
     
@@ -50,7 +50,7 @@ void test_attributes() {
     assert(fn_decl->as.func_decl.attrs->arg == NULL);
     
     printf("test_attributes passed!\n");
-    arena_free(&arena);
+    arena_destroy(&arena);
 }
 
 int main() {

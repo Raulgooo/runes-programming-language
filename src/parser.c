@@ -833,7 +833,7 @@ static AstNode *parse_decl(Parser *p) {
 }
 
 // public entry point
-AstNode *parse_program(Parser *p) {
+AstNode *parser_parse(Parser *p) {
   AstNode *head = NULL, *tail = NULL;
   while (!check(p, TOKEN_EOF)) {
     AstNode *d = parse_stmt(p);
