@@ -1,0 +1,206 @@
+--- 05_error_handling.runes
+    Tests: error set declarations, !T return type,
+    try propagation, catch (block + default), match Ok/Err,
+    chained try, errors from method calls.
+---
+
+-- ─────────────────────────────────────────────
+-- Error set declarations
+-- ─────────────────────────────────────────────
+
+error MathError = {
+    | DivByZero
+    | Overflow
+    | Underflow
+    | NaN
+}
+
+error PageFault = {
+    | NotMapped
+    | PermissionDenied
+    | OutOfMemory
+    | InvalidAddress
+}
+
+error ParseError = {
+    | UnexpectedToken
+    | UnexpectedEOF
+    | InvalidLiteral
+    | InvalidEscape
+}
+
+error IoError = {
+    | NotFound
+    | PermissionDenied
+    | BrokenPipe
+    | TimedOut
+}
+
+error MapError = {
+    | AlreadyMapped
+    | InvalidAddress
+    | OutOfMemory
+}
+
+-- ─────────────────────────────────────────────
+-- Fallible functions (!T return)
+-- ─────────────────────────────────────────────
+
+f divide(a: f32, b: f32) = result: !f32 {
+    if b == 0.0 {
+        result = error.MathError.DivByZero
+    } else {
+        result = a / b
+    }
+}
+
+f safe_sqrt(x: f32) = r: !f32 {
+    if x < 0.0 {
+        r = error.MathError.NaN
+    } else {
+        r = sqrt(x)
+    }
+}
+
+f alloc_page() = r: !*u8 {
+    *u8 p = raw_alloc(4096)
+    if p == 0 as *u8 {
+        r = error.PageFault.OutOfMemory
+    } else {
+        r = p
+    }
+}
+
+-- !void — can fail but returns nothing useful
+f map_region(start: u64, end: u64, flags: u64) = r: !void {
+    if end <= start {
+        r = error.MapError.InvalidAddress
+        return
+    }
+
+    u64 addr = start
+    while addr < end {
+        try map_page(addr, addr, flags)
+        addr = addr + 4096
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- try — propagate error to caller
+-- ─────────────────────────────────────────────
+
+f run_math() = r: !f32 {
+    f32 a = try divide(10.0, 2.0)
+    f32 b = try safe_sqrt(a)
+    r = b * 2.0
+}
+
+f setup_vm() = r: !void {
+    *u8 pml4_page = try alloc_page()
+    *u8 pdpt_page = try alloc_page()
+    try map_region(0xFFFF800000000000, 0xFFFF800000200000, 0x3)
+}
+
+-- ─────────────────────────────────────────────
+-- catch — handle inline
+-- ─────────────────────────────────────────────
+
+f safe_divide_block() {
+    f32 val = divide(10.0, 0.0) catch |e| {
+        print("caught error:", e)
+        return
+    }
+    print(val)
+}
+
+f safe_divide_with_log() {
+    f32 result = divide(100.0, 0.0) catch |e| {
+        log_error(e)
+        result = -1.0
+    }
+    print("result:", result)
+}
+
+-- catch with default value
+f safe_divide_default() {
+    f32 val = divide(10.0, 0.0) catch 0.0
+    print(val)
+
+    f32 root = safe_sqrt(-4.0) catch -1.0
+    print(root)
+}
+
+-- ─────────────────────────────────────────────
+-- match on !T result
+-- ─────────────────────────────────────────────
+
+f match_divide() {
+    match divide(10.0, 0.0) {
+        Ok(v)  -> print("result:", v),
+        Err(e) -> print("error:", e),
+    }
+}
+
+f match_alloc() = r: i32 {
+    r = match alloc_page() {
+        Ok(p)  -> {
+            memset(p, 0, 4096)
+            0
+        },
+        Err(e) -> {
+            log_error(e)
+            -1
+        },
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Chained try — realistic parse pipeline
+-- ─────────────────────────────────────────────
+
+f parse_and_eval(src: str) = r: !i32 {
+    *Node ast    = try parse(src)
+    i32   result = try eval(ast)
+    r = result
+}
+
+f parse_file(path: str) = r: !*Node {
+    str  source = try read_file(path)
+    *Node ast   = try parse(source)
+    r = ast
+}
+
+-- ─────────────────────────────────────────────
+-- Errors from method calls
+-- ─────────────────────────────────────────────
+
+method PageTable {
+    f map(self, vaddr: u64, paddr: u64, flags: u64) = r: !void {
+        u64 idx = (vaddr >> 12) & 0x1FF
+        if self.entries[idx] != 0 {
+            r = error.MapError.AlreadyMapped
+        } else {
+            self.entries[idx] = paddr | flags
+        }
+    }
+}
+
+f setup_paging() = r: !void {
+    PageTable pml4 = PageTable.new()
+    try pml4.map(0xFFFF800000000000, 0x0, 0x3)
+    try pml4.map(0xFFFF800000001000, 0x1000, 0x3)
+}
+
+-- ─────────────────────────────────────────────
+-- catch on method error
+-- ─────────────────────────────────────────────
+
+f map_or_panic(pt: PageTable, vaddr: u64, paddr: u64) {
+    pt.map(vaddr, paddr, 0x3) catch |e| {
+        match e {
+            MapError.AlreadyMapped  -> print("already mapped, skipping"),
+            MapError.InvalidAddress -> panic("invalid address"),
+            MapError.OutOfMemory    -> panic("OOM"),
+        }
+    }
+}

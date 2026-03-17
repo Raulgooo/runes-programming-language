@@ -1,0 +1,293 @@
+--- 11_edge_cases.runes
+    Targets formatter edge cases specifically:
+    — all three comment forms (single-line, multi-line, doc)
+    — one-liner functions (no braces)
+    — deeply nested memory strategy functions
+    — chained catch
+    — if-expression inside function return
+    — tuple destructuring at declaration
+    — pointer capture in for with body > 1 stmt
+    — match arm with multi-statement block
+    — promote both as dynamic and as gc in same function
+    — void method vs non-void method in same block
+    — match used as a statement and as an expression in the same fn
+    — array index on both LHS and RHS
+    — hex in array literal
+    — const with and without type annotation
+---
+
+-- ─────────────────────────────────────────────
+-- All comment forms
+-- ─────────────────────────────────────────────
+
+-- Single-line comment
+
+--- Multi-line comment
+    This spans several lines.
+    The formatter must preserve the opening and closing delimiters.
+    Interior indentation should be left untouched.
+---
+
+--- Doc comment — attached to the declaration immediately below.
+    The `add` function adds two 32-bit signed integers.
+
+    Parameters:
+    - `x`: left operand
+    - `y`: right operand
+
+    Returns `result`: the sum, may overflow.
+---
+f add(x: i32, y: i32) = result: i32 {
+    result = x + y
+}
+
+--- One-liner form — doc comment still attaches correctly. ---
+f square(x: i32) = r: i32  r = x * x
+
+--- Another doc comment. ---
+f cube(x: i32) = r: i32  r = x * x * x
+
+-- ─────────────────────────────────────────────
+-- One-liner functions (all strategies)
+-- ─────────────────────────────────────────────
+
+f negate(x: i32) = r: i32  r = x * -1
+f is_zero(x: i32) = r: bool  r = x == 0
+f identity(x: i32) = r: i32  r = x
+stack f s_add(a: i32, b: i32) = r: i32  r = a + b
+
+-- ─────────────────────────────────────────────
+-- Deeply nested memory strategies
+-- ─────────────────────────────────────────────
+
+-- f main() → regional f → f (max valid chain in non-main f)
+-- Actually main can orchestrate everything:
+
+f main() {
+    regional f prepare() {
+        f helper(p: *u8) {
+            *p = 0xFF
+        }
+
+        PageTable pt = PageTable(entries: [])
+        helper(&pt as *u8)
+    }
+
+    prepare()
+
+    dynamic f load() = r: *Config {
+        f validate(s: str) = ok: bool {
+            ok = s.len > 0
+        }
+
+        gc f fetch(name: str) = c: *Config {
+            c = config_load(name)
+        }
+
+        if validate("default") {
+            r = fetch("default")
+        } else {
+            r = 0 as *Config
+        }
+    }
+
+    *Config cfg = load()
+
+    gc f run(c: *Config) {
+        gc f parse_rules(c: *Config) = r: *RuleSet {
+            r = ruleset_from_config(c)
+        }
+
+        *RuleSet rs = parse_rules(c)
+        apply_rules(rs)
+    }
+
+    run(cfg)
+}
+
+-- ─────────────────────────────────────────────
+-- promote: both as dynamic and as gc in same fn
+-- ─────────────────────────────────────────────
+
+regional f split_promote() = r: (*Node, *Node) {
+    Node a = Node(val: 1, next: 0 as *Node)
+    Node b = Node(val: 2, next: 0 as *Node)
+
+    *Node a_dyn = promote(&a) as dynamic   -- caller must raw_free
+    *Node b_gc  = promote(&b) as gc        -- GC owns this one
+
+    r = (a_dyn, b_gc)
+}
+
+-- ─────────────────────────────────────────────
+-- if-expression in return position
+-- ─────────────────────────────────────────────
+
+f sign(x: i32) = r: str {
+    r = if x > 0 { "positive" } else if x < 0 { "negative" } else { "zero" }
+}
+
+f max3(a: i32, b: i32, c: i32) = r: i32 {
+    i32 ab = if a > b { a } else { b }
+    r = if ab > c { ab } else { c }
+}
+
+-- ─────────────────────────────────────────────
+-- Tuple destructuring at declaration site
+-- ─────────────────────────────────────────────
+
+f minmax(a: i32, b: i32) = r: (i32, i32) {
+    if a < b { r = (a, b) } else { r = (b, a) }
+}
+
+f demo_tuple_destruct() {
+    i32 lo, i32 hi        = minmax(7, 3)
+    *Node left, *Node right = make_pair(1, 2)
+    i32 x, i32 y, i32 z  = get_coords()
+}
+
+-- ─────────────────────────────────────────────
+-- Pointer-capture for loop with multi-statement body
+-- ─────────────────────────────────────────────
+
+f transform_buffer(buf: [16]i32, scale: i32, offset: i32) {
+    for (buf) |*n, i| {
+        i32 old = *n
+        *n = old * scale + offset
+        if *n < 0 {
+            *n = 0
+        }
+        print(i, old, *n)
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- match arm with multi-statement block body
+-- ─────────────────────────────────────────────
+
+type Event =
+    | KeyPress(u8)
+    | MouseMove(i32, i32)
+    | Resize(u32, u32)
+    | Quit
+
+f handle_event(ev: Event) = r: bool {
+    r = match ev {
+        KeyPress(code) -> {
+            if code == 0x1B {
+                print("escape pressed")
+                false
+            } else {
+                print("key:", code)
+                true
+            }
+        },
+        MouseMove(dx, dy) -> {
+            i32 dist = dx * dx + dy * dy
+            print("mouse moved dist^2:", dist)
+            true
+        },
+        Resize(w, h) -> {
+            print("new size:", w, h)
+            framebuffer_resize(w, h)
+            true
+        },
+        Quit -> false,
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- match as statement AND expression in same function
+-- ─────────────────────────────────────────────
+
+f dual_match(x: i32, color: Color) = r: str {
+    -- match as statement (side effects only)
+    match x {
+        0 -> print("zero branch"),
+        _ -> print("nonzero branch"),
+    }
+
+    -- match as expression (value produced)
+    r = match color {
+        Color.Red  -> "stop",
+        Color.Green -> "go",
+        _           -> "caution",
+    }
+}
+
+type Color =
+    | Red
+    | Green
+    | Blue
+
+-- ─────────────────────────────────────────────
+-- Array index on LHS and RHS in same expression
+-- ─────────────────────────────────────────────
+
+f rotate_left(arr: [8]i32) {
+    i32 first = arr[0]
+    for (0..7) |i| {
+        arr[i] = arr[i + 1]
+    }
+    arr[7] = first
+}
+
+-- Hex in array literal
+f init_magic_bytes() = r: [8]u8 {
+    r = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]   -- PNG header
+}
+
+-- ─────────────────────────────────────────────
+-- Chained catch (catch on catch result)
+-- ─────────────────────────────────────────────
+
+f chained_fallback(a: f32, b: f32, c: f32) = r: f32 {
+    -- Try first division; if it fails try second; if that fails use 0.0
+    f32 primary = divide(a, b) catch divide(a, c) catch 0.0
+    r = primary
+}
+
+f divide(a: f32, b: f32) = result: !f32 {
+    if b == 0.0 { result = error.MathError.DivByZero } else { result = a / b }
+}
+
+error MathError = {
+    | DivByZero
+}
+
+-- ─────────────────────────────────────────────
+-- void method vs non-void method in same block
+-- ─────────────────────────────────────────────
+
+type Counter = {
+    value: i32,
+    name:  str,
+}
+
+method Counter {
+    -- void: no return clause
+    f reset(self) {
+        self.value = 0
+    }
+
+    f increment(self) {
+        self.value = self.value + 1
+    }
+
+    f add(self, n: i32) {
+        self.value = self.value + n
+    }
+
+    -- non-void: named return
+    f get(self) = r: i32 {
+        r = self.value
+    }
+
+    f is_zero(self) = r: bool {
+        r = self.value == 0
+    }
+
+    f snapshot(self) = r: (str, i32) {
+        r = (self.name, self.value)
+    }
+}

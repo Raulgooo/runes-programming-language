@@ -1,0 +1,168 @@
+--- 03_control_flow.runes
+    Tests every control flow construct:
+    if/else if/else, if-as-expression,
+    while, loop + break, for (range, inclusive range,
+    array iteration, indexed, pointer-capture).
+---
+
+f demo_if(x: i32) {
+    -- Three-branch if
+    if x > 0 {
+        print("positive")
+    } else if x < 0 {
+        print("negative")
+    } else {
+        print("zero")
+    }
+
+    -- One-arm if (no else)
+    if x == 0 {
+        print("exactly zero")
+    }
+
+    -- Nested if
+    if x > 0 {
+        if x > 100 {
+            print("very large")
+        } else {
+            print("moderate")
+        }
+    }
+}
+
+f demo_if_expr(x: i32) = r: str {
+    -- if as expression (single-line arms)
+    str sign  = if x >= 0 { "non-negative" } else { "negative" }
+    i32 abs_x = if x < 0 { x * -1 } else { x }
+
+    -- if expression as function return
+    r = if x > 0 { "pos" } else if x < 0 { "neg" } else { "zero" }
+}
+
+f demo_while() {
+    bool running = true
+    i32  ticks   = 0
+
+    while running {
+        tick()
+        ticks = ticks + 1
+        if ticks >= 100 {
+            running = false
+        }
+    }
+
+    -- while with condition expression
+    i32 n = 1
+    while n < 1024 {
+        n = n * 2
+    }
+}
+
+f demo_loop() {
+    -- Basic infinite loop with break
+    loop {
+        if done() { break }
+    }
+
+    -- Loop with early break on condition
+    i32 count = 0
+    loop {
+        count = count + 1
+        if count == 10 { break }
+        if count == 5 {
+            print("halfway")
+        }
+    }
+
+    -- Nested loops
+    i32 i = 0
+    loop {
+        i32 j = 0
+        loop {
+            j = j + 1
+            if j == 5 { break }
+        }
+        i = i + 1
+        if i == 3 { break }
+    }
+}
+
+f demo_for_range() {
+    -- Exclusive range
+    for (0..10) |i| {
+        print(i)
+    }
+
+    -- Inclusive range
+    for (0..=10) |i| {
+        print(i)
+    }
+
+    -- Range starting at non-zero
+    for (5..20) |i| {
+        i32 doubled = i * 2
+        print(doubled)
+    }
+}
+
+f demo_for_array() {
+    [5]i32 nums  = [1, 2, 3, 4, 5]
+    [4]u8  bytes = [0xDE, 0xAD, 0xBE, 0xEF]
+
+    -- Value capture
+    for (nums) |n| {
+        print(n)
+    }
+
+    -- Index + value
+    for (nums) |n, i| {
+        print(i, n)
+    }
+
+    -- Pointer capture — mutate in place
+    for (nums) |*n| {
+        *n = *n * 2
+    }
+
+    -- Pointer capture with index
+    for (bytes) |*b, i| {
+        *b = *b ^ (i as u8)
+    }
+}
+
+f demo_nested_loops() {
+    [4]i32 row = [1, 2, 3, 4]
+    [4]i32 col = [10, 20, 30, 40]
+
+    for (row) |r| {
+        for (col) |c| {
+            i32 product = r * c
+            print(product)
+        }
+    }
+
+    -- Range nested in array loop
+    for (row) |val| {
+        for (0..val) |k| {
+            print(k)
+        }
+    }
+}
+
+-- All flow used together in a realistic scenario
+f process_buffer(buf: *u8, len: usize) = r: i32 {
+    r = 0
+
+    if len == 0 {
+        r = -1
+        return
+    }
+
+    for (0..len) |i| {
+        u8 byte = *(buf + i)
+        if byte == 0 {
+            break
+        }
+        r = r + 1
+    }
+}

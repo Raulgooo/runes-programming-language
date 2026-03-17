@@ -1,0 +1,269 @@
+--- 07_unsafe_systems.runes
+    Tests: extern, volatile, unsafe blocks, inline asm,
+    struct layout attributes (#[packed] #[align] #[repr(C)]),
+    #[section] #[link_name] #[callconv] #[interrupt].
+---
+
+use kernel.arch.x86
+
+-- ─────────────────────────────────────────────
+-- extern — FFI declarations
+-- ─────────────────────────────────────────────
+
+-- Standard C memory functions
+extern f memset(ptr: *u8, val: i32, len: usize)
+extern f memcpy(dst: *u8, src: *u8, len: usize)
+extern f memcmp(a: *u8, b: *u8, len: usize) = r: i32
+extern f memmove(dst: *u8, src: *u8, len: usize)
+
+-- External linker symbols (defined by the linker script)
+extern u64 KERNEL_START
+extern u64 KERNEL_END
+extern u64 BSS_START
+extern u64 BSS_END
+extern u64 STACK_TOP
+extern u64 STACK_BOTTOM
+
+-- ─────────────────────────────────────────────
+-- Struct layout annotations
+-- ─────────────────────────────────────────────
+
+-- 4KB-aligned, no padding (packed)
+#[packed]
+#[align(4096)]
+type PageTable = {
+    entries: [512]u64,
+}
+
+-- C-compatible struct (exact field layout)
+#[repr(C)]
+type SyscallFrame = {
+    rax: u64,
+    rbx: u64,
+    rcx: u64,
+    rdx: u64,
+    rsi: u64,
+    rdi: u64,
+    rbp: u64,
+    r8:  u64,
+    r9:  u64,
+    r10: u64,
+    r11: u64,
+    r12: u64,
+    r13: u64,
+    r14: u64,
+    r15: u64,
+}
+
+-- Regular packed struct (no alignment requirement)
+#[packed]
+type UARTRegs = {
+    volatile data:    u8,
+    volatile status:  u8,
+    volatile control: u16,
+    volatile baud:    u32,
+}
+
+#[repr(C)]
+#[align(16)]
+type InterruptFrame = {
+    rip:    u64,
+    cs:     u64,
+    rflags: u64,
+    rsp:    u64,
+    ss:     u64,
+}
+
+-- ─────────────────────────────────────────────
+-- Linker-placed globals
+-- ─────────────────────────────────────────────
+
+#[section(".rodata.tables")]
+const [256]u64 IDT_TABLE = []
+
+#[section(".rodata.gdt")]
+const [8]u64 GDT_TABLE = []
+
+#[section(".bss.stack")]
+#[align(4096)]
+[16384]u8 KERNEL_STACK = []
+
+#[section(".bss.heap")]
+#[align(4096)]
+[1048576]u8 KERNEL_HEAP = []
+
+-- ─────────────────────────────────────────────
+-- volatile — MMIO access
+-- ─────────────────────────────────────────────
+
+f uart_write(ch: u8) {
+    volatile *u32 uart = 0x10000000 as *u32
+    *uart = ch as u32
+}
+
+f uart_read() = r: u8 {
+    volatile *u32 uart = 0x10000000 as *u32
+    r = (*uart & 0xFF) as u8
+}
+
+f uart_status() = r: u8 {
+    volatile *u32 uart = 0x10000001 as *u32
+    r = (*uart & 0x01) as u8
+}
+
+f pic_eoi(irq: u8) {
+    volatile *u8 pic1 = 0x20 as *u8
+    volatile *u8 pic2 = 0xA0 as *u8
+    if irq >= 8 {
+        *pic2 = 0x20
+    }
+    *pic1 = 0x20
+}
+
+-- ─────────────────────────────────────────────
+-- unsafe blocks + raw pointer arithmetic
+-- ─────────────────────────────────────────────
+
+f zero_page(addr: *u8, len: usize) {
+    unsafe {
+        for (0..len) |i| {
+            *(addr + i) = 0
+        }
+    }
+}
+
+f copy_bytes(dst: *u8, src: *u8, len: usize) {
+    unsafe {
+        for (0..len) |i| {
+            *(dst + i) = *(src + i)
+        }
+    }
+}
+
+f read_phys(addr: u64) = r: u64 {
+    unsafe {
+        *u64 ptr = addr as *u64
+        r = *ptr
+    }
+}
+
+f write_phys(addr: u64, val: u64) {
+    unsafe {
+        *u64 ptr = addr as *u64
+        *ptr = val
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- inline assembly
+-- ─────────────────────────────────────────────
+
+f halt() {
+    asm { "cli; hlt" }
+}
+
+f cli() {
+    asm { "cli" }
+}
+
+f sti() {
+    asm { "sti" }
+}
+
+f read_cr3() = r: u64 {
+    asm { "mov %cr3, %rax" } -> r
+}
+
+f write_cr3(val: u64) {
+    asm { "mov %rax, %cr3" }
+}
+
+f read_cr2() = r: u64 {
+    asm { "mov %cr2, %rax" } -> r
+}
+
+f cpuid(leaf: u32) = r: (u32, u32, u32, u32) {
+    asm { "cpuid" } -> r
+}
+
+-- unsafe + asm combined
+f enable_sse() {
+    unsafe {
+        asm { "mov %cr0, %rax; and $0xFFFB, %ax; or $0x2, %ax; mov %rax, %cr0" }
+        asm { "mov %cr4, %rax; or $0x600, %rax; mov %rax, %cr4" }
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- #[callconv] — calling conventions
+-- ─────────────────────────────────────────────
+
+#[callconv("sysv64")]
+f syscall_entry(nr: u64, a: u64, b: u64, c: u64) = r: u64 {
+    r = dispatch(nr, a, b, c)
+}
+
+#[callconv("win64")]
+f efi_main(handle: *void, table: *EFISystemTable) = r: u64 {
+    init_output(table)
+    kernel_main()
+    r = 0
+}
+
+-- ─────────────────────────────────────────────
+-- #[interrupt] — ISRs
+-- ─────────────────────────────────────────────
+
+#[interrupt]
+f divide_by_zero_handler() {
+    uart_write(0x30)
+    loop { unsafe { asm { "cli; hlt" } } }
+}
+
+#[interrupt]
+f page_fault_handler() {
+    u64 cr2 = read_cr2()
+    handle_page_fault(cr2)
+}
+
+#[interrupt]
+f double_fault_handler() {
+    uart_write(0x21)
+    loop { unsafe { asm { "cli; hlt" } } }
+}
+
+#[interrupt]
+f general_protection_fault() {
+    panic("GPF")
+}
+
+#[interrupt]
+f timer_handler() {
+    scheduler.tick()
+    pic_eoi(0)
+}
+
+#[interrupt]
+f keyboard_handler() {
+    volatile *u8 port = 0x60 as *u8
+    u8 scancode = *port
+    keyboard.push(scancode)
+    pic_eoi(1)
+}
+
+-- ─────────────────────────────────────────────
+-- #[section] and #[link_name] — entry point
+-- ─────────────────────────────────────────────
+
+#[section(".text.boot")]
+#[link_name("_start")]
+pub f entry_point() {
+    -- Zero BSS region before anything else
+    u64 len = BSS_END - BSS_START
+    memset(BSS_START as *u8, 0, len)
+
+    kernel_main()
+
+    -- Should never reach here
+    loop { unsafe { asm { "cli; hlt" } } }
+}

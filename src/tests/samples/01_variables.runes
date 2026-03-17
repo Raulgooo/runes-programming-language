@@ -1,0 +1,61 @@
+--- 01_variables.runes
+    Tests every variable declaration form:
+    typed mutable, inferred, const (typed + inferred),
+    integer/float/bool/char/str, hex literals, arrays.
+---
+
+-- Typed mutable (explicit type prefix)
+i8  tiny     = -1
+i16 small    = 256
+i32 x        = 5
+i64 y        = 10
+u8  flags    = 0xFF
+u16 port     = 8080
+u32 mask     = 0x00FF00FF
+u64 addr     = 0xFFFF800000000000
+f32 pi       = 3.14159
+f64 e        = 2.718281828459045
+bool running = true
+bool done    = false
+char newline = '\n'
+char letter  = 'A'
+str  tag     = "runes"
+str  empty   = ""
+
+-- Type inference (no explicit type prefix)
+inferred_int   = 42
+inferred_float = 2.71
+inferred_str   = "hello, world"
+inferred_bool  = true
+
+-- Immutable — typed
+const i32 MAX_PAGES    = 512
+const u64 KERNEL_BASE  = 0xFFFF800000000000
+const u8  NULL_BYTE    = 0x00
+const f32 GRAVITY      = 9.81
+
+-- Immutable — inferred
+const LIMIT      = 1024
+const VERSION    = "v0.1"
+const DEBUG_MODE = false
+
+-- Arrays: fixed-size, zero-init, partial-init
+[5]i32   nums      = [1, 2, 3, 4, 5]
+[4]u8    rgba      = [255, 0, 128, 255]
+[512]u64 pml4      = []
+[256]u8  zero_page = []
+[8]f32   weights   = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+
+-- Array element access and mutation
+nums[0] = 10
+i32 first  = nums[0]
+i32 middle = nums[2]
+u8  alpha  = rgba[3]
+
+-- Raw pointer declaration
+*u8  raw_buf = 0 as *u8
+*u64 table   = 0xFFFF000000000000 as *u64
+
+-- Volatile pointer
+volatile *u32 uart = 0x10000000 as *u32
+volatile *u8  pic  = 0xFEC00000 as *u8

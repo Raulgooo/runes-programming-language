@@ -1,0 +1,215 @@
+--- 06_pattern_matching.runes
+    Tests: basic match statement, match-as-expression,
+    guards, destructuring, nested match, wildcard,
+    match on error results.
+---
+
+type Color =
+    | Red
+    | Green
+    | Blue
+    | RGB(u8, u8, u8)
+    | RGBA(u8, u8, u8, u8)
+    | Hex(str)
+
+type Shape =
+    | Circle(f32)
+    | Rect(f32, f32)
+    | Triangle(f32, f32, f32)
+    | Point
+
+type Token =
+    | Ident(str)
+    | Number(i64)
+    | Float(f64)
+    | Punct(char)
+    | Eof
+
+type Vec2 = {
+    x: f32,
+    y: f32,
+}
+
+error MathError = {
+    | DivByZero
+    | Overflow
+}
+
+-- ─────────────────────────────────────────────
+-- Basic match statement
+-- ─────────────────────────────────────────────
+
+f describe_color(c: Color) {
+    match c {
+        Red          -> print("red"),
+        Green        -> print("green"),
+        Blue         -> print("blue"),
+        RGB(r, g, b) -> print("rgb:", r, g, b),
+        RGBA(r,g,b,a)-> print("rgba:", r, g, b, a),
+        Hex(s)       -> print("hex:", s),
+    }
+}
+
+f describe_token(t: Token) {
+    match t {
+        Ident(name) -> print("identifier:", name),
+        Number(n)   -> print("int literal:", n),
+        Float(f)    -> print("float literal:", f),
+        Punct(ch)   -> print("punctuation:", ch),
+        Eof         -> print("end of file"),
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Match as expression
+-- ─────────────────────────────────────────────
+
+f color_name(c: Color) = r: str {
+    r = match c {
+        Red   -> "red",
+        Green -> "green",
+        Blue  -> "blue",
+        _     -> "custom",
+    }
+}
+
+f shape_area(s: Shape) = r: f32 {
+    r = match s {
+        Circle(radius)        -> 3.14159 * radius * radius,
+        Rect(w, h)            -> w * h,
+        Triangle(a, b, c)     -> {
+            -- Heron's formula
+            f32 sp = (a + b + c) / 2.0
+            sqrt(sp * (sp - a) * (sp - b) * (sp - c))
+        },
+        Point                 -> 0.0,
+    }
+}
+
+f token_len(t: Token) = r: i32 {
+    r = match t {
+        Ident(s)  -> s.len as i32,
+        Number(_) -> 1,
+        Float(_)  -> 1,
+        Punct(_)  -> 1,
+        Eof       -> 0,
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Guards
+-- ─────────────────────────────────────────────
+
+f classify_int(x: i32) {
+    match x {
+        n if n < 0     -> print("negative:", n),
+        0              -> print("zero"),
+        n if n < 10    -> print("small:", n),
+        n if n < 100   -> print("medium:", n),
+        n if n >= 1000 -> print("large:", n),
+        _              -> print("normal"),
+    }
+}
+
+f classify_float(x: f32) = r: str {
+    r = match x {
+        n if n < 0.0    -> "negative",
+        n if n == 0.0   -> "zero",
+        n if n < 1.0    -> "fractional",
+        n if n < 1000.0 -> "normal",
+        _               -> "large",
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Struct destructuring
+-- ─────────────────────────────────────────────
+
+f classify_point(p: Vec2) {
+    match p {
+        Vec2(x: 0.0, y: 0.0) -> print("origin"),
+        Vec2(x: 0.0, y)      -> print("y-axis, y =", y),
+        Vec2(x, y: 0.0)      -> print("x-axis, x =", x),
+        Vec2(x, y)           -> print("point:", x, y),
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Nested match
+-- ─────────────────────────────────────────────
+
+f describe_shape_color(s: Shape, c: Color) {
+    match s {
+        Circle(r) -> {
+            str col_name = match c {
+                Red   -> "red",
+                Green -> "green",
+                _     -> "other",
+            }
+            print("circle r=", r, "color=", col_name)
+        },
+        Rect(w, h) -> print("rect", w, h),
+        _          -> print("other shape"),
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Wildcard and exhaustive matching
+-- ─────────────────────────────────────────────
+
+f has_alpha(c: Color) = r: bool {
+    r = match c {
+        RGBA(_, _, _, a) -> a < 255,
+        _                -> false,
+    }
+}
+
+f is_punctuation(t: Token) = r: bool {
+    r = match t {
+        Punct(_) -> true,
+        _        -> false,
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Match on !T result (Ok/Err)
+-- ─────────────────────────────────────────────
+
+f divide(a: f32, b: f32) = result: !f32 {
+    if b == 0.0 {
+        result = error.MathError.DivByZero
+    } else {
+        result = a / b
+    }
+}
+
+f match_result() {
+    match divide(10.0, 2.0) {
+        Ok(v)  -> print("ok:", v),
+        Err(e) -> print("err:", e),
+    }
+}
+
+f match_result_expr() = r: f32 {
+    r = match divide(10.0, 0.0) {
+        Ok(v)  -> v,
+        Err(_) -> 0.0,
+    }
+}
+
+-- Complex: match result inside a loop
+f process_values(buf: [8]f32, divisor: f32) {
+    for (buf) |val| {
+        match divide(val, divisor) {
+            Ok(result) -> {
+                if result > 1.0 {
+                    print("large:", result)
+                } else {
+                    print("small:", result)
+                }
+            },
+            Err(MathError.DivByZero) -> print("skipping zero div"),
+            Err(e)                   -> print("unexpected:", e),
+        }
+    }
+}

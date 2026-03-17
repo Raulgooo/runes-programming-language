@@ -1,0 +1,238 @@
+--- 08_schema_json.runes
+    Tests: type → J conversion, schema declarations,
+    schema inheritance (:), field annotations (#[json] #[json_skip]),
+    nested schemas, as J, as T, J methods (string/pretty/get/set/has).
+---
+
+-- ─────────────────────────────────────────────
+-- Simple type serialized to J
+-- ─────────────────────────────────────────────
+
+type Point = {
+    x: f32,
+    y: f32,
+}
+
+type Vec3 = {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+f demo_type_to_json() {
+    Point p = Point(x: 1.0, y: 2.0)
+    j = p as J
+
+    -- J methods
+    print(j.string())         -- {"x":1.0,"y":2.0}
+    print(j.pretty())
+
+    f32  x     = j.get("x")  -- 1.0
+    bool has_z = j.has("z")  -- false
+
+    j.set("x", 5.0)
+    j.set("y", -3.14)
+}
+
+-- Deserialize JSON string back to type
+f demo_deserialize() {
+    str raw    = "{\"x\":3.0,\"y\":4.0}"
+    J   parsed = raw as J
+    Point p    = parsed as Point
+
+    print(p.x, p.y)
+
+    -- Round-trip: type → J → type
+    Point original = Point(x: 10.0, y: 20.0)
+    J     j        = original as J
+    str   s        = j.string()
+
+    J     j2   = s as J
+    Point copy = j2 as Point
+}
+
+-- ─────────────────────────────────────────────
+-- schema declarations
+-- ─────────────────────────────────────────────
+
+schema Shoe = {
+    brand: str,
+    size:  f32,
+}
+
+schema Shirt = {
+    brand:  str,
+    color:  str,
+    size_s: str,
+}
+
+-- ─────────────────────────────────────────────
+-- Schema inheritance
+-- ─────────────────────────────────────────────
+
+schema RedShoe : Shoe = {
+    color: str = "red",
+}
+
+schema LimitedShoe : Shoe = {
+    edition:   str,
+    serial_no: i32,
+}
+
+-- Two-level inheritance chain
+schema SignedShoe : LimitedShoe = {
+    signed_by: str,
+}
+
+-- ─────────────────────────────────────────────
+-- Field annotations
+-- ─────────────────────────────────────────────
+
+schema User = {
+    name:       str,
+    age:        i32,
+    #[json("email_address")]
+    email:      str,
+    #[json_skip]
+    password:   str,
+    #[json("created_at")]
+    created:    i64,
+    #[json_skip]
+    session_id: str,
+}
+
+-- Multiple annotations on different fields
+schema ApiKey = {
+    #[json("key_id")]
+    id:         str,
+    #[json("key_value")]
+    value:      str,
+    #[json_skip]
+    raw_secret: str,
+    expires_at: i64,
+}
+
+-- ─────────────────────────────────────────────
+-- Nested schemas
+-- ─────────────────────────────────────────────
+
+schema Address = {
+    street: str,
+    city:   str,
+    state:  str,
+    zip:    str,
+}
+
+schema Person = {
+    name:    str,
+    age:     i32,
+    address: Address,
+}
+
+schema Company = {
+    name:      str,
+    ceo:       Person,
+    hq:        Address,
+    employee_count: i32,
+}
+
+-- ─────────────────────────────────────────────
+-- Using schemas as function parameters (polymorphism)
+-- ─────────────────────────────────────────────
+
+-- Accepts any schema that satisfies Shoe
+f process_shoe(shoe: Shoe) {
+    print(shoe.brand)
+    print(shoe.size)
+}
+
+f ship_shoe(shoe: Shoe, destination: str) {
+    j = shoe as J
+    j.set("destination", destination)
+    print(j.string())
+}
+
+-- ─────────────────────────────────────────────
+-- Full schema usage demo
+-- ─────────────────────────────────────────────
+
+f demo_schema_inheritance() {
+    -- RedShoe satisfies Shoe
+    RedShoe s = RedShoe(brand: "Nike", size: 10.5)
+    process_shoe(s)            -- ✅ accepted as Shoe
+
+    j = s as J
+    print(j.string())          -- {"brand":"Nike","size":10.5,"color":"red"}
+
+    RedShoe s2 = j as RedShoe  -- deserialize back
+    print(s2.brand)
+}
+
+f demo_user_json() {
+    User u = User(
+        name:       "raul",
+        age:        18,
+        email:      "r@uanl.mx",
+        password:   "hunter2",
+        created:    1700000000,
+        session_id: "abc123",
+    )
+
+    j = u as J
+    -- password and session_id excluded; email → "email_address"; created → "created_at"
+    print(j.string())
+
+    -- Mutation via J
+    j.set("age", 19)
+    bool has_pw = j.has("password")   -- false, was skipped
+
+    -- Deserialize back
+    User u2 = j as User
+    print(u2.name, u2.age)
+}
+
+f demo_nested_schema() {
+    Company c = Company(
+        name: "UANL Inc.",
+        ceo: Person(
+            name: "raul",
+            age:  18,
+            address: Address(
+                street: "Av. Morones Prieto",
+                city:   "Monterrey",
+                state:  "Nuevo León",
+                zip:    "64460",
+            ),
+        ),
+        hq: Address(
+            street: "Av. Universidad",
+            city:   "San Nicolás",
+            state:  "Nuevo León",
+            zip:    "66455",
+        ),
+        employee_count: 42,
+    )
+
+    j = c as J
+    print(j.pretty())
+
+    -- Access nested field
+    str ceo_name = j.get("ceo").get("name")
+    print(ceo_name)
+}
+
+f demo_api_key() {
+    ApiKey k = ApiKey(
+        id:         "key_001",
+        value:      "abc.def.ghi",
+        raw_secret: "supersecret",
+        expires_at: 9999999999,
+    )
+
+    j = k as J
+    -- raw_secret excluded; id → "key_id"; value → "key_value"
+    print(j.string())
+
+    bool has_raw = j.has("raw_secret")  -- false
+    bool has_id  = j.has("key_id")      -- true
+}

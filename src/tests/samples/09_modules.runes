@@ -1,0 +1,163 @@
+--- 09_modules.runes
+    Tests: mod declarations, pub visibility, use (whole module,
+    specific symbol, nested path), mixed pub/private functions.
+---
+
+-- ─────────────────────────────────────────────
+-- Imports
+-- ─────────────────────────────────────────────
+
+-- Whole-module import
+use kernel
+use scheduler
+
+-- Specific symbol import
+use kernel.alloc_page
+use kernel.free_page
+
+-- Nested path import
+use kernel.arch.x86.read_cr3
+use kernel.arch.x86.write_cr3
+use kernel.arch.x86.read_cr2
+
+-- ─────────────────────────────────────────────
+-- Module definitions
+-- ─────────────────────────────────────────────
+
+mod memory {
+    --- alloc_page — allocate one 4KB page from the arena.
+        Returns an error if the bump allocator is exhausted.
+    ---
+    pub regional f alloc_page() = r: !*u8 {
+        r = bump_alloc(4096)
+        if r == 0 as *u8 {
+            r = error.MemError.OutOfMemory
+        }
+    }
+
+    pub f free_page(p: *u8) {
+        raw_free(p)
+    }
+
+    -- Not exported — internal accounting
+    f get_heap_top() = r: u64 {
+        r = heap_cursor
+    }
+
+    f align_up(addr: u64, align: u64) = r: u64 {
+        r = (addr + align - 1) & (0 - align)
+    }
+}
+
+mod scheduler {
+    type Task = {
+        id:    i32,
+        name:  str,
+        state: i32,   -- 0=ready 1=running 2=blocked
+    }
+
+    pub f add(t: Task) {
+        task_queue_push(t)
+    }
+
+    pub f run_next() = r: bool {
+        r = task_queue_len() > 0
+        if r {
+            Task t = task_queue_pop()
+            t.state = 1
+            t.run()
+        }
+    }
+
+    pub f tick() {
+        preempt_current()
+    }
+
+    -- Internal
+    f preempt_current() {
+        Task cur = task_queue_current()
+        cur.state = 0
+        task_queue_push(cur)
+        run_next()
+    }
+
+    f idle() {
+        unsafe { asm { "hlt" } }
+    }
+}
+
+mod io {
+    pub f write_byte(port: u16, val: u8) {
+        unsafe { asm { "outb %al, %dx" } }
+    }
+
+    pub f read_byte(port: u16) = r: u8 {
+        unsafe { asm { "inb %dx, %al" } -> r }
+    }
+
+    pub f write_word(port: u16, val: u16) {
+        unsafe { asm { "outw %ax, %dx" } }
+    }
+
+    pub f read_word(port: u16) = r: u16 {
+        unsafe { asm { "inw %dx, %ax" } -> r }
+    }
+}
+
+-- Nested module definition
+mod kernel {
+    mod arch {
+        mod x86 {
+            pub f read_cr3() = r: u64 {
+                asm { "mov %cr3, %rax" } -> r
+            }
+
+            pub f write_cr3(val: u64) {
+                asm { "mov %rax, %cr3" }
+            }
+
+            pub f read_cr2() = r: u64 {
+                asm { "mov %cr2, %rax" } -> r
+            }
+
+            pub f halt() {
+                asm { "cli; hlt" }
+            }
+        }
+    }
+
+    pub regional f alloc_page() = r: !*u8 {
+        r = memory.alloc_page()
+    }
+
+    pub f free_page(p: *u8) {
+        memory.free_page(p)
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Using modules
+-- ─────────────────────────────────────────────
+
+f demo_modules() {
+    -- Module-qualified call
+    *u8 page = memory.alloc_page() catch |e| {
+        print("alloc failed:", e)
+        return
+    }
+
+    -- Imported symbol — no qualification needed
+    u64 cr3 = read_cr3()
+
+    scheduler.Task t = scheduler.Task(id: 1, name: "init", state: 0)
+    scheduler.add(t)
+    scheduler.run_next()
+
+    memory.free_page(page)
+
+    -- io module
+    io.write_byte(0x3F8, 'H' as u8)
+    io.write_byte(0x3F8, 'i' as u8)
+
+    u8 status = io.read_byte(0x3F8)
+}

@@ -1,0 +1,243 @@
+--- 04_types_interfaces.runes
+    Tests: one-liner structs, full structs with defaults,
+    variants (ADTs), method blocks, interface definitions,
+    interface implementations, struct instantiation patterns.
+    Note: generics removed from v0.1.
+---
+
+-- ─────────────────────────────────────────────
+-- Struct declarations
+-- ─────────────────────────────────────────────
+
+-- One-liner struct
+type Vec2 = x: f32, y: f32
+
+-- Full struct with defaults
+type Vec3 = {
+    x: f32 = 0.0,
+    y: f32 = 0.0,
+    z: f32 = 0.0,
+}
+
+-- Struct without defaults (all fields required)
+type Node = {
+    val:  i32,
+    next: *Node,
+}
+
+type Rect = {
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+}
+
+-- Struct with nested type
+type Transform = {
+    origin:   Vec2,
+    scale:    Vec2,
+    rotation: f32,
+}
+
+-- Struct with array field
+type Palette = {
+    name:    str,
+    colors:  [16]u32,
+    count:   u8,
+}
+
+-- ─────────────────────────────────────────────
+-- Variant types (ADTs)
+-- ─────────────────────────────────────────────
+
+type Color =
+    | Red
+    | Green
+    | Blue
+    | RGB(u8, u8, u8)
+    | RGBA(u8, u8, u8, u8)
+    | Hex(str)
+
+type Shape =
+    | Circle(f32)
+    | Rect(f32, f32)
+    | Triangle(Vec2, Vec2, Vec2)
+    | Point
+
+type Token =
+    | Ident(str)
+    | Number(i64)
+    | Float(f64)
+    | Punct(char)
+    | Eof
+
+type Result =
+    | Ok(i32)
+    | Err(str)
+
+-- ─────────────────────────────────────────────
+-- Method blocks
+-- ─────────────────────────────────────────────
+
+method Vec2 {
+    f length(self) = r: f32 {
+        r = sqrt(self.x * self.x + self.y * self.y)
+    }
+
+    f scale(self, factor: f32) = r: Vec2 {
+        r = Vec2(x: self.x * factor, y: self.y * factor)
+    }
+
+    f add(self, other: Vec2) = r: Vec2 {
+        r = Vec2(x: self.x + other.x, y: self.y + other.y)
+    }
+
+    f dot(self, other: Vec2) = r: f32 {
+        r = self.x * other.x + self.y * other.y
+    }
+
+    f zero() = r: Vec2 {
+        r = Vec2(x: 0.0, y: 0.0)
+    }
+
+    f eq(self, other: Vec2) = r: bool {
+        r = self.x == other.x and self.y == other.y
+    }
+}
+
+method Vec3 {
+    f length(self) = r: f32 {
+        r = sqrt(self.x * self.x + self.y * self.y + self.z * self.z)
+    }
+
+    f add(self, other: Vec3) = r: Vec3 {
+        r = Vec3(x: self.x + other.x, y: self.y + other.y, z: self.z + other.z)
+    }
+
+    f cross(self, other: Vec3) = r: Vec3 {
+        r = Vec3(
+            x: self.y * other.z - self.z * other.y,
+            y: self.z * other.x - self.x * other.z,
+            z: self.x * other.y - self.y * other.x,
+        )
+    }
+}
+
+method Rect {
+    f area(self) = r: f32 {
+        r = self.w * self.h
+    }
+
+    f perimeter(self) = r: f32 {
+        r = 2.0 * (self.w + self.h)
+    }
+
+    f contains(self, p: Vec2) = r: bool {
+        r = p.x >= self.x and p.x <= self.x + self.w
+            and p.y >= self.y and p.y <= self.y + self.h
+    }
+}
+
+-- Method block with memory strategy annotation
+method Node {
+    dynamic f new(val: i32) = r: *Node {
+        r = raw_alloc(sizeof(Node))
+        r.val  = val
+        r.next = 0 as *Node
+    }
+
+    f is_tail(self) = r: bool {
+        r = self.next == 0 as *Node
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Interfaces
+-- ─────────────────────────────────────────────
+
+interface Drawable {
+    f draw(self)
+    f bbox(self) = r: (f32, f32, f32, f32)
+}
+
+interface Hashable {
+    f hash(self) = r: u64
+    f eq(self, other: Hashable) = r: bool
+}
+
+interface Serializable {
+    f to_bytes(self) = r: *u8
+    f byte_len(self) = r: usize
+}
+
+-- Interface implementation for Vec2
+method Drawable for Vec2 {
+    f draw(self) {
+        render_point(self.x, self.y)
+    }
+
+    f bbox(self) = r: (f32, f32, f32, f32) {
+        r = (self.x, self.y, self.x, self.y)
+    }
+}
+
+-- Interface implementation for Rect
+method Drawable for Rect {
+    f draw(self) {
+        render_rect(self.x, self.y, self.w, self.h)
+    }
+
+    f bbox(self) = r: (f32, f32, f32, f32) {
+        r = (self.x, self.y, self.x + self.w, self.y + self.h)
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Instantiation patterns
+-- ─────────────────────────────────────────────
+
+f demo_instantiation() {
+    -- Full field specification
+    Vec2 v      = Vec2(x: 1.0, y: 2.0)
+    Vec3 w      = Vec3(x: 1.0, y: 0.0, z: -1.0)
+
+    -- Defaults (omit all fields)
+    Vec3 origin = Vec3()
+
+    -- Partial — only override some fields
+    Vec3 up     = Vec3(y: 1.0)
+
+    -- Nested struct instantiation
+    Transform t = Transform(
+        origin:   Vec2(x: 0.0, y: 0.0),
+        scale:    Vec2(x: 1.0, y: 1.0),
+        rotation: 0.0,
+    )
+
+    -- Variants
+    Color red   = Color.Red
+    Color green = Color.Green
+    Color mixed = Color.RGB(200, 100, 50)
+    Color alpha = Color.RGBA(255, 128, 0, 200)
+    Color web   = Color.Hex("#4B0082")
+
+    Shape circle = Shape.Circle(5.0)
+    Shape box    = Shape.Rect(10.0, 20.0)
+    Shape pt     = Shape.Point
+
+    -- Method calls
+    f32  len    = v.length()
+    Vec2 scaled = v.scale(2.0)
+    Vec2 sum    = v.add(Vec2(x: 3.0, y: 4.0))
+    f32  d      = v.dot(sum)
+
+    -- Function accepting interface
+    render(v)
+    render(Rect(x: 0.0, y: 0.0, w: 100.0, h: 50.0))
+}
+
+-- Function that accepts an interface type
+f render(d: Drawable) {
+    (f32, f32, f32, f32) box = d.bbox()
+    d.draw()
+}

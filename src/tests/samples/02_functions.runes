@@ -1,0 +1,222 @@
+--- 02_functions.runes
+    Tests every function form:
+    f, stack f, dynamic f, regional f, gc f, flex f,
+    named returns, void, one-liner, pub, nested strategies,
+    tuples, promote.
+---
+
+-- ─────────────────────────────────────────────
+-- Basic stack functions (f)
+-- ─────────────────────────────────────────────
+
+-- Named return
+f add(x: i32, y: i32) = result: i32 {
+    result = x + y
+}
+
+-- Void — no return clause
+f greet(name: str) {
+    print("hello, " + name)
+}
+
+-- One-liner with named return (no braces)
+f square(x: i32) = r: i32  r = x * x
+
+f double(x: i32) = r: i32  r = x * 2
+
+-- Multiple parameters, compound expression
+f clamp(val: i32, lo: i32, hi: i32) = r: i32 {
+    if val < lo {
+        r = lo
+    } else if val > hi {
+        r = hi
+    } else {
+        r = val
+    }
+}
+
+-- Pointer parameter
+f zero_byte(p: *u8) {
+    *p = 0
+}
+
+f read_byte(p: *u8) = r: u8 {
+    r = *p
+}
+
+-- ─────────────────────────────────────────────
+-- Explicitly stack-only (stack f)
+-- ─────────────────────────────────────────────
+
+stack f fast_hash(data: *u8, len: usize) = r: u64 {
+    r = 0
+    for (0..len) |i| {
+        r = r ^ (*(data + i) as u64)
+        r = r * 0x9e3779b97f4a7c15
+    }
+}
+
+stack f min(a: i32, b: i32) = r: i32 {
+    r = if a < b { a } else { b }
+}
+
+-- ─────────────────────────────────────────────
+-- Raw heap (dynamic f)
+-- ─────────────────────────────────────────────
+
+dynamic f alloc_buf(size: u64) = ptr: *u8 {
+    ptr = raw_alloc(size)
+    -- caller must raw_free(ptr)
+}
+
+dynamic f alloc_zeroed(size: u64) = ptr: *u8 {
+    ptr = raw_alloc(size)
+    memset(ptr, 0, size)
+}
+
+-- dynamic f nesting dynamic f and gc f (valid)
+dynamic f init_driver(name: str) = r: i32 {
+    f validate(s: str) = ok: bool {
+        ok = s.len > 0
+    }
+
+    gc f load_config(s: str) = cfg: *Config {
+        cfg = parse_config(s)
+    }
+
+    if validate(name) {
+        *Config c = load_config(name)
+        r = c.id
+    } else {
+        r = -1
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Arena (regional f)
+-- ─────────────────────────────────────────────
+
+regional f make_page_table() = t: PageTable {
+    t = PageTable(entries: [])
+}
+
+-- regional f may only nest f
+regional f build_tables() {
+    f zero(p: *u8) {
+        *p = 0
+    }
+
+    PageTable pml4 = PageTable(entries: [])
+    PageTable pdpt = PageTable(entries: [])
+    zero(&pml4 as *u8)
+    zero(&pdpt as *u8)
+}
+
+-- promote out of regional into dynamic
+regional f build_promoted() = r: (*PageTable, *PageTable) {
+    PageTable pml4 = PageTable(entries: [])
+    PageTable pdpt = PageTable(entries: [])
+
+    *PageTable pml4_h = promote(&pml4) as dynamic
+    *PageTable pdpt_h = promote(&pdpt) as dynamic
+
+    r = (pml4_h, pdpt_h)
+    -- caller must raw_free both
+}
+
+-- promote out of regional into gc
+regional f build_gc() = r: *Node {
+    Node n = Node(val: 99, next: 0 as *Node)
+    r = promote(&n) as gc
+}
+
+-- ─────────────────────────────────────────────
+-- GC (gc f)
+-- ─────────────────────────────────────────────
+
+gc f run_shell(input: str) = result: *Token {
+    result = tokenize(input)
+}
+
+-- gc f may nest f and gc f
+gc f run_pipeline(src: str) = r: i32 {
+    f validate(s: str) = ok: bool {
+        ok = s.len > 0
+    }
+
+    gc f parse(s: str) = ast: *Node {
+        ast = build_ast(s)
+    }
+
+    if validate(src) {
+        *Node tree = parse(src)
+        r = eval(tree)
+    } else {
+        r = -1
+    }
+}
+
+-- ─────────────────────────────────────────────
+-- Inherits caller (flex f)
+-- ─────────────────────────────────────────────
+
+flex f make_node(val: i32) = r: *Node {
+    r = alloc(sizeof(Node))
+    r.val = val
+    r.next = 0 as *Node
+}
+
+flex f copy_str(s: str) = r: *u8 {
+    r = alloc(s.len + 1)
+    memcpy(r, s.ptr, s.len)
+    *(r + s.len) = 0
+}
+
+-- ─────────────────────────────────────────────
+-- Multiple return values (tuples)
+-- ─────────────────────────────────────────────
+
+f parse(src: str) = r: (*Node, [512]Error) {
+    *Node      ast  = build_ast(src)
+    [512]Error errs = collect_errors(src)
+    r = (ast, errs)
+}
+
+f minmax(a: i32, b: i32, c: i32) = r: (i32, i32) {
+    i32 lo = a
+    i32 hi = a
+    if b < lo { lo = b }
+    if b > hi { hi = b }
+    if c < lo { lo = c }
+    if c > hi { hi = c }
+    r = (lo, hi)
+}
+
+-- Tuple destructure at call site
+f demo_tuples() {
+    *Node ast, [512]Error errs = parse("x = 1 + 2")
+    i32 lo, i32 hi = minmax(3, 1, 7)
+}
+
+-- ─────────────────────────────────────────────
+-- pub and visibility
+-- ─────────────────────────────────────────────
+
+pub f kernel_main() {
+    regional f setup_paging() {
+        PageTable pml4 = PageTable.new()
+        PageTable pdpt = PageTable.new()
+        try pml4.map(0xFFFF800000000000, &pdpt as u64, 0x3)
+    }
+
+    setup_paging()
+
+    unsafe { asm { "mov %rax, %cr3" } }
+
+    gc f run_userspace() {
+        Task t = Task(id: 1, name: "shell")
+        scheduler.add(t)
+    }
+
+    run_userspace()
+}
