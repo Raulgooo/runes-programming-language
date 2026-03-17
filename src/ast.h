@@ -131,6 +131,8 @@ typedef enum {
   // expressions — memory / type system
   AST_CAST_EXPR,
   AST_PROMOTE_EXPR,
+  AST_SIZEOF_EXPR,
+  AST_ALIGNOF_EXPR,
   AST_TYPE_EXPR,
 
   // expressions — error handling
@@ -146,6 +148,9 @@ typedef enum {
   AST_JSON_EXPR,
 
   AST_NAMED_ARG,
+  AST_TUPLE_DESTRUCTURE,  // x, y, z = tuple_expr
+  AST_STRUCT_PATTERN,     // Vec2(x: 0.0, y) - struct destructuring pattern
+  AST_FIELD_PATTERN,      // x: 0.0 or x: binding - field in struct pattern
 } AstKind;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -200,6 +205,7 @@ typedef struct AstNode {
       char *name;
       struct AstNode *type; // AST_TYPE_EXPR; NULL if inferred
       struct AstNode *init; // initializer expression; NULL if not present
+      Attr *attrs;          // #[section], #[align], etc.
     } var_decl;
 
     // type Vec2 = { x: f32, y: f32 }
@@ -448,6 +454,16 @@ typedef struct AstNode {
       MemoryRealm target; // only REALM_HEAP or REALM_GC are valid
     } promote;
 
+    // sizeof(T) - compile-time size of type
+    struct {
+      struct AstNode *type; // AST_TYPE_EXPR
+    } sizeof_expr;
+
+    // alignof(T) - compile-time alignment of type
+    struct {
+      struct AstNode *type; // AST_TYPE_EXPR
+    } alignof_expr;
+
     // try foo()
     struct {
       struct AstNode *expr;
@@ -476,6 +492,24 @@ typedef struct AstNode {
       char *name;
       struct AstNode *value;
     } named_arg;
+
+    // Tuple destructuring: x, y, z = tuple_expr
+    struct {
+      struct AstNode *targets;  // linked list of AST_VAR_DECL (without init)
+      struct AstNode *init;     // the tuple expression being destructured
+    } tuple_destructure;
+
+    // Struct pattern: Vec2(x: 0.0, y) or Vec2(x, y: 0.0)
+    struct {
+      char *name;               // struct name (e.g., "Vec2")
+      struct AstNode *fields;   // linked list of AST_FIELD_PATTERN
+    } struct_pattern;
+
+    // Field pattern: x: 0.0 (literal) or x: binding (identifier) or just x (shorthand)
+    struct {
+      char *name;               // field name (e.g., "x")
+      struct AstNode *pattern;  // NULL for shorthand (x means x: x), otherwise literal or identifier
+    } field_pattern;
 
     // volatile pointer read/write expression
     struct {
@@ -520,7 +554,8 @@ AstNode *ast_new_func_decl(Arena *arena, MemoryRealm realm, bool is_pub,
                            const char *ret_name, AstNode *ret_type,
                            AstNode *body, Attr *attrs);
 AstNode *ast_new_var_decl(Arena *arena, bool is_const, bool is_volatile,
-                          const char *name, AstNode *type, AstNode *init);
+                          const char *name, AstNode *type, AstNode *init,
+                          Attr *attrs);
 AstNode *ast_new_type_decl(Arena *arena, bool is_pub, const char *name,
                            AstNode *fields, Attr *attrs);
 AstNode *ast_new_variant_decl(Arena *arena, bool is_pub, const char *name,
@@ -584,12 +619,17 @@ AstNode *ast_new_field(Arena *arena, AstNode *target, const char *field);
 AstNode *ast_new_cast(Arena *arena, CastKind kind, AstNode *expr,
                       AstNode *target_type);
 AstNode *ast_new_promote(Arena *arena, AstNode *expr, MemoryRealm target);
+AstNode *ast_new_sizeof(Arena *arena, AstNode *type);
+AstNode *ast_new_alignof(Arena *arena, AstNode *type);
 AstNode *ast_new_try_expr(Arena *arena, AstNode *expr);
 AstNode *ast_new_catch_expr(Arena *arena, AstNode *expr, const char *err_name,
                             AstNode *handler);
 AstNode *ast_new_error_expr(Arena *arena, AstNode *path);
 AstNode *ast_new_asm_expr(Arena *arena, const char *code, const char *output);
 AstNode *ast_new_named_arg(Arena *arena, const char *name, AstNode *value);
+AstNode *ast_new_tuple_destructure(Arena *arena, AstNode *targets, AstNode *init);
+AstNode *ast_new_struct_pattern(Arena *arena, const char *name, AstNode *fields);
+AstNode *ast_new_field_pattern(Arena *arena, const char *name, AstNode *pattern);
 AstNode *ast_new_volatile_expr(Arena *arena, AstNode *expr);
 
 // type expressions

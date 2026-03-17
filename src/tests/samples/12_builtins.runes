@@ -1,0 +1,164 @@
+--- 12_builtins.runes
+    Tests compile-time builtins:
+    sizeof(T) - size of types at compile time
+    alignof(T) - alignment of types at compile time
+    promote(expr) as realm - move values between memory realms
+---
+
+-- ─────────────────────────────────────────────
+-- sizeof - compile-time type size
+-- ─────────────────────────────────────────────
+
+f demo_sizeof_primitives() = r: usize {
+    -- Primitive types
+    usize s_i8  = sizeof(i8)
+    usize s_i16 = sizeof(i16)
+    usize s_i32 = sizeof(i32)
+    usize s_i64 = sizeof(i64)
+    
+    usize s_u8  = sizeof(u8)
+    usize s_u16 = sizeof(u16)
+    usize s_u32 = sizeof(u32)
+    usize s_u64 = sizeof(u64)
+    
+    usize s_f32 = sizeof(f32)
+    usize s_f64 = sizeof(f64)
+    
+    usize s_bool = sizeof(bool)
+    usize s_char = sizeof(char)
+    usize s_usize = sizeof(usize)
+    
+    r = s_i32
+}
+
+f demo_sizeof_pointers() = r: usize {
+    -- Pointer types
+    usize ptr_size = sizeof(*u8)
+    usize ptr_i32  = sizeof(*i32)
+    usize ptr_ptr  = sizeof(**u64)  -- double pointer
+    
+    -- Raw pointer from cast
+    *u8  raw = 0x1000 as *u8
+    usize raw_size = sizeof(*u8)
+    
+    r = ptr_size
+}
+
+f demo_sizeof_arrays() = r: usize {
+    -- Array types (size includes element count)
+    [4]i32 arr = [1, 2, 3, 4]
+    usize arr_size = sizeof([4]i32)
+    usize elem_size = sizeof(i32)
+    
+    [8]u8  buf = []
+    usize buf_size = sizeof([8]u8)
+    
+    r = arr_size
+}
+
+-- ─────────────────────────────────────────────
+-- alignof - compile-time type alignment
+-- ─────────────────────────────────────────────
+
+f demo_alignof_primitives() = r: usize {
+    -- Primitive alignments
+    usize a_i8  = alignof(i8)
+    usize a_i16 = alignof(i16)
+    usize a_i32 = alignof(i32)
+    usize a_i64 = alignof(i64)
+    
+    usize a_u8  = alignof(u8)
+    usize a_u16 = alignof(u16)
+    usize a_u32 = alignof(u32)
+    usize a_u64 = alignof(u64)
+    
+    usize a_f32 = alignof(f32)
+    usize a_f64 = alignof(f64)
+    
+    r = a_i32
+}
+
+f demo_alignof_pointers() = r: usize {
+    -- Pointer alignments (usually platform pointer size)
+    usize a_ptr = alignof(*u8)
+    usize a_ptr_i32 = alignof(*i32)
+    usize a_ptr_ptr = alignof(**u64)
+    
+    r = a_ptr
+}
+
+f demo_alignof_arrays() = r: usize {
+    -- Array alignments (alignment of element type)
+    usize a_arr4 = alignof([4]i32)
+    usize a_arr8 = alignof([8]u8)
+    
+    r = a_arr4
+}
+
+-- ─────────────────────────────────────────────
+-- promote - memory realm transitions
+-- ─────────────────────────────────────────────
+
+-- Promote from stack/regional to dynamic (caller owns)
+regional f promote_to_dynamic() = r: *u8 {
+    [64]u8 buffer = []
+    *u8 promoted = promote(&buffer) as dynamic
+    r = promoted
+}
+
+-- Promote from stack/regional to GC (GC owns)
+regional f promote_to_gc() = r: *Node {
+    Node n = Node(val: 42)
+    *Node promoted = promote(&n) as gc
+    r = promoted
+}
+
+-- Promote tuples
+regional f promote_tuple() = r: (*i32, *i32) {
+    i32 a = 1
+    i32 b = 2
+    (*i32, *i32) pair = (promote(&a) as dynamic, promote(&b) as dynamic)
+    r = pair
+}
+
+-- ─────────────────────────────────────────────
+-- Combined usage patterns
+-- ─────────────────────────────────────────────
+
+f allocate_aligned() = r: *u8 {
+    -- Use sizeof to determine allocation size
+    usize node_size = sizeof(Node)
+    usize alignment = alignof(Node)
+    
+    -- Allocate with proper size and alignment
+    *u8 mem = raw_alloc_aligned(node_size, alignment)
+    r = mem
+}
+
+f copy_to_dynamic(src: *u8, len: usize) = r: *u8 {
+    -- Allocate destination using sizeof calculation
+    usize elem_size = sizeof(u8)
+    usize total_size = len * elem_size
+    
+    [256]u8 temp = []
+    -- Copy data to temp buffer
+    for (0..len) |i| {
+        temp[i] = *(src + i)
+    }
+    
+    -- Promote to dynamic memory
+    *u8 dst = promote(&temp) as dynamic
+    r = dst
+}
+
+-- Type definition for use in examples
+type Node = {
+    val: i32,
+    next: *Node
+}
+
+-- External declarations for runtime functions
+extern f raw_alloc(size: usize) = r: *u8
+extern f raw_alloc_aligned(size: usize, align: usize) = r: *u8
+extern f print(msg: str)
+extern f tick()

@@ -20,11 +20,13 @@ static AstNode *parse_try(Parser *p);
 static AstNode *parse_catch(Parser *p);
 static AstNode *parse_arg_list(Parser *p);
 static AstNode *parse_additive(Parser *p);
+static AstNode *parse_pattern(Parser *p);
 static AstNode *parse_decl(Parser *p);
 static AstNode *parse_stmt(Parser *p);
 static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
                                 Attr *attrs, bool body_allowed);
-static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile);
+static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile, Attr *attrs);
+static bool is_var_decl_lookahead(Parser *p);
 static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs);
 static AstNode *parse_variant_decl(Parser *p, bool is_pub);
 static AstNode *parse_schema_decl(Parser *p, bool is_pub);
@@ -70,6 +72,11 @@ static bool match(Parser *p, TokenKind kind) {
     return true;
   }
   return false;
+}
+
+static void skip_newlines(Parser *p) {
+  while (check(p, TOKEN_NEWLINE))
+    advance(p);
 }
 
 static void parser_error(Parser *p, const char *msg) {
@@ -365,7 +372,7 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
 
 // Spec §2: [const] [volatile] Type name = init
 //   i32 x = 42 / const i32 MAX = 512 / volatile *u32 uart = 0x10000000
-static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile) {
+static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile, Attr *attrs) {
   AstNode *head = NULL, *tail = NULL;
 
   do {
@@ -400,7 +407,7 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile) {
       return NULL;
 
     AstNode *n = ast_new_var_decl(p->arena, is_const, is_volatile,
-                                  name_tok.str_val.ptr, type, NULL);
+                                  name_tok.str_val.ptr, type, NULL, attrs);
     n->line = name_tok.line;
     n->col = name_tok.column;
 
@@ -419,6 +426,15 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile) {
     // For now, we apply the initializer to the whole list (tuple destructure).
     // semantically this means head is initialized by the tuple.
     head->as.var_decl.init = init;
+  }
+
+  // Apply attrs to all variables in the list
+  if (attrs) {
+    AstNode *n = head;
+    while (n) {
+      n->as.var_decl.attrs = attrs;
+      n = n->next;
+    }
   }
 
   return head;
@@ -913,6 +929,14 @@ static AstNode *parse_decl(Parser *p) {
   if (check(p, TOKEN_EXTERN))
     return parse_extern_decl(p);
 
+  // Variable declarations with attributes: #[section(".data")] const i32 x = 5
+  if (is_var_decl_lookahead(p)) {
+    bool is_const = match(p, TOKEN_CONST);
+    bool is_volatile = match(p, TOKEN_VOLATILE);
+    AstNode *decl = parse_var_decl(p, is_const, is_volatile, attrs);
+    return decl;
+  }
+
   parser_error(p, "expected a declaration");
   return NULL;
 }
@@ -1123,10 +1147,139 @@ static AstNode *parse_loop_stmt(Parser *p) {
   return n;
 }
 
+// Parse a struct pattern like Vec2(x: 0.0, y) or Vec2(x, y: 0.0)
+// Called when we see Identifier followed by '('
+// In pattern context, Name(...) is ALWAYS parsed as StructPattern
+static AstNode *parse_struct_pattern(Parser *p) {
+  Token name_tok = advance(p); // consume identifier
+  expect(p, TOKEN_LPAREN, "expected '(' after struct name in pattern");
+  if (p->panic_mode)
+    return NULL;
+
+  AstNode *fields = NULL, *ftail = NULL;
+  while (!check(p, TOKEN_RPAREN) && !check(p, TOKEN_EOF)) {
+    AstNode *field_pattern = NULL;
+    char *field_name = NULL;
+    uint32_t field_line = 0, field_col = 0;
+
+    // Check if this is a named field (Identifier:) or positional field
+    if ((check(p, TOKEN_IDENTIFIER) || check(p, TOKEN_F)) && peek(p).kind == TOKEN_COLON) {
+      // Named field: name: pattern
+      Token name_tok;
+      if (check(p, TOKEN_IDENTIFIER)) {
+        name_tok = advance(p);
+        field_name = arena_strdup(p->arena, name_tok.str_val.ptr);
+      } else { // TOKEN_F
+        name_tok = advance(p);
+        field_name = arena_strdup(p->arena, "f");
+      }
+      field_line = name_tok.line;
+      field_col = name_tok.column;
+
+      advance(p); // consume ':'
+
+      // Parse the pattern value (can be any pattern including field access)
+      field_pattern = parse_pattern(p);
+      if (!field_pattern)
+        return NULL;
+    } else {
+      // Positional field: just a pattern (identifier, field access, etc.)
+      // The field name will be NULL to indicate positional
+      field_pattern = parse_pattern(p);
+      if (!field_pattern)
+        return NULL;
+      field_line = field_pattern->line;
+      field_col = field_pattern->col;
+    }
+
+    AstNode *fp = ast_new_field_pattern(p->arena, field_name, field_pattern);
+    fp->line = field_line;
+    fp->col = field_col;
+
+    if (!fields) {
+      fields = ftail = fp;
+    } else {
+      ftail->next = fp;
+      ftail = fp;
+    }
+
+    if (!check(p, TOKEN_RPAREN)) {
+      expect(p, TOKEN_COMMA, "expected ',' or ')' in struct pattern");
+      if (p->panic_mode)
+        return NULL;
+    }
+  }
+
+  expect(p, TOKEN_RPAREN, "expected ')' after struct pattern");
+  if (p->panic_mode)
+    return NULL;
+
+  AstNode *n = ast_new_struct_pattern(p->arena, name_tok.str_val.ptr, fields);
+  n->line = name_tok.line;
+  n->col = name_tok.column;
+  return n;
+}
+
+// Forward declaration
+static AstNode *parse_pattern(Parser *p);
+
+// Parse a primary pattern (literals, identifiers, struct patterns, variant constructors)
+// In pattern context, Name(...) is ALWAYS parsed as a StructPattern.
+// The type checker will distinguish between struct patterns and variant patterns.
+static AstNode *parse_primary_pattern(Parser *p) {
+  // Struct/variant pattern: Vec2(x: 0.0, y) or RGB(r, g, b)
+  if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_LPAREN) {
+    return parse_struct_pattern(p);
+  }
+
+  // Everything else uses normal expression parsing
+  return parse_primary(p);
+}
+
+// Parse a pattern (with postfix operators like field access and calls)
+static AstNode *parse_pattern(Parser *p) {
+  // For now, patterns are similar to expressions but with special handling
+  // for struct destructuring. We use parse_primary_pattern for the base
+  // and could extend this for more complex patterns.
+  AstNode *left = parse_primary_pattern(p);
+  if (!left)
+    return NULL;
+  
+  // Handle postfix operators like field access and calls
+  while (true) {
+    if (check(p, TOKEN_DOT)) {
+      // Field access: MapError.AlreadyMapped
+      Token dot = advance(p);
+      Token field = expect(p, TOKEN_IDENTIFIER, "expected field name after '.'");
+      if (p->panic_mode)
+        return NULL;
+      AstNode *n = ast_new_field(p->arena, left, field.str_val.ptr);
+      n->line = dot.line;
+      n->col = dot.column;
+      left = n;
+    } else if (check(p, TOKEN_LPAREN)) {
+      // Variant constructor call: RGB(r, g, b)
+      Token open = advance(p);
+      AstNode *args = parse_arg_list(p);
+      expect(p, TOKEN_RPAREN, "expected ')' after arguments");
+      if (p->panic_mode)
+        return NULL;
+      AstNode *n = ast_new_call(p->arena, left, args);
+      n->line = open.line;
+      n->col = open.column;
+      left = n;
+    } else {
+      break;
+    }
+  }
+  
+  return left;
+}
+
 // Spec §9: match subject { pattern -> body, ... }
 static AstNode *parse_match_arm(Parser *p) {
-  // pattern — for now: expression (covers literals, identifiers, destructuring)
-  AstNode *pattern = parse_expr(p);
+  // pattern — can be literal, identifier, struct pattern, etc.
+  AstNode *pattern = parse_pattern(p);
   if (!pattern)
     return NULL;
 
@@ -1142,7 +1295,13 @@ static AstNode *parse_match_arm(Parser *p) {
   if (p->panic_mode)
     return NULL;
 
-  AstNode *body = parse_expr(p);
+  // Body can be a block { ... } or an expression
+  AstNode *body = NULL;
+  if (check(p, TOKEN_LBRACE)) {
+    body = parse_block(p);
+  } else {
+    body = parse_expr(p);
+  }
   if (!body)
     return NULL;
 
@@ -1227,29 +1386,30 @@ static bool is_var_decl_lookahead(Parser *p) {
     }
   }
 
-  if (check(p, TOKEN_LBRACKET) || check(p, TOKEN_LPAREN)) {
+  if (check(p, TOKEN_LBRACKET)) {
+    // Array type: [N]T name or [N]Type name
+    // Check if next is int literal or identifier (the size), and next2 is ]
+    if ((p->next.kind == TOKEN_INT_LITERAL || p->next.kind == TOKEN_IDENTIFIER) &&
+        p->next2.kind == TOKEN_RBRACKET) {
+      return true;
+    }
+  }
+  
+  if (check(p, TOKEN_LPAREN)) {
+    // Tuple type: (T, U) name
+    // Use lookahead lexer to find the closing )
     Lexer l = *p->lexer;
     Token t = p->next;
-    TokenKind open = p->current.kind;
-    TokenKind close = (open == TOKEN_LBRACKET) ? TOKEN_RBRACKET : TOKEN_RPAREN;
     int depth = 1;
     while (t.kind != TOKEN_EOF && depth > 0) {
-      if (t.kind == open)
+      if (t.kind == TOKEN_LPAREN)
         depth++;
-      else if (t.kind == close)
+      else if (t.kind == TOKEN_RPAREN)
         depth--;
       t = lexer_next_token(&l);
     }
-    // After closing bracket/paren, what follows?
-    if (open == TOKEN_LBRACKET) {
-      // Array type: [N]T name
-      return is_type_keyword(t.kind) || t.kind == TOKEN_IDENTIFIER ||
-             t.kind == TOKEN_STAR || t.kind == TOKEN_BANG ||
-             t.kind == TOKEN_LBRACKET || t.kind == TOKEN_LPAREN;
-    } else {
-      // Tuple type: (T, U) name
-      return t.kind == TOKEN_IDENTIFIER;
-    }
+    // After closing paren, what follows?
+    return t.kind == TOKEN_IDENTIFIER;
   }
   return false;
 }
@@ -1306,7 +1466,7 @@ static AstNode *parse_stmt(Parser *p) {
   if (is_var_decl_lookahead(p)) {
     bool is_const = match(p, TOKEN_CONST);
     bool is_volatile = match(p, TOKEN_VOLATILE);
-    return parse_var_decl(p, is_const, is_volatile);
+    return parse_var_decl(p, is_const, is_volatile, NULL);
   }
 
   return parse_expr(p);
@@ -1319,6 +1479,7 @@ static AstNode *parse_assign(Parser *p) {
   if (!left)
     return NULL;
 
+  skip_newlines(p);
   if (check(p, TOKEN_EQUAL)) {
     Token eq = advance(p);
     AstNode *value = parse_assign(p); // recursive — right-associative
@@ -1333,7 +1494,10 @@ static AstNode *parse_assign(Parser *p) {
   return left;
 }
 
-static AstNode *parse_expr(Parser *p) { return parse_assign(p); }
+static AstNode *parse_expr(Parser *p) {
+  skip_newlines(p);
+  return parse_assign(p);
+}
 
 static AstNode *parse_catch(Parser *p) {
   AstNode *expr = parse_try(p);
@@ -1550,6 +1714,42 @@ static AstNode *parse_primary(Parser *p) {
     return n;
   }
 
+  // ── sizeof(T) — compile-time type size ──────────────────────────────
+  if (check(p, TOKEN_SIZEOF)) {
+    Token tok = advance(p);
+    expect(p, TOKEN_LPAREN, "expected '(' after 'sizeof'");
+    if (p->panic_mode)
+      return NULL;
+    AstNode *type = parse_type_expr(p);
+    if (!type)
+      return NULL;
+    expect(p, TOKEN_RPAREN, "expected ')' after type in sizeof");
+    if (p->panic_mode)
+      return NULL;
+    AstNode *n = ast_new_sizeof(p->arena, type);
+    n->line = tok.line;
+    n->col = tok.column;
+    return n;
+  }
+
+  // ── alignof(T) — compile-time type alignment ────────────────────────
+  if (check(p, TOKEN_ALIGNOF)) {
+    Token tok = advance(p);
+    expect(p, TOKEN_LPAREN, "expected '(' after 'alignof'");
+    if (p->panic_mode)
+      return NULL;
+    AstNode *type = parse_type_expr(p);
+    if (!type)
+      return NULL;
+    expect(p, TOKEN_RPAREN, "expected ')' after type in alignof");
+    if (p->panic_mode)
+      return NULL;
+    AstNode *n = ast_new_alignof(p->arena, type);
+    n->line = tok.line;
+    n->col = tok.column;
+    return n;
+  }
+
   // ── error.MathError.DivByZero — Spec §10 ────────────────────────────
   if (check(p, TOKEN_ERROR)) {
     Token err_tok = advance(p);
@@ -1667,6 +1867,15 @@ static AstNode *parse_primary(Parser *p) {
   if (check(p, TOKEN_IDENTIFIER)) {
     Token tok = advance(p);
     AstNode *n = ast_new_identifier(p->arena, tok.str_val.ptr);
+    n->line = tok.line;
+    n->col = tok.column;
+    return n;
+  }
+
+  // ── 'f' as identifier in expression contexts (e.g., pattern bindings) ───
+  if (check(p, TOKEN_F)) {
+    Token tok = advance(p);
+    AstNode *n = ast_new_identifier(p->arena, "f");
     n->line = tok.line;
     n->col = tok.column;
     return n;
@@ -1875,14 +2084,15 @@ static AstNode *parse_comparison(Parser *p) {
 }
 
 static AstNode *parse_equality(Parser *p) {
+  skip_newlines(p);
   AstNode *left = parse_comparison(p);
   if (!left)
     return NULL;
 
+  skip_newlines(p);
   while (check(p, TOKEN_EQ_EQ) || check(p, TOKEN_BANG_EQ)) {
-    if (p->current.line > p->prev_line)
-      break;
     Token op = advance(p);
+    skip_newlines(p);
     AstNode *right = parse_comparison(p);
     if (!right)
       return NULL;
@@ -1890,17 +2100,21 @@ static AstNode *parse_equality(Parser *p) {
     n->line = op.line;
     n->col = op.column;
     left = n;
+    skip_newlines(p);
   }
   return left;
 }
 
 static AstNode *parse_logical_and(Parser *p) {
+  skip_newlines(p);
   AstNode *left = parse_equality(p);
   if (!left)
     return NULL;
 
+  skip_newlines(p);
   while (check(p, TOKEN_AND)) {
     Token op = advance(p);
+    skip_newlines(p);
     AstNode *right = parse_equality(p);
     if (!right)
       return NULL;
@@ -1908,17 +2122,21 @@ static AstNode *parse_logical_and(Parser *p) {
     n->line = op.line;
     n->col = op.column;
     left = n;
+    skip_newlines(p);
   }
   return left;
 }
 
 static AstNode *parse_logical_or(Parser *p) {
+  skip_newlines(p);
   AstNode *left = parse_logical_and(p);
   if (!left)
     return NULL;
 
+  skip_newlines(p);
   while (check(p, TOKEN_OR)) {
     Token op = advance(p);
+    skip_newlines(p);
     AstNode *right = parse_logical_and(p);
     if (!right)
       return NULL;
@@ -1926,6 +2144,7 @@ static AstNode *parse_logical_or(Parser *p) {
     n->line = op.line;
     n->col = op.column;
     left = n;
+    skip_newlines(p);
   }
   return left;
 }

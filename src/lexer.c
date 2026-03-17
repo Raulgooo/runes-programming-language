@@ -150,6 +150,8 @@ static TokenKind identifier_kind(Lexer *L) {
         if (L->current - L->start == 2)
           return TOKEN_AS;
         return check_keyword(L, 2, 1, "m", TOKEN_ASM);
+      case 'l':
+        return check_keyword(L, 2, 5, "ignof", TOKEN_ALIGNOF);
       }
     }
     break;
@@ -294,6 +296,8 @@ static TokenKind identifier_kind(Lexer *L) {
         return check_keyword(L, 2, 4, "hema", TOKEN_SCHEMA);
       case 'e':
         return check_keyword(L, 2, 2, "lf", TOKEN_SELF);
+      case 'i':
+        return check_keyword(L, 2, 4, "zeof", TOKEN_SIZEOF);
       case 't':
         if (L->current - L->start > 2) {
           switch (L->start[2]) {
@@ -723,6 +727,10 @@ const char *token_kind_to_string(TokenKind kind) {
     return "volatile";
   case TOKEN_PROMOTE:
     return "promote";
+  case TOKEN_SIZEOF:
+    return "sizeof";
+  case TOKEN_ALIGNOF:
+    return "alignof";
   case TOKEN_SELF:
     return "self";
   case TOKEN_AS:

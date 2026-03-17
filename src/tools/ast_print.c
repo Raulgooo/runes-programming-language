@@ -347,6 +347,20 @@ void ast_print_ext(AstNode *node, int level) {
     ast_print_ext(node->as.promote.expr, level + 1);
     break;
 
+  case AST_SIZEOF_EXPR:
+    printf("SizeofExpr\n");
+    indent(level + 1);
+    printf("Type:\n");
+    ast_print_ext(node->as.sizeof_expr.type, level + 2);
+    break;
+
+  case AST_ALIGNOF_EXPR:
+    printf("AlignofExpr\n");
+    indent(level + 1);
+    printf("Type:\n");
+    ast_print_ext(node->as.alignof_expr.type, level + 2);
+    break;
+
   case AST_MATCH_STMT:
     printf("MatchStmt\n");
     indent(level + 1);
@@ -432,6 +446,40 @@ void ast_print_ext(AstNode *node, int level) {
     printf("NamedArg name='%s'\n",
            node->as.named_arg.name ? node->as.named_arg.name : "(null)");
     ast_print_ext(node->as.named_arg.value, level + 1);
+    break;
+
+  case AST_TUPLE_DESTRUCTURE:
+    printf("TupleDestructure\n");
+    if (node->as.tuple_destructure.targets) {
+      indent(level + 1);
+      printf("Targets:\n");
+      ast_print_ext(node->as.tuple_destructure.targets, level + 2);
+    }
+    if (node->as.tuple_destructure.init) {
+      indent(level + 1);
+      printf("Init:\n");
+      ast_print_ext(node->as.tuple_destructure.init, level + 2);
+    }
+    break;
+
+  case AST_STRUCT_PATTERN:
+    printf("StructPattern name='%s'\n",
+           node->as.struct_pattern.name ? node->as.struct_pattern.name : "(null)");
+    if (node->as.struct_pattern.fields) {
+      indent(level + 1);
+      printf("Fields:\n");
+      ast_print_ext(node->as.struct_pattern.fields, level + 2);
+    }
+    break;
+
+  case AST_FIELD_PATTERN:
+    printf("FieldPattern name='%s'\n",
+           node->as.field_pattern.name ? node->as.field_pattern.name : "(null)");
+    if (node->as.field_pattern.pattern) {
+      indent(level + 1);
+      printf("Pattern:\n");
+      ast_print_ext(node->as.field_pattern.pattern, level + 2);
+    }
     break;
 
   case AST_TRY_EXPR:

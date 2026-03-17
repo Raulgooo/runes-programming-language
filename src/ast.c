@@ -39,13 +39,15 @@ AstNode *ast_new_func_decl(Arena *arena, MemoryRealm realm, bool is_pub,
 }
 
 AstNode *ast_new_var_decl(Arena *arena, bool is_const, bool is_volatile,
-                          const char *name, AstNode *type, AstNode *init) {
+                          const char *name, AstNode *type, AstNode *init,
+                          Attr *attrs) {
   AstNode *n = ast_alloc(arena, AST_VAR_DECL);
   n->as.var_decl.is_const = is_const;
   n->as.var_decl.is_volatile = is_volatile;
   n->as.var_decl.name = arena_strdup(arena, name);
   n->as.var_decl.type = type;
   n->as.var_decl.init = init;
+  n->as.var_decl.attrs = attrs;
   return n;
 }
 
@@ -357,6 +359,18 @@ AstNode *ast_new_promote(Arena *arena, AstNode *expr, MemoryRealm target) {
   return n;
 }
 
+AstNode *ast_new_sizeof(Arena *arena, AstNode *type) {
+  AstNode *n = ast_alloc(arena, AST_SIZEOF_EXPR);
+  n->as.sizeof_expr.type = type;
+  return n;
+}
+
+AstNode *ast_new_alignof(Arena *arena, AstNode *type) {
+  AstNode *n = ast_alloc(arena, AST_ALIGNOF_EXPR);
+  n->as.alignof_expr.type = type;
+  return n;
+}
+
 AstNode *ast_new_try_expr(Arena *arena, AstNode *expr) {
   AstNode *n = ast_alloc(arena, AST_TRY_EXPR);
   n->as.try_expr.expr = expr;
@@ -389,6 +403,27 @@ AstNode *ast_new_named_arg(Arena *arena, const char *name, AstNode *value) {
   AstNode *n = ast_alloc(arena, AST_NAMED_ARG);
   n->as.named_arg.name = arena_strdup(arena, name);
   n->as.named_arg.value = value;
+  return n;
+}
+
+AstNode *ast_new_tuple_destructure(Arena *arena, AstNode *targets, AstNode *init) {
+  AstNode *n = ast_alloc(arena, AST_TUPLE_DESTRUCTURE);
+  n->as.tuple_destructure.targets = targets;
+  n->as.tuple_destructure.init = init;
+  return n;
+}
+
+AstNode *ast_new_struct_pattern(Arena *arena, const char *name, AstNode *fields) {
+  AstNode *n = ast_alloc(arena, AST_STRUCT_PATTERN);
+  n->as.struct_pattern.name = arena_strdup(arena, name);
+  n->as.struct_pattern.fields = fields;
+  return n;
+}
+
+AstNode *ast_new_field_pattern(Arena *arena, const char *name, AstNode *pattern) {
+  AstNode *n = ast_alloc(arena, AST_FIELD_PATTERN);
+  n->as.field_pattern.name = name ? arena_strdup(arena, name) : NULL;
+  n->as.field_pattern.pattern = pattern;
   return n;
 }
 
