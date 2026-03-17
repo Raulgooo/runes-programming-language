@@ -1144,8 +1144,13 @@ static bool is_var_decl_lookahead(Parser *p) {
     if (peek(p).kind == TOKEN_IDENTIFIER) {
       Lexer l = *p->lexer;
       Token t = lexer_next_token(&l);
+      // *IDENT IDENT -> decl (e.g. *Node n)
+      // *IDENT = -> expr
+      // *IDENT . -> expr
+      // *IDENT ( -> decl if type, expr if call? Wait, tuple type ptr?
       return t.kind == TOKEN_IDENTIFIER;
     }
+    // *(expr) is always an expression. *(tuple_type) wouldn't be followed by an identifier normally unless it's a cast or something? Actually, *(T) name is rare. Let's assume *( is expr to be safe.
     return false;
   }
   
@@ -1158,12 +1163,14 @@ static bool is_var_decl_lookahead(Parser *p) {
     while (t.kind != TOKEN_EOF && depth > 0) {
       if (t.kind == open) depth++;
       else if (t.kind == close) depth--;
-      if (depth > 0) t = lexer_next_token(&l);
+      t = lexer_next_token(&l);
     }
-    t = lexer_next_token(&l);
+    // After closing bracket/paren, what follows?
     if (open == TOKEN_LBRACKET) {
+      // Array type: [N]T name
       return is_type_keyword(t.kind) || t.kind == TOKEN_IDENTIFIER || t.kind == TOKEN_STAR || t.kind == TOKEN_BANG || t.kind == TOKEN_LBRACKET || t.kind == TOKEN_LPAREN;
     } else {
+      // Tuple type: (T, U) name
       return t.kind == TOKEN_IDENTIFIER;
     }
   }
