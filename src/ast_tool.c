@@ -1,7 +1,7 @@
 #include "ast.h"
 #include "parser.h"
 #include "lexer.h"
-#include "utils/arena.h"
+#include "utils/strtab.h"
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -30,8 +30,11 @@ int main(int argc, char **argv) {
     Arena arena;
     arena_init(&arena);
 
+    StrTab strtab;
+    strtab_init(&strtab, &arena);
+
     Lexer lexer;
-    lexer_init(&lexer, source, NULL);
+    lexer_init(&lexer, source, &strtab);
 
     Parser parser;
     parser_init(&parser, &lexer, &arena, filename, source);

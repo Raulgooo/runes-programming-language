@@ -79,35 +79,30 @@ static Token error_token(Lexer *L) {
 static void skip_whitespace_and_comments(Lexer *L) {
   for (;;) {
     char c = peek(L);
-    if (c == '\0')
-      return;
     switch (c) {
     case ' ':
     case '\r':
     case '\t':
+    case '\n':
       advance(L);
       break;
     case '-':
       if (peek_next(L) == '-') {
         if (peek_after_next(L) == '-') {
-          // Multiline comment ---...---
-          advance(L); // -
-          advance(L); // -
-          advance(L); // -
-          while (!(peek(L) == '-' && peek_next(L) == '-' &&
-                   peek_after_next(L) == '-') &&
-                 !is_at_end(L)) {
+          // Multiline: --- ... ---
+          advance(L); advance(L); advance(L);
+          while (!is_at_end(L)) {
+            if (peek(L) == '-' && peek_next(L) == '-' && peek_after_next(L) == '-') {
+              advance(L); advance(L); advance(L);
+              break;
+            }
             advance(L);
-          }
-          if (!is_at_end(L)) {
-            advance(L); // -
-            advance(L); // -
-            advance(L); // -
           }
         } else {
-          // Line comment --
-          while (peek(L) != '\n' && !is_at_end(L))
+          // Single line: --
+          while (!is_at_end(L) && peek(L) != '\n') {
             advance(L);
+          }
         }
       } else {
         return;

@@ -45,7 +45,7 @@ void ast_print_ext(AstNode *node, int level) {
 
         case AST_FUNC_DECL:
             printf("FuncDecl name='%s' realm=%s is_pub=%s is_main=%s\n",
-                   node->as.func_decl.name,
+                   node->as.func_decl.name ? node->as.func_decl.name : "(null)",
                    realm_to_string(node->as.func_decl.realm),
                    node->as.func_decl.is_pub ? "true" : "false",
                    node->as.func_decl.is_main ? "true" : "false");
@@ -64,13 +64,13 @@ void ast_print_ext(AstNode *node, int level) {
             break;
 
         case AST_PARAM:
-            printf("Param name='%s'\n", node->as.param.name);
+            printf("Param name='%s'\n", node->as.param.name ? node->as.param.name : "(null)");
             ast_print_ext(node->as.param.type, level + 1);
             break;
 
         case AST_VAR_DECL:
             printf("VarDecl name='%s' is_const=%s is_volatile=%s\n",
-                   node->as.var_decl.name,
+                   node->as.var_decl.name ? node->as.var_decl.name : "(null)",
                    node->as.var_decl.is_const ? "true" : "false",
                    node->as.var_decl.is_volatile ? "true" : "false");
             if (node->as.var_decl.type) {
@@ -84,14 +84,14 @@ void ast_print_ext(AstNode *node, int level) {
 
         case AST_TYPE_DECL:
             printf("TypeDecl name='%s' is_pub=%s\n",
-                   node->as.type_decl.name,
+                   node->as.type_decl.name ? node->as.type_decl.name : "(null)",
                    node->as.type_decl.is_pub ? "true" : "false");
             ast_print_ext(node->as.type_decl.fields, level + 1);
             break;
 
         case AST_FIELD_DECL:
             printf("FieldDecl name='%s' is_volatile=%s\n",
-                   node->as.field_decl.name,
+                   node->as.field_decl.name ? node->as.field_decl.name : "(null)",
                    node->as.field_decl.is_volatile ? "true" : "false");
             ast_print_ext(node->as.field_decl.type, level + 1);
             if (node->as.field_decl.default_val) {
@@ -117,7 +117,7 @@ void ast_print_ext(AstNode *node, int level) {
             break;
 
         case AST_IDENTIFIER:
-            printf("Identifier name='%s'\n", node->as.identifier.name);
+            printf("Identifier name='%s'\n", node->as.identifier.name ? node->as.identifier.name : "(null)");
             break;
 
         case AST_INT_LITERAL:
@@ -129,7 +129,7 @@ void ast_print_ext(AstNode *node, int level) {
             break;
 
         case AST_STRING_LITERAL:
-            printf("StringLiteral value=\"%s\"\n", node->as.string_literal.value);
+            printf("StringLiteral value=\"%s\"\n", node->as.string_literal.value ? node->as.string_literal.value : "(null)");
             break;
 
         case AST_BOOL_LITERAL:
@@ -143,7 +143,7 @@ void ast_print_ext(AstNode *node, int level) {
         case AST_TYPE_EXPR:
             printf("TypeExpr kind=%s", type_kind_to_string(node->as.type_expr.kind));
             if (node->as.type_expr.kind == TYPE_NAMED) {
-                printf(" name='%s'", node->as.type_expr.name);
+                printf(" name='%s'", node->as.type_expr.name ? node->as.type_expr.name : "(null)");
             }
             printf("\n");
             if (node->as.type_expr.inner) {

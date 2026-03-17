@@ -246,7 +246,7 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr 
   if (p->had_error)
     return NULL;
 
-  bool is_main = (strcmp(name_tok.str_val.ptr, "main") == 0);
+  bool is_main = (name_tok.str_val.ptr && strcmp(name_tok.str_val.ptr, "main") == 0);
 
   // parameter list — f name(params)
   expect(p, TOKEN_LPAREN, "expected '(' after function name");
@@ -1169,7 +1169,7 @@ static AstNode *parse_stmt(Parser *p) {
   if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER)
     return parse_var_decl(p, false, false);
   // Spec §3: [5]i32 nums = ... — array type var decl
-  if (check(p, TOKEN_LBRACKET) && peek(p).kind == TOKEN_INT_LITERAL)
+  if (check(p, TOKEN_LBRACKET))
     return parse_var_decl(p, false, false);
   // expression statement
   return parse_expr(p);
