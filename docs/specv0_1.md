@@ -1,4 +1,4 @@
-# Runes Language Specification — v0.8 (Draft)
+# Runes Language Specification — v1.0 (Draft)
 
 > Systems-level language with high-level ergonomics.
 > Designed for writing operating systems without sacrificing expressiveness.
@@ -82,13 +82,53 @@ All functions use `f`, optionally preceded by a memory strategy keyword.
 **Named return variables are always required.** Anonymous return types are invalid.
 **Void functions omit the return clause entirely.**
 
-| Declaration   | Memory strategy                                      |
-|---------------|------------------------------------------------------|
-| `f`           | Stack — default, zero overhead, auto freed           |
-| `dynamic f`   | Raw heap — like C `malloc`/`free`, no compiler help  |
-| `regional f`  | Region — arena bump allocator, freed at scope exit   |
-| `gc f`        | GC tracked — for userspace / high-level code         |
-| `flex f`      | Inherits caller's memory strategy                  |
+| Declaration    | Memory strategy                                      |
+|----------------|------------------------------------------------------|
+| `f`            | Stack — default, zero overhead, auto freed           |
+| `stack f`      | Explicitly stack-only — same as `f` but enforces no nesting of other strategies |
+| `dynamic f`    | Raw heap — like C `malloc`/`free`, no compiler help  |
+| `regional f`   | Region — arena bump allocator, freed at scope exit   |
+| `gc f`         | GC tracked — for userspace / high-level code         |
+| `flex f`       | Inherits caller's memory strategy                    |
+
+### `main` — the orchestrator
+
+`f main()` is special. When declared as plain `f`, it can contain any memory
+strategy nested inside — it is the program entry point and orchestrates everything.
+To restrict it, declare it with an explicit strategy modifier.
+
+```runes
+-- f main() — unrestricted, can contain any strategy
+f main() {
+    regional f setup() { ... }   -- ✅
+    gc f run() { ... }           -- ✅
+    dynamic f init() { ... }     -- ✅
+}
+
+-- regional f main() — restricted to regional rules
+regional f main() {
+    regional f setup() { ... }   -- ✅
+    gc f run() { ... }           -- ❌ compile error
+}
+
+-- dynamic f main() — restricted to dynamic rules
+dynamic f main() {
+    regional f setup() { ... }   -- ✅ dynamic can contain regional
+    gc f run() { ... }           -- ✅
+}
+
+-- gc f main() — restricted to gc rules
+gc f main() {
+    gc f parse() { ... }         -- ✅
+    regional f bad() { ... }     -- ❌ compile error
+}
+
+-- stack f main() — strictly stack only
+stack f main() {
+    regional f bad() { ... }     -- ❌ compile error
+    gc f bad() { ... }           -- ❌ compile error
+}
+```
 
 ```runes
 -- Stack (default) — named return required
@@ -170,14 +210,15 @@ rejects invalid combinations.
 Each function type has strict rules about what can be nested inside it.
 The type checker enforces these at compile time.
 
-| Outer function | Can contain                              | Cannot contain              |
-|----------------|------------------------------------------|-----------------------------|
-| `f` (top-level)| other `f` only                          | `dynamic f`, `regional f`, `gc f`, `flex f` |
-| `f` (nested)   | other `f` only                          | any other strategy          |
-| `dynamic f`    | `f`, other `dynamic f`, `gc f`          | `regional f`                |
-| `regional f`   | `f` only                                | `dynamic f`, `gc f`, `flex f` |
-| `gc f`         | `f`, other `gc f`                       | `dynamic f`, `regional f`   |
-| `flex f`       | inherits — same rules as caller         | whatever caller cannot have |
+| Outer function    | Can contain                              | Cannot contain              |
+|-------------------|------------------------------------------|-----------------------------|
+| `f main()`        | anything — unrestricted orchestrator     | nothing blocked             |
+| `stack f`         | nothing — strictly stack only            | all other strategies        |
+| `f` (nested)      | other `f` only                           | any other strategy          |
+| `dynamic f`       | `f`, other `dynamic f`, `gc f`, `regional f` | none                    |
+| `regional f`      | `f` only                                 | `dynamic f`, `gc f`, `flex f` |
+| `gc f`            | `f`, other `gc f`                        | `dynamic f`, `regional f`   |
+| `flex f`          | inherits — same rules as caller          | whatever caller cannot have |
 
 ```runes
 -- ✅ f contains only f
@@ -284,27 +325,121 @@ regional f build() {
 Values cannot escape their memory scope unless:
 
 1. They are `Copy` types (primitives, small structs) — copied out automatically
-2. `promote` is used — explicit unsafe override
+2. `promote() as X` is used — explicit memory strategy transfer
+
+---
+
+### `promote() as X` — escape from arena
+
+`promote` solves one problem only: **moving a value out of a regional scope
+into a different memory strategy**. It is not a return mechanism — it is a
+memory transfer.
+
+`promote` always requires an explicit target strategy. Bare `promote()` without
+`as X` is a compile error.
 
 ```runes
--- ERROR: regional value escaping scope
-regional f bad() = r: *PageTable {
+-- ✅ promote as dynamic — moves value to raw heap
+regional f build() = r: *PageTable {
     PageTable t = PageTable()
-    r = &t               -- compile error: region escape
+    r = promote(&t) as dynamic    -- t copied to raw heap
+                                  -- caller must raw_free(r)
 }
 
--- OK: u64 is Copy, value is copied to caller's stack
-regional f get_id() = id: u64 {
+-- ✅ promote as gc — moves value to GC heap
+regional f build() = r: *PageTable {
     PageTable t = PageTable()
-    id = t.id            -- safe copy
+    r = promote(&t) as gc         -- t copied to GC heap
+                                  -- GC takes ownership
 }
 
--- OK: promote — you take full responsibility
-regional f risky() = r: *PageTable {
-    PageTable t = PageTable()
-    r = promote(&t)      -- unsafe: you are responsible for lifetime
+-- ❌ promote as f — compile error, stack of caller will also die
+regional f build() = r: *PageTable {
+    r = promote(&t) as f          -- ERROR: cannot promote to stack
+}
+
+-- ❌ promote without as — compile error, target strategy required
+regional f build() = r: *PageTable {
+    r = promote(&t)               -- ERROR: promote requires target strategy
 }
 ```
+
+What the compiler emits for `promote(&t) as dynamic`:
+```llvm
+; memcpy value to raw_alloc'd memory, return new pointer
+%new = call i8* @raw_alloc(i64 sizeof_PageTable)
+call void @memcpy(i8* %new, i8* %t, i64 sizeof_PageTable)
+```
+
+The original value stays in the arena until the arena is freed normally.
+`promote` makes a **copy** — it does not move the original.
+
+---
+
+### Multiple returns — tuples
+
+For returning multiple values from any function, use tuples.
+This is separate from `promote` — tuples are about API, not memory.
+
+```runes
+-- return multiple values via tuple
+f parse(src: str) = r: (*Node, [512]Error) {
+    *Node      ast  = build_ast(src)
+    [512]Error errs = collect_errors(src)
+    r = (ast, errs)
+}
+
+-- caller destructures
+*Node ast, [512]Error errs = parse(source)
+```
+
+### Combining `promote` and tuples in `regional f`
+
+The natural pattern for returning multiple arena-allocated values:
+
+```runes
+regional f build() = r: (*PageTable, *PageTable) {
+    PageTable pml4 = PageTable()
+    PageTable pdpt = PageTable()
+
+    *PageTable pml4_h = promote(&pml4) as dynamic
+    *PageTable pdpt_h = promote(&pdpt) as dynamic
+
+    r = (pml4_h, pdpt_h)
+}
+
+-- caller
+*PageTable pml4, *PageTable pdpt = build()
+-- caller owns both, must raw_free(pml4) and raw_free(pdpt)
+```
+
+### `promote` in other function types
+
+`promote` also works outside `regional f` to transfer ownership between
+allocators explicitly:
+
+```runes
+-- dynamic f → gc: transfer ownership to GC
+dynamic f init() = r: *Node {
+    *Node n = raw_alloc(sizeof(Node))
+    r = promote(n) as gc     -- GC takes over, no need to raw_free
+}
+
+-- gc f → dynamic: escape GC (rare, use with care)
+gc f extract() = r: *Node {
+    Node n = Node.new()
+    r = promote(&n) as dynamic   -- caller must raw_free(r)
+}
+```
+
+Summary of valid `promote` targets by source:
+
+| Source        | `as dynamic` | `as gc` | `as f`  |
+|---------------|-------------|---------|---------|
+| `regional f`  | ✅           | ✅       | ❌       |
+| `dynamic f`   | ✅           | ✅       | ❌       |
+| `gc f`        | ✅           | ✅       | ❌       |
+| `f`           | ❌           | ❌       | ❌       |
 
 ---
 
@@ -989,6 +1124,7 @@ pub f kernel_main() {
 | Keyword      | Meaning                                        |
 |--------------|------------------------------------------------|
 | `f`          | Stack function                                 |
+| `stack f`    | Explicitly stack-only function                         |
 | `dynamic f`  | Raw heap function (C-style malloc)             |
 | `regional f` | Arena/region allocated function                |
 | `gc f`       | Garbage collected function                             |
@@ -1046,4 +1182,4 @@ pub f kernel_main() {
 
 ---
 
-*Runes — v0.8 draft. Backend: LLVM IR. Compiler: C bootstrap → self-hosted.*
+*Runes — v1.0 draft. Backend: LLVM IR. Compiler: C bootstrap → self-hosted.*

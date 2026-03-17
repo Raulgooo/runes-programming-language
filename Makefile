@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Isrc -Wall -Wextra
 
-SRCS = src/lexer.c src/tests/lexer_test.c
+SRCS = src/lexer.c src/utils/arena.c src/utils/strtab.c src/tests/lexer_test.c
 TARGET = lexer_test
 
 all: $(TARGET)

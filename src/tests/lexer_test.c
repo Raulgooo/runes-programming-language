@@ -30,7 +30,7 @@ void test_memory_scopes() {
   Lexer L;
   // Probando todos los colores de memoria en firmas de funciones
   const char *source = "flex f poly() { regional f arena() {} }";
-  lexer_init(&L, source);
+  lexer_init(&L, source, NULL);
 
   ASSERT_TOKEN(&L, TOKEN_FLEX, "flex");
   ASSERT_TOKEN(&L, TOKEN_F, "f");
@@ -58,7 +58,7 @@ void test_os_features() {
   // Probando atributos de linker, ffi y punteros volátiles
   const char *source = "#[section]\n"
                        "extern volatile *u32 uart = 0x1000;";
-  lexer_init(&L, source);
+  lexer_init(&L, source, NULL);
 
   // #[section]
   ASSERT_TOKEN(&L, TOKEN_HASH, "#");
@@ -87,7 +87,7 @@ void test_control_flow_and_errors() {
   Lexer L;
   // Probando lambdas, manejo de errores y match
   const char *source = "try div() catch |e| -> !";
-  lexer_init(&L, source);
+  lexer_init(&L, source, NULL);
 
   ASSERT_TOKEN(&L, TOKEN_TRY, "try");
   ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "div");
@@ -116,7 +116,7 @@ void test_dynamic_function() {
                        "    -- caller must free raw_alloc\n"
                        "}";
 
-  lexer_init(&L, source);
+  lexer_init(&L, source, NULL);
 
   ASSERT_TOKEN(&L, TOKEN_DYNAMIC, "dynamic");
   ASSERT_TOKEN(&L, TOKEN_F, "f");
@@ -158,20 +158,20 @@ void test_lexer_bugs() {
 
   // Bug 1: Keyword length (tryabc should be identifier)
   const char *s1 = "tryabc";
-  lexer_init(&L, s1);
+  lexer_init(&L, s1, NULL);
   ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "tryabc");
   ASSERT_TOKEN(&L, TOKEN_EOF, "");
 
   // Bug 2: Invalid hex literal (0x followed by space)
   const char *s2 = "0x ";
-  lexer_init(&L, s2);
+  lexer_init(&L, s2, NULL);
   ASSERT_TOKEN(&L, TOKEN_INT_LITERAL, "0");
   ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "x");
   ASSERT_TOKEN(&L, TOKEN_EOF, "");
 
   // Bug 3: Column tracking for multiline strings
   const char *s3 = "\"multi\nline\"";
-  lexer_init(&L, s3);
+  lexer_init(&L, s3, NULL);
   ASSERT_TOKEN(&L, TOKEN_STRING_LITERAL, "\"multi\nline\"");
   // The test already checks kind and lexeme. 
   // We verified the column tracking via manual check in previous output.

@@ -1,6 +1,7 @@
 #ifndef RUNES_LEXER_H
 #define RUNES_LEXER_H
 
+#include "utils/strtab.h"
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -22,6 +23,7 @@ typedef enum {
   TOKEN_REGIONAL,
   TOKEN_GC,
   TOKEN_FLEX,
+  TOKEN_STACK,
   TOKEN_METHOD,
   TOKEN_INTERFACE,
   TOKEN_TYPE,
@@ -51,6 +53,7 @@ typedef enum {
   TOKEN_TRUE,
   TOKEN_FALSE,
   TOKEN_J,
+  TOKEN_SCHEMA,
 
   /* Primitive Types */
   TOKEN_I8,
@@ -68,6 +71,8 @@ typedef enum {
   TOKEN_CHAR,
   TOKEN_USIZE,
   TOKEN_VOID,
+  TOKEN_OR,
+  TOKEN_AND,
 
   /* Punctuation */
   TOKEN_LPAREN,    /* ( */
@@ -109,14 +114,19 @@ typedef enum {
 } TokenKind;
 
 typedef struct {
-  TokenKind kind;
-  const char *start;
-  size_t length;
-  int line;
-  int column;
+  TokenKind   kind;
+  const char *start;  /* pointer into source text */
+  size_t      length; /* byte length of the raw lexeme */
+  int         line;
+  int         column;
   union {
-    int64_t int_val;
-    double float_val;
+    int64_t  int_val;   /* TOKEN_INT_LITERAL */
+    double   float_val; /* TOKEN_FLOAT_LITERAL */
+    uint32_t char_val;  /* TOKEN_CHAR_LITERAL — Unicode codepoint */
+    struct {
+      const char *ptr; /* interned, NUL-terminated, arena-owned */
+      size_t      len; /* byte length (not counting NUL) */
+    } str_val;         /* TOKEN_STRING_LITERAL, TOKEN_IDENTIFIER */
   };
 } Token;
 
@@ -124,11 +134,14 @@ typedef struct {
   const char *source;
   const char *current;
   const char *start;
-  int line;
-  int column;
+  int         line;
+  int         column;
+  int         start_column;
+  StrTab     *strtab; /* string-interning table, NULL → no interning */
 } Lexer;
 
-void lexer_init(Lexer *l, const char *source);
+/* Pass strtab=NULL if you do not need interned identifiers/strings */
+void lexer_init(Lexer *l, const char *source, StrTab *strtab);
 Token lexer_next_token(Lexer *l);
 
 const char *token_kind_to_string(TokenKind kind);
