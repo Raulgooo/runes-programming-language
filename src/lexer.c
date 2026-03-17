@@ -4,18 +4,20 @@
 #include <stdlib.h>
 #include <string.h>
 
-// ── init ──────────────────────────────────────────────────────────────────────
+// ── init
+// ──────────────────────────────────────────────────────────────────────
 void lexer_init(Lexer *L, const char *source, StrTab *strtab) {
-  L->source       = source;
-  L->current      = source;
-  L->start        = source;
-  L->line         = 1;
-  L->column       = 1;
+  L->source = source;
+  L->current = source;
+  L->start = source;
+  L->line = 1;
+  L->column = 1;
   L->start_column = 1;
-  L->strtab       = strtab;
+  L->strtab = strtab;
 }
 
-// ── helpers ───────────────────────────────────────────────────────────────────
+// ── helpers
+// ───────────────────────────────────────────────────────────────────
 static bool is_at_end(Lexer *L) { return *L->current == '\0'; }
 
 static char peek(Lexer *L) { return *L->current; }
@@ -55,10 +57,10 @@ static bool match(Lexer *L, char expected) {
 // make_token — does NOT set union fields; caller must fill them in if needed.
 static Token make_token(Lexer *L, TokenKind kind) {
   Token token;
-  token.kind   = kind;
-  token.start  = L->start;
+  token.kind = kind;
+  token.start = L->start;
   token.length = (size_t)(L->current - L->start);
-  token.line   = L->line;
+  token.line = L->line;
   token.column = L->start_column;
   // zero-initialize the union so callers that never set it get 0/NULL
   token.int_val = 0;
@@ -67,11 +69,11 @@ static Token make_token(Lexer *L, TokenKind kind) {
 
 static Token error_token(Lexer *L) {
   Token token;
-  token.kind    = TOKEN_INVALID;
-  token.start   = L->start;
-  token.length  = (size_t)(L->current - L->start);
-  token.line    = L->line;
-  token.column  = L->column - (int)token.length;
+  token.kind = TOKEN_INVALID;
+  token.start = L->start;
+  token.length = (size_t)(L->current - L->start);
+  token.line = L->line;
+  token.column = L->column - (int)token.length;
   token.int_val = 0;
   return token;
 }
@@ -90,10 +92,15 @@ static void skip_whitespace_and_comments(Lexer *L) {
       if (peek_next(L) == '-') {
         if (peek_after_next(L) == '-') {
           // Multiline: --- ... ---
-          advance(L); advance(L); advance(L);
+          advance(L);
+          advance(L);
+          advance(L);
           while (!is_at_end(L)) {
-            if (peek(L) == '-' && peek_next(L) == '-' && peek_after_next(L) == '-') {
-              advance(L); advance(L); advance(L);
+            if (peek(L) == '-' && peek_next(L) == '-' &&
+                peek_after_next(L) == '-') {
+              advance(L);
+              advance(L);
+              advance(L);
               break;
             }
             advance(L);
@@ -366,12 +373,12 @@ static Token identifier(Lexer *L) {
     advance(L);
 
   TokenKind kind = identifier_kind(L);
-  Token     tok  = make_token(L, kind);
+  Token tok = make_token(L, kind);
 
-  // Intern identifiers so str_val.ptr is valid
-  if (kind == TOKEN_IDENTIFIER && L->strtab) {
-    tok.str_val.ptr = strtab_intern(L->strtab, L->start,
-                                    (size_t)(L->current - L->start));
+  // Intern all identifier-like tokens so str_val.ptr is always valid
+  if (L->strtab) {
+    tok.str_val.ptr =
+        strtab_intern(L->strtab, L->start, (size_t)(L->current - L->start));
     tok.str_val.len = (size_t)(L->current - L->start);
   }
   return tok;
@@ -379,21 +386,28 @@ static Token identifier(Lexer *L) {
 
 static Token number(Lexer *L) {
   Token tok;
-  bool  is_hex = false;
+  bool is_hex = false;
 
   if (L->start[0] == '0' && (peek(L) == 'x' || peek(L) == 'X')) {
     if (!is_hex_digit(peek_next(L))) {
       // '0' alone — 'x' is NOT part of the literal; return just '0'
-      tok          = make_token(L, TOKEN_INT_LITERAL);
-      tok.int_val  = 0;
+      tok = make_token(L, TOKEN_INT_LITERAL);
+      tok.int_val = 0;
       return tok;
     }
     advance(L); // consume 'x'/'X'
     while (!is_at_end(L) && is_hex_digit(peek(L)))
       advance(L);
     is_hex = true;
-    tok    = make_token(L, TOKEN_INT_LITERAL);
-    tok.int_val = (int64_t)strtoull(L->start, NULL, 16);
+    tok = make_token(L, TOKEN_INT_LITERAL);
+
+    char buf[64];
+    size_t len = (size_t)(L->current - L->start);
+    if (len >= sizeof(buf))
+      len = sizeof(buf) - 1;
+    memcpy(buf, L->start, len);
+    buf[len] = '\0';
+    tok.int_val = (int64_t)strtoull(buf, NULL, 16);
     return tok;
   }
 
@@ -406,14 +420,26 @@ static Token number(Lexer *L) {
     advance(L); // consume '.'
     while (is_digit(peek(L)))
       advance(L);
-    tok           = make_token(L, TOKEN_FLOAT_LITERAL);
-    tok.float_val = strtod(L->start, NULL);
+    tok = make_token(L, TOKEN_FLOAT_LITERAL);
+    char buf[64];
+    size_t len = (size_t)(L->current - L->start);
+    if (len >= sizeof(buf))
+      len = sizeof(buf) - 1;
+    memcpy(buf, L->start, len);
+    buf[len] = '\0';
+    tok.float_val = strtod(buf, NULL);
     return tok;
   }
 
-  tok         = make_token(L, TOKEN_INT_LITERAL);
-  tok.int_val = (int64_t)strtoll(L->start, NULL, 10);
-  (void)is_hex; // suppress unused warning
+  tok = make_token(L, TOKEN_INT_LITERAL);
+  char buf[64];
+  size_t len = (size_t)(L->current - L->start);
+  if (len >= sizeof(buf))
+    len = sizeof(buf) - 1;
+  memcpy(buf, L->start, len);
+  buf[len] = '\0';
+  tok.int_val = (int64_t)strtoll(buf, NULL, 10);
+  (void)is_hex;
   return tok;
 }
 
@@ -423,13 +449,20 @@ static Token number(Lexer *L) {
 static uint32_t decode_escape(const char **p) {
   char c = *(*p)++;
   switch (c) {
-  case 'n':  return '\n';
-  case 't':  return '\t';
-  case 'r':  return '\r';
-  case '\\': return '\\';
-  case '\'': return '\'';
-  case '\"': return '\"';
-  case '0':  return '\0';
+  case 'n':
+    return '\n';
+  case 't':
+    return '\t';
+  case 'r':
+    return '\r';
+  case '\\':
+    return '\\';
+  case '\'':
+    return '\'';
+  case '\"':
+    return '\"';
+  case '0':
+    return '\0';
   case 'u': {
     // \uXXXX  — exactly 4 hex digits
     uint32_t cp = 0;
@@ -437,10 +470,16 @@ static uint32_t decode_escape(const char **p) {
       if (!**p)
         break;
       char h = *(*p)++;
-      if (h >= '0' && h <= '9')      cp = cp * 16 + (uint32_t)(h - '0');
-      else if (h >= 'a' && h <= 'f') cp = cp * 16 + (uint32_t)(h - 'a' + 10);
-      else if (h >= 'A' && h <= 'F') cp = cp * 16 + (uint32_t)(h - 'A' + 10);
-      else { --(*p); break; }
+      if (h >= '0' && h <= '9')
+        cp = cp * 16 + (uint32_t)(h - '0');
+      else if (h >= 'a' && h <= 'f')
+        cp = cp * 16 + (uint32_t)(h - 'a' + 10);
+      else if (h >= 'A' && h <= 'F')
+        cp = cp * 16 + (uint32_t)(h - 'A' + 10);
+      else {
+        --(*p);
+        break;
+      }
     }
     return cp;
   }
@@ -469,10 +508,10 @@ static Token string_lit(Lexer *L) {
 
   // Intern the string content (excluding quotes)
   if (L->strtab) {
-    const char *inner     = L->start + 1; // skip opening '"'
-    size_t      inner_len = (size_t)(L->current - L->start - 2); // strip both '"'
-    tok.str_val.ptr       = strtab_intern(L->strtab, inner, inner_len);
-    tok.str_val.len       = inner_len;
+    const char *inner = L->start + 1;                       // skip opening '"'
+    size_t inner_len = (size_t)(L->current - L->start - 2); // strip both '"'
+    tok.str_val.ptr = strtab_intern(L->strtab, inner, inner_len);
+    tok.str_val.len = inner_len;
   }
   return tok;
 }
@@ -496,15 +535,16 @@ static Token char_literal(Lexer *L) {
     return error_token(L);
 
   advance(L); // closing '\''
-  Token tok      = make_token(L, TOKEN_CHAR_LITERAL);
-  tok.char_val   = cp;
+  Token tok = make_token(L, TOKEN_CHAR_LITERAL);
+  tok.char_val = cp;
   return tok;
 }
 
-// ── main dispatch ─────────────────────────────────────────────────────────────
+// ── main dispatch
+// ─────────────────────────────────────────────────────────────
 static Token token_next(Lexer *L) {
   skip_whitespace_and_comments(L);
-  L->start        = L->current;
+  L->start = L->current;
   L->start_column = L->column;
 
   if (is_at_end(L))
@@ -606,103 +646,198 @@ static Token token_next(Lexer *L) {
 
 Token lexer_next_token(Lexer *L) { return token_next(L); }
 
-// ── token_kind_to_string ──────────────────────────────────────────────────────
+// ── token_kind_to_string
+// ──────────────────────────────────────────────────────
 const char *token_kind_to_string(TokenKind kind) {
   switch (kind) {
-  case TOKEN_EOF:           return "EOF";
-  case TOKEN_INVALID:       return "INVALID";
-  case TOKEN_IDENTIFIER:    return "IDENTIFIER";
-  case TOKEN_INT_LITERAL:   return "INT_LITERAL";
-  case TOKEN_FLOAT_LITERAL: return "FLOAT_LITERAL";
-  case TOKEN_STRING_LITERAL:return "STRING_LITERAL";
-  case TOKEN_CHAR_LITERAL:  return "CHAR_LITERAL";
-  case TOKEN_F:             return "f";
-  case TOKEN_DYNAMIC:       return "dynamic";
-  case TOKEN_REGIONAL:      return "regional";
-  case TOKEN_GC:            return "gc";
-  case TOKEN_FLEX:          return "flex";
-  case TOKEN_STACK:         return "stack";
-  case TOKEN_METHOD:        return "method";
-  case TOKEN_INTERFACE:     return "interface";
-  case TOKEN_TYPE:          return "type";
-  case TOKEN_ERROR:         return "error";
-  case TOKEN_MOD:           return "mod";
-  case TOKEN_USE:           return "use";
-  case TOKEN_PUB:           return "pub";
-  case TOKEN_CONST:         return "const";
-  case TOKEN_MATCH:         return "match";
-  case TOKEN_IF:            return "if";
-  case TOKEN_ELSE:          return "else";
-  case TOKEN_FOR:           return "for";
-  case TOKEN_WHILE:         return "while";
-  case TOKEN_LOOP:          return "loop";
-  case TOKEN_BREAK:         return "break";
-  case TOKEN_CONTINUE:      return "continue";
-  case TOKEN_RETURN:        return "return";
-  case TOKEN_TRY:           return "try";
-  case TOKEN_CATCH:         return "catch";
-  case TOKEN_UNSAFE:        return "unsafe";
-  case TOKEN_ASM:           return "asm";
-  case TOKEN_EXTERN:        return "extern";
-  case TOKEN_VOLATILE:      return "volatile";
-  case TOKEN_PROMOTE:       return "promote";
-  case TOKEN_SELF:          return "self";
-  case TOKEN_AS:            return "as";
-  case TOKEN_TRUE:          return "true";
-  case TOKEN_FALSE:         return "false";
-  case TOKEN_J:             return "J";
-  case TOKEN_SCHEMA:        return "schema";
-  case TOKEN_I8:            return "i8";
-  case TOKEN_I16:           return "i16";
-  case TOKEN_I32:           return "i32";
-  case TOKEN_I64:           return "i64";
-  case TOKEN_U8:            return "u8";
-  case TOKEN_U16:           return "u16";
-  case TOKEN_U32:           return "u32";
-  case TOKEN_U64:           return "u64";
-  case TOKEN_F32:           return "f32";
-  case TOKEN_F64:           return "f64";
-  case TOKEN_BOOL:          return "bool";
-  case TOKEN_STR:           return "str";
-  case TOKEN_CHAR:          return "char";
-  case TOKEN_USIZE:         return "usize";
-  case TOKEN_VOID:          return "void";
-  case TOKEN_OR:            return "or";
-  case TOKEN_AND:           return "and";
-  case TOKEN_LPAREN:        return "(";
-  case TOKEN_RPAREN:        return ")";
-  case TOKEN_LBRACE:        return "{";
-  case TOKEN_RBRACE:        return "}";
-  case TOKEN_LBRACKET:      return "[";
-  case TOKEN_RBRACKET:      return "]";
-  case TOKEN_COMMA:         return ",";
-  case TOKEN_DOT:           return ".";
-  case TOKEN_COLON:         return ":";
-  case TOKEN_SEMICOLON:     return ";";
-  case TOKEN_NEWLINE:       return "NEWLINE";
-  case TOKEN_ARROW:         return "->";
-  case TOKEN_RANGE:         return "..";
-  case TOKEN_RANGE_INC:     return "..=";
-  case TOKEN_PIPE:          return "|";
-  case TOKEN_HASH:          return "#";
-  case TOKEN_PLUS:          return "+";
-  case TOKEN_MINUS:         return "-";
-  case TOKEN_STAR:          return "*";
-  case TOKEN_SLASH:         return "/";
-  case TOKEN_PERCENT:       return "%";
-  case TOKEN_EQUAL:         return "=";
-  case TOKEN_EQ_EQ:         return "==";
-  case TOKEN_BANG_EQ:       return "!=";
-  case TOKEN_LT:            return "<";
-  case TOKEN_LT_EQ:         return "<=";
-  case TOKEN_GT:            return ">";
-  case TOKEN_GT_EQ:         return ">=";
-  case TOKEN_BANG:          return "!";
-  case TOKEN_AMP:           return "&";
-  case TOKEN_CARET:         return "^";
-  case TOKEN_TILDE:         return "~";
-  case TOKEN_SHL:           return "<<";
-  case TOKEN_SHR:           return ">>";
+  case TOKEN_EOF:
+    return "EOF";
+  case TOKEN_INVALID:
+    return "INVALID";
+  case TOKEN_IDENTIFIER:
+    return "IDENTIFIER";
+  case TOKEN_INT_LITERAL:
+    return "INT_LITERAL";
+  case TOKEN_FLOAT_LITERAL:
+    return "FLOAT_LITERAL";
+  case TOKEN_STRING_LITERAL:
+    return "STRING_LITERAL";
+  case TOKEN_CHAR_LITERAL:
+    return "CHAR_LITERAL";
+  case TOKEN_F:
+    return "f";
+  case TOKEN_DYNAMIC:
+    return "dynamic";
+  case TOKEN_REGIONAL:
+    return "regional";
+  case TOKEN_GC:
+    return "gc";
+  case TOKEN_FLEX:
+    return "flex";
+  case TOKEN_STACK:
+    return "stack";
+  case TOKEN_METHOD:
+    return "method";
+  case TOKEN_INTERFACE:
+    return "interface";
+  case TOKEN_TYPE:
+    return "type";
+  case TOKEN_ERROR:
+    return "error";
+  case TOKEN_MOD:
+    return "mod";
+  case TOKEN_USE:
+    return "use";
+  case TOKEN_PUB:
+    return "pub";
+  case TOKEN_CONST:
+    return "const";
+  case TOKEN_MATCH:
+    return "match";
+  case TOKEN_IF:
+    return "if";
+  case TOKEN_ELSE:
+    return "else";
+  case TOKEN_FOR:
+    return "for";
+  case TOKEN_WHILE:
+    return "while";
+  case TOKEN_LOOP:
+    return "loop";
+  case TOKEN_BREAK:
+    return "break";
+  case TOKEN_CONTINUE:
+    return "continue";
+  case TOKEN_RETURN:
+    return "return";
+  case TOKEN_TRY:
+    return "try";
+  case TOKEN_CATCH:
+    return "catch";
+  case TOKEN_UNSAFE:
+    return "unsafe";
+  case TOKEN_ASM:
+    return "asm";
+  case TOKEN_EXTERN:
+    return "extern";
+  case TOKEN_VOLATILE:
+    return "volatile";
+  case TOKEN_PROMOTE:
+    return "promote";
+  case TOKEN_SELF:
+    return "self";
+  case TOKEN_AS:
+    return "as";
+  case TOKEN_TRUE:
+    return "true";
+  case TOKEN_FALSE:
+    return "false";
+  case TOKEN_J:
+    return "J";
+  case TOKEN_SCHEMA:
+    return "schema";
+  case TOKEN_I8:
+    return "i8";
+  case TOKEN_I16:
+    return "i16";
+  case TOKEN_I32:
+    return "i32";
+  case TOKEN_I64:
+    return "i64";
+  case TOKEN_U8:
+    return "u8";
+  case TOKEN_U16:
+    return "u16";
+  case TOKEN_U32:
+    return "u32";
+  case TOKEN_U64:
+    return "u64";
+  case TOKEN_F32:
+    return "f32";
+  case TOKEN_F64:
+    return "f64";
+  case TOKEN_BOOL:
+    return "bool";
+  case TOKEN_STR:
+    return "str";
+  case TOKEN_CHAR:
+    return "char";
+  case TOKEN_USIZE:
+    return "usize";
+  case TOKEN_VOID:
+    return "void";
+  case TOKEN_OR:
+    return "or";
+  case TOKEN_AND:
+    return "and";
+  case TOKEN_LPAREN:
+    return "(";
+  case TOKEN_RPAREN:
+    return ")";
+  case TOKEN_LBRACE:
+    return "{";
+  case TOKEN_RBRACE:
+    return "}";
+  case TOKEN_LBRACKET:
+    return "[";
+  case TOKEN_RBRACKET:
+    return "]";
+  case TOKEN_COMMA:
+    return ",";
+  case TOKEN_DOT:
+    return ".";
+  case TOKEN_COLON:
+    return ":";
+  case TOKEN_SEMICOLON:
+    return ";";
+  case TOKEN_NEWLINE:
+    return "NEWLINE";
+  case TOKEN_ARROW:
+    return "->";
+  case TOKEN_RANGE:
+    return "..";
+  case TOKEN_RANGE_INC:
+    return "..=";
+  case TOKEN_PIPE:
+    return "|";
+  case TOKEN_HASH:
+    return "#";
+  case TOKEN_PLUS:
+    return "+";
+  case TOKEN_MINUS:
+    return "-";
+  case TOKEN_STAR:
+    return "*";
+  case TOKEN_SLASH:
+    return "/";
+  case TOKEN_PERCENT:
+    return "%";
+  case TOKEN_EQUAL:
+    return "=";
+  case TOKEN_EQ_EQ:
+    return "==";
+  case TOKEN_BANG_EQ:
+    return "!=";
+  case TOKEN_LT:
+    return "<";
+  case TOKEN_LT_EQ:
+    return "<=";
+  case TOKEN_GT:
+    return ">";
+  case TOKEN_GT_EQ:
+    return ">=";
+  case TOKEN_BANG:
+    return "!";
+  case TOKEN_AMP:
+    return "&";
+  case TOKEN_CARET:
+    return "^";
+  case TOKEN_TILDE:
+    return "~";
+  case TOKEN_SHL:
+    return "<<";
+  case TOKEN_SHR:
+    return ">>";
   }
   return "UNKNOWN";
 }

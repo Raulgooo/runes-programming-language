@@ -104,6 +104,27 @@ static void synchronize(Parser *p) {
     case TOKEN_GC:
     case TOKEN_FLEX:
     case TOKEN_STACK:
+    case TOKEN_VOLATILE:
+    case TOKEN_CONST:
+    case TOKEN_I8:
+    case TOKEN_I16:
+    case TOKEN_I32:
+    case TOKEN_I64:
+    case TOKEN_U8:
+    case TOKEN_U16:
+    case TOKEN_U32:
+    case TOKEN_U64:
+    case TOKEN_F32:
+    case TOKEN_F64:
+    case TOKEN_BOOL:
+    case TOKEN_STR:
+    case TOKEN_CHAR:
+    case TOKEN_USIZE:
+    case TOKEN_VOID:
+    case TOKEN_STAR:    // *u32 ...
+    case TOKEN_LBRACKET: // [5]i32 ...
+    case TOKEN_LPAREN:   // (i32, i32) ...
+    case TOKEN_BANG:     // !void ...
     // statement keywords — safe to resume here
     case TOKEN_IF:
     case TOKEN_WHILE:
@@ -112,6 +133,8 @@ static void synchronize(Parser *p) {
     case TOKEN_MATCH:
     case TOKEN_UNSAFE:
     case TOKEN_RETURN:
+    case TOKEN_BREAK:
+    case TOKEN_CONTINUE:
       return;
 
     default:
@@ -1163,13 +1186,16 @@ static AstNode *parse_stmt(Parser *p) {
   if (check(p, TOKEN_VOLATILE))
     return parse_var_decl(p, false, true);
   // Spec §2: i32 x = 5 — type-keyword var decl
-  if (is_type_keyword(p->current.kind) && peek(p).kind == TOKEN_IDENTIFIER)
+  if (is_type_keyword(p->current.kind))
     return parse_var_decl(p, false, false);
   // Spec §2: Vec2 v = Vec2(...) — user-type var decl (IDENT IDENT)
   if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER)
     return parse_var_decl(p, false, false);
   // Spec §3: [5]i32 nums = ... — array type var decl
   if (check(p, TOKEN_LBRACKET))
+    return parse_var_decl(p, false, false);
+  // Pointer/Fallible/Tuple decls
+  if (check(p, TOKEN_STAR) || check(p, TOKEN_BANG) || check(p, TOKEN_LPAREN))
     return parse_var_decl(p, false, false);
   // expression statement
   return parse_expr(p);
