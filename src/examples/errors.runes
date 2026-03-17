@@ -1,0 +1,46 @@
+error MathError = {
+    | DivByZero
+    | Overflow
+}
+
+error PageFault = {
+    | NotMapped
+    | PermissionDenied
+    | OutOfMemory
+}
+
+-- fallible function
+f divide(a: f32, b: f32) = result: !f32 {
+    if b == 0.0 {
+        result = error.MathError.DivByZero
+    } else {
+        result = a / b
+    }
+}
+
+-- try propagation
+f run() = r: !f32 {
+    f32 val = try divide(10.0, 2.0)
+    r = val * 2.0
+}
+
+-- catch with block
+f safe_run() {
+    f32 val = divide(10.0, 0.0) catch |e| {
+        print("error")
+        return
+    }
+    print(val)
+}
+
+-- catch with default
+f safe_default() {
+    f32 val = divide(10.0, 0.0) catch 0.0
+    print(val)
+}
+
+-- chained catch
+f chained() {
+    f32 val = divide(10.0, 0.0) catch divide(1.0, 1.0) catch 0.0
+    print(val)
+}

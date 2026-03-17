@@ -1,0 +1,51 @@
+f control(x: i32) {
+    -- if / else if / else
+    if x > 0 {
+        print("positive")
+    } else if x < 0 {
+        print("negative")
+    } else {
+        print("zero")
+    }
+
+    -- if as expression
+    str label = if x > 0 { "pos" } else { "neg" }
+
+    -- while
+    while x > 0 {
+        x = x - 1
+    }
+
+    -- loop + break
+    loop {
+        if x == 0 { break }
+        x = x - 1
+    }
+
+    -- for range exclusive
+    for (0..10) |i| {
+        print(i)
+    }
+
+    -- for range inclusive
+    for (0..=10) |i| {
+        print(i)
+    }
+
+    -- for over array
+    [5]i32 nums = [1, 2, 3, 4, 5]
+    for (nums) |n| {
+        print(n)
+    }
+
+    -- for with index
+    for (nums) |n, i| {
+        print(i)
+        print(n)
+    }
+
+    -- for pointer capture
+    for (nums) |*n| {
+        *n = *n * 2
+    }
+}

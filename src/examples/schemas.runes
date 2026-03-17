@@ -1,0 +1,23 @@
+schema Shoe = {
+    brand: str,
+    size:  f32,
+}
+
+schema RedShoe : Shoe = {
+    color: str = "red",
+}
+
+schema User = {
+    name:  str,
+    age:   i32,
+    #[json("email_address")]
+    email: str,
+    #[json_skip]
+    password: str,
+}
+
+f handle(shoe: Shoe) {
+    print(shoe.brand)
+    j = shoe as J
+    print(j.string())
+}

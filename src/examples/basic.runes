@@ -1,0 +1,26 @@
+-- mutable vars
+i32 x = 5
+i64 y = 10
+f32 pi = 3.14
+bool flag = true
+str name = "runes"
+
+-- explicit unsigned
+u8  flags = 0xFF
+u64 addr  = 0xFFFF800000000000
+
+-- const
+const i32 MAX = 512
+const LIMIT = 1024
+
+-- pointers
+*u8 ptr = 0
+*u32 mmio = 0x10000000
+
+-- arrays
+[5]i32 nums = [1, 2, 3, 4, 5]
+[4]u8 rgba = [255, 0, 128, 255]
+[512]u64 entries = []
+
+-- volatile
+volatile *u32 uart = 0x10000000

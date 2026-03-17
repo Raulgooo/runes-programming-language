@@ -1,0 +1,48 @@
+use kernel.arch.x86
+
+error MapError = {
+    | AlreadyMapped
+    | InvalidAddress
+}
+
+#[packed]
+#[align(4096)]
+type PageTable = {
+    entries: [512]u64,
+}
+
+method PageTable {
+    regional f new() = t: PageTable {
+        t = PageTable(entries: [])
+    }
+
+    f map(self, vaddr: u64, paddr: u64, flags: u64) = r: !void {
+        u64 idx = (vaddr >> 12) & 0x1FF
+        if self.entries[idx] != 0 {
+            r = error.MapError.AlreadyMapped
+        } else {
+            self.entries[idx] = paddr | flags
+        }
+    }
+}
+
+pub f kernel_main() {
+    regional f setup() {
+        PageTable pml4 = PageTable.new()
+        PageTable pdpt = PageTable.new()
+        try pml4.map(0xFFFF800000000000, &pdpt as u64, 0x3)
+    }
+
+    setup()
+
+    unsafe {
+        asm { "mov %rax, %cr3" }
+    }
+
+    gc f run_userspace() {
+        Task t = Task.spawn(shell_main)
+        scheduler.add(t)
+    }
+
+    run_userspace()
+}

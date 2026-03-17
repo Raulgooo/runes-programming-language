@@ -1,0 +1,35 @@
+type Color =
+    | Red
+    | Green
+    | Blue
+    | RGB(u8, u8, u8)
+
+f describe(color: Color) {
+    match color {
+        Red        -> print("red"),
+        Green      -> print("green"),
+        Blue       -> print("blue"),
+        RGB(r,g,b) -> print(r),
+        _          -> print("other"),
+    }
+}
+
+-- match as expression
+f label(color: Color) = r: str {
+    r = match color {
+        Red   -> "red",
+        Green -> "green",
+        Blue  -> "blue",
+        _     -> "custom",
+    }
+}
+
+-- match with guards
+f categorize(x: i32) {
+    match x {
+        n if n < 0   -> print("negative"),
+        0            -> print("zero"),
+        n if n > 100 -> print("big"),
+        _            -> print("normal"),
+    }
+}

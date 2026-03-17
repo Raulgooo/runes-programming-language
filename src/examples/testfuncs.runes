@@ -1,0 +1,41 @@
+-- void
+f greet(name: str) {
+    print(name)
+}
+
+-- named return
+f add(x: i32, y: i32) = result: i32 {
+    result = x + y
+}
+
+-- one-liner
+f square(x: i32) = r: i32  r = x * x
+
+-- realm modifiers
+dynamic f alloc_buf(size: u64) = ptr: *u8 {
+    ptr = raw_alloc(size)
+}
+
+regional f make_table() = t: PageTable {
+    t = PageTable(entries: [])
+}
+
+gc f run_shell(input: str) = result: str {
+    result = input
+}
+
+stack f strict(x: i32) = r: i32 {
+    r = x
+}
+
+-- nested realms inside main
+f main() {
+    regional f setup() {
+        i32 x = 5
+    }
+    gc f run() {
+        i32 y = 10
+    }
+    setup()
+    run()
+}

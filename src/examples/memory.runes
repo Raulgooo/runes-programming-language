@@ -1,0 +1,26 @@
+-- promote
+regional f build() = r: *PageTable {
+    PageTable t = PageTable(entries: [])
+    r = promote(&t) as dynamic
+}
+
+-- tuple return
+f parse_both(src: str) = r: (*Node, i32) {
+    r = (build(), 42)
+}
+
+-- unsafe + pointer arithmetic
+f zero_page(addr: *u8, len: usize) {
+    unsafe {
+        for (0..len) |i| {
+            *(addr + i) = 0
+        }
+    }
+}
+
+-- casts
+f cast_stuff() {
+    u64 addr = 0x1000
+    *u8 ptr = addr as *u8
+    u32 val = ptr as u32
+}
