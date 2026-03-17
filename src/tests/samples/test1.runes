@@ -1,0 +1,13 @@
+i32 x = 42
+const i32 MAX = 512
+
+f add(a: i32, b: i32) = r: i32 {
+    r = a + b
+}
+
+f main() {
+    i32 result = add(x, 10)
+    if result > MAX {
+        print("too big")
+    }
+}

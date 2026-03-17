@@ -18,9 +18,9 @@ static AstNode *parse_arg_list(Parser *p);
 static AstNode *parse_additive(Parser *p);
 static AstNode *parse_decl(Parser *p);
 static AstNode *parse_stmt(Parser *p);
-static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm);
+static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr *attrs);
 static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile);
-static AstNode *parse_type_decl(Parser *p, bool is_pub);
+static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs);
 static AstNode *parse_variant_decl(Parser *p, bool is_pub);
 static AstNode *parse_schema_decl(Parser *p, bool is_pub);
 static AstNode *parse_method_decl(Parser *p, bool is_pub);
@@ -238,7 +238,7 @@ static AstNode *parse_type_expr(Parser *p) {
 }
 
 // ── Declarations ─────────────────────────────────────────────────────────────
-static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm) {
+static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr *attrs) {
   // caller verified current == TOKEN_F
   Token f_tok = advance(p); // consume 'f'
 
@@ -301,7 +301,7 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm) {
 
   AstNode *n =
       ast_new_func_decl(p->arena, realm, is_pub, is_main, name_tok.str_val.ptr,
-                        params, ret_name, ret_type, body, NULL);
+                        params, ret_name, ret_type, body, attrs);
   n->line = f_tok.line;
   n->col = f_tok.column;
   return n;
@@ -352,7 +352,7 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile) {
 }
 
 // Spec §7: type Vec2 = { x: f32, y: f32 } or type Vec2 = x: f32, y: f32
-static AstNode *parse_type_decl(Parser *p, bool is_pub) {
+static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
   Token t = advance(p); // consume 'type'
   Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected type name");
   if (p->had_error)
@@ -414,7 +414,7 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub) {
 
   // collect attrs that were on the type itself (parsed before this call)
   AstNode *n =
-      ast_new_type_decl(p->arena, is_pub, name_tok.str_val.ptr, fields, NULL);
+      ast_new_type_decl(p->arena, is_pub, name_tok.str_val.ptr, fields, attrs);
   n->line = t.line;
   n->col = t.column;
   return n;
@@ -558,7 +558,6 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
   AstNode *methods = NULL, *mtail = NULL;
   while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
     Attr *attrs = parse_attrs(p);
-    (void)attrs; // TODO: thread attrs to func_decl
     // each method is a function: [realm] f name(self, ...) = r: T { ... }
     MemoryRealm realm = REALM_STACK;
     if (match(p, TOKEN_REGIONAL))
@@ -570,7 +569,7 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
     else if (match(p, TOKEN_FLEX))
       realm = REALM_FLEX;
 
-    AstNode *fn = parse_func_decl(p, false, realm);
+    AstNode *fn = parse_func_decl(p, false, realm, attrs);
     if (!fn) {
       synchronize(p);
       continue;
@@ -605,7 +604,8 @@ static AstNode *parse_interface_decl(Parser *p, bool is_pub) {
 
   AstNode *methods = NULL, *mtail = NULL;
   while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
-    AstNode *fn = parse_func_decl(p, false, REALM_STACK);
+    Attr *attrs = parse_attrs(p);
+    AstNode *fn = parse_func_decl(p, false, REALM_STACK, attrs);
     if (!fn) {
       synchronize(p);
       continue;
@@ -808,15 +808,10 @@ static AstNode *parse_decl(Parser *p) {
   }
 
   if (check(p, TOKEN_F) || has_realm) {
-    AstNode *fn = parse_func_decl(p, is_pub, realm);
-    // TODO: thread attrs into func_decl when attrs field is added to AstNode
-    (void)attrs;
-    return fn;
+    return parse_func_decl(p, is_pub, realm, attrs);
   }
   if (check(p, TOKEN_TYPE)) {
-    AstNode *td = parse_type_decl(p, is_pub);
-    (void)attrs;
-    return td;
+    return parse_type_decl(p, is_pub, attrs);
   }
   if (check(p, TOKEN_SCHEMA))
     return parse_schema_decl(p, is_pub);
