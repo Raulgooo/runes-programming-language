@@ -243,7 +243,7 @@ static AstNode *parse_type_expr(Parser *p) {
     return n;
   }
 
-  // named primitive / user-defined type
+  // named primitive / user-defined type (or qualified: Module.Type)
   if (check(p, TOKEN_IDENTIFIER) || check(p, TOKEN_I8) || check(p, TOKEN_I16) ||
       check(p, TOKEN_I32) || check(p, TOKEN_I64) || check(p, TOKEN_U8) ||
       check(p, TOKEN_U16) || check(p, TOKEN_U32) || check(p, TOKEN_U64) ||
@@ -251,6 +251,20 @@ static AstNode *parse_type_expr(Parser *p) {
       check(p, TOKEN_STR) || check(p, TOKEN_CHAR) || check(p, TOKEN_USIZE) ||
       check(p, TOKEN_VOID)) {
     Token name_tok = advance(p);
+    
+    // Check for qualified type: Module.Type
+    if (name_tok.kind == TOKEN_IDENTIFIER && check(p, TOKEN_DOT)) {
+      Token module_tok = name_tok;
+      advance(p); // consume '.'
+      Token type_tok = expect(p, TOKEN_IDENTIFIER, "expected type name after '.'");
+      if (p->panic_mode)
+        return NULL;
+      AstNode *n = ast_new_type_qualified(p->arena, module_tok.str_val.ptr, type_tok.str_val.ptr);
+      n->line = module_tok.line;
+      n->col = module_tok.column;
+      return n;
+    }
+    
     const char *name;
     if (name_tok.kind == TOKEN_IDENTIFIER) {
       name = name_tok.str_val.ptr;
@@ -362,6 +376,17 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile) {
         check(p, TOKEN_STAR) || check(p, TOKEN_LBRACKET) ||
         check(p, TOKEN_BANG) || check(p, TOKEN_LPAREN)) {
       has_type = true;
+    }
+    // Qualified type: Module.Type var - check if there's a variable name after
+    if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_DOT &&
+        p->next2.kind == TOKEN_IDENTIFIER) {
+      // Look ahead to see if there's a variable name after Module.Type
+      Lexer l = *p->lexer;
+      Token t = p->next2;
+      t = lexer_next_token(&l);
+      if (t.kind == TOKEN_IDENTIFIER) {
+        has_type = true;
+      }
     }
 
     if (has_type) {
@@ -1179,6 +1204,17 @@ static bool is_var_decl_lookahead(Parser *p) {
     return true;
   if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER)
     return true;
+  // Qualified type: Module.Type var
+  if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_DOT &&
+      p->next2.kind == TOKEN_IDENTIFIER) {
+    // Need to check if there's a variable name after the type
+    // Use lookahead lexer to check what comes after Module.Type
+    Lexer l = *p->lexer;
+    Token t = p->next2; // Type name
+    t = lexer_next_token(&l); // Should be the variable name
+    if (t.kind == TOKEN_IDENTIFIER)
+      return true;
+  }
   if (check(p, TOKEN_STAR) || check(p, TOKEN_BANG)) {
     if (is_type_keyword(p->next.kind))
       return true;

@@ -47,14 +47,15 @@ typedef struct Attr {
 
 // Type expression kinds
 typedef enum {
-  TYPE_NAMED,    // i32, u64, str, bool, char, usize — primitive or user-defined
-  TYPE_PTR,      // *T
-  TYPE_ARRAY,    // [N]T
-  TYPE_SL,       // sl — singly linked list (element type erased in v0.1)
-  TYPE_DL,       // dl — doubly linked list (element type erased in v0.1)
-  TYPE_FALLIBLE, // !T — can fail; inner == NULL means !void
-  TYPE_TUPLE,    // (T, U, ...) — multiple returns
-  TYPE_J,        // J — built-in JSON type
+  TYPE_NAMED,     // i32, u64, str, bool, char, usize — primitive or user-defined
+  TYPE_QUALIFIED, // module.Type — qualified type name
+  TYPE_PTR,       // *T
+  TYPE_ARRAY,     // [N]T
+  TYPE_SL,        // sl — singly linked list (element type erased in v0.1)
+  TYPE_DL,        // dl — doubly linked list (element type erased in v0.1)
+  TYPE_FALLIBLE,  // !T — can fail; inner == NULL means !void
+  TYPE_TUPLE,     // (T, U, ...) — multiple returns
+  TYPE_J,         // J — built-in JSON type
 } TypeKind;
 
 // for-loop capture forms
@@ -481,10 +482,12 @@ typedef struct AstNode {
       struct AstNode *expr;
     } volatile_expr;
 
-    // *u64 | i32 | [N]T | !T | !void | (T, U) | sl | dl | J
+    // *u64 | i32 | [N]T | !T | !void | (T, U) | sl | dl | J | module.Type
     struct {
       TypeKind kind;
       char *name; // TYPE_NAMED: type name (may be primitive or user-defined)
+                  // TYPE_QUALIFIED: type name (e.g., "Task")
+      char *module; // TYPE_QUALIFIED: module name (e.g., "scheduler")
       struct AstNode *inner; // TYPE_PTR    → pointee type
                              // TYPE_ARRAY  → element type
                              // TYPE_FALLIBLE → inner type (NULL = !void)
@@ -591,6 +594,7 @@ AstNode *ast_new_volatile_expr(Arena *arena, AstNode *expr);
 
 // type expressions
 AstNode *ast_new_type_named(Arena *arena, const char *name);
+AstNode *ast_new_type_qualified(Arena *arena, const char *module, const char *name);
 AstNode *ast_new_type_ptr(Arena *arena, AstNode *inner);
 AstNode *ast_new_type_array(Arena *arena, AstNode *size, AstNode *elem_type);
 AstNode *ast_new_type_fallible(Arena *arena,

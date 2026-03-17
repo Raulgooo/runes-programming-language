@@ -30,6 +30,8 @@ static const char *type_kind_to_string(TypeKind kind) {
   switch (kind) {
   case TYPE_NAMED:
     return "named";
+  case TYPE_QUALIFIED:
+    return "qualified";
   case TYPE_PTR:
     return "pointer";
   case TYPE_ARRAY:
@@ -250,6 +252,10 @@ void ast_print_ext(AstNode *node, int level) {
     printf("TypeExpr kind=%s", type_kind_to_string(node->as.type_expr.kind));
     if (node->as.type_expr.kind == TYPE_NAMED) {
       printf(" name='%s'",
+             node->as.type_expr.name ? node->as.type_expr.name : "(null)");
+    } else if (node->as.type_expr.kind == TYPE_QUALIFIED) {
+      printf(" module='%s' name='%s'",
+             node->as.type_expr.module ? node->as.type_expr.module : "(null)",
              node->as.type_expr.name ? node->as.type_expr.name : "(null)");
     }
     printf("\n");

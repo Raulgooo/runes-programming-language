@@ -1,0 +1,1 @@
+str label = if x > 0 { "pos" } else { "neg" }

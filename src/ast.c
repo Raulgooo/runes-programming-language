@@ -404,6 +404,15 @@ AstNode *ast_new_type_named(Arena *arena, const char *name) {
   AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
   n->as.type_expr.kind = TYPE_NAMED;
   n->as.type_expr.name = arena_strdup(arena, name);
+  n->as.type_expr.module = NULL;
+  return n;
+}
+
+AstNode *ast_new_type_qualified(Arena *arena, const char *module, const char *name) {
+  AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
+  n->as.type_expr.kind = TYPE_QUALIFIED;
+  n->as.type_expr.module = arena_strdup(arena, module);
+  n->as.type_expr.name = arena_strdup(arena, name);
   return n;
 }
 
