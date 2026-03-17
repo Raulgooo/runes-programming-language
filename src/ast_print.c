@@ -89,6 +89,27 @@ void ast_print_ext(AstNode *node, int level) {
             ast_print_ext(node->as.type_decl.fields, level + 1);
             break;
 
+        case AST_VARIANT_DECL:
+            printf("VariantDecl name='%s' is_pub=%s\n",
+                   node->as.variant_decl.name ? node->as.variant_decl.name : "(null)",
+                   node->as.variant_decl.is_pub ? "true" : "false");
+            ast_print_ext(node->as.variant_decl.arms, level + 1);
+            break;
+
+        case AST_VARIANT_ARM:
+            printf("VariantArm name='%s'\n",
+                   node->as.variant_arm.name ? node->as.variant_arm.name : "(null)");
+            ast_print_ext(node->as.variant_arm.fields, level + 1);
+            break;
+
+        case AST_SCHEMA_DECL:
+            printf("SchemaDecl name='%s' parent='%s' is_pub=%s\n",
+                   node->as.schema_decl.name ? node->as.schema_decl.name : "(null)",
+                   node->as.schema_decl.parent ? node->as.schema_decl.parent : "(null)",
+                   node->as.schema_decl.is_pub ? "true" : "false");
+            ast_print_ext(node->as.schema_decl.fields, level + 1);
+            break;
+
         case AST_FIELD_DECL:
             printf("FieldDecl name='%s' is_volatile=%s\n",
                    node->as.field_decl.name ? node->as.field_decl.name : "(null)",
@@ -97,6 +118,58 @@ void ast_print_ext(AstNode *node, int level) {
             if (node->as.field_decl.default_val) {
                 indent(level + 1); printf("Default:\n");
                 ast_print_ext(node->as.field_decl.default_val, level + 2);
+            }
+            break;
+
+        case AST_METHOD_DECL:
+            printf("MethodDecl type_name='%s' iface_name='%s' is_pub=%s\n",
+                   node->as.method_decl.type_name ? node->as.method_decl.type_name : "(null)",
+                   node->as.method_decl.iface_name ? node->as.method_decl.iface_name : "(null)",
+                   node->as.method_decl.is_pub ? "true" : "false");
+            ast_print_ext(node->as.method_decl.methods, level + 1);
+            break;
+
+        case AST_INTERFACE_DECL:
+            printf("InterfaceDecl name='%s' is_pub=%s\n",
+                   node->as.interface_decl.name ? node->as.interface_decl.name : "(null)",
+                   node->as.interface_decl.is_pub ? "true" : "false");
+            ast_print_ext(node->as.interface_decl.methods, level + 1);
+            break;
+
+        case AST_ERROR_DECL:
+            printf("ErrorDecl name='%s' is_pub=%s\n",
+                   node->as.error_decl.name ? node->as.error_decl.name : "(null)",
+                   node->as.error_decl.is_pub ? "true" : "false");
+            ast_print_ext(node->as.error_decl.variants, level + 1);
+            break;
+
+        case AST_MOD_DECL:
+            printf("ModDecl name='%s' is_pub=%s\n",
+                   node->as.mod_decl.name ? node->as.mod_decl.name : "(null)",
+                   node->as.mod_decl.is_pub ? "true" : "false");
+            ast_print_ext(node->as.mod_decl.declarations, level + 1);
+            break;
+
+        case AST_USE_DECL:
+            printf("UseDecl\n");
+            ast_print_ext(node->as.use_decl.path, level + 1);
+            break;
+
+        case AST_EXTERN_DECL:
+            printf("ExternDecl name='%s' is_func=%s\n",
+                   node->as.extern_decl.name ? node->as.extern_decl.name : "(null)",
+                   node->as.extern_decl.is_func ? "true" : "false");
+            if (node->as.extern_decl.is_func) {
+                if (node->as.extern_decl.params) {
+                    indent(level + 1); printf("Params:\n");
+                    ast_print_ext(node->as.extern_decl.params, level + 2);
+                }
+                if (node->as.extern_decl.ret_name) {
+                    indent(level + 1); printf("Return name='%s'\n", node->as.extern_decl.ret_name);
+                    ast_print_ext(node->as.extern_decl.ret_type, level + 2);
+                }
+            } else {
+                ast_print_ext(node->as.extern_decl.var_type, level + 1);
             }
             break;
 
@@ -264,6 +337,20 @@ void ast_print_ext(AstNode *node, int level) {
             printf("LoopStmt\n");
             indent(level + 1); printf("Body:\n");
             ast_print_ext(node->as.loop_stmt.body, level + 2);
+            break;
+
+        case AST_BREAK_STMT:
+            printf("BreakStmt\n");
+            break;
+
+        case AST_CONTINUE_STMT:
+            printf("ContinueStmt\n");
+            break;
+
+        case AST_UNSAFE_BLOCK:
+            printf("UnsafeBlock\n");
+            indent(level + 1); printf("Body:\n");
+            ast_print_ext(node->as.unsafe_block.body, level + 2);
             break;
 
         case AST_ARRAY_LITERAL:

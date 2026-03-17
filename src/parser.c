@@ -11,6 +11,10 @@
 // ──  Expressions
 static AstNode *parse_expr(Parser *p);
 static AstNode *parse_type_expr(Parser *p);
+static AstNode *parse_unary(Parser *p);
+static AstNode *parse_primary(Parser *p);
+static AstNode *parse_postfix(Parser *p);
+static AstNode *parse_cast(Parser *p);
 static AstNode *parse_block(Parser *p);
 static AstNode *parse_try(Parser *p);
 static AstNode *parse_catch(Parser *p);
@@ -18,7 +22,7 @@ static AstNode *parse_arg_list(Parser *p);
 static AstNode *parse_additive(Parser *p);
 static AstNode *parse_decl(Parser *p);
 static AstNode *parse_stmt(Parser *p);
-static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr *attrs);
+static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr *attrs, bool body_allowed);
 static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile);
 static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs);
 static AstNode *parse_variant_decl(Parser *p, bool is_pub);
@@ -48,6 +52,7 @@ static AstNode *parse_unsafe_block(Parser *p);
 // ───────────────────────────────────────────────────────────────
 static Token advance(Parser *p) {
   Token prev = p->current;
+  p->prev_line = prev.line;
   p->current = p->next;
   p->next = lexer_next_token(p->lexer);
   return prev;
@@ -98,6 +103,8 @@ static void synchronize(Parser *p) {
     case TOKEN_F:
     case TOKEN_TYPE:
     case TOKEN_SCHEMA:
+    case TOKEN_METHOD:
+    case TOKEN_INTERFACE:
     case TOKEN_ERROR:
     case TOKEN_MOD:
     case TOKEN_USE:
@@ -159,6 +166,7 @@ void parser_init(Parser *p, Lexer *lexer, Arena *arena, const char *filename,
   p->error_count = 0;
   p->current = (Token){0};
   p->next = lexer_next_token(lexer); // prime the buffer
+  p->prev_line = 1;
   advance(p);                        // current = first token, next = second
 }
 
@@ -266,7 +274,7 @@ static AstNode *parse_type_expr(Parser *p) {
 }
 
 // ── Declarations ─────────────────────────────────────────────────────────────
-static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr *attrs) {
+static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr *attrs, bool body_allowed) {
   // caller verified current == TOKEN_F
   Token f_tok = advance(p); // consume 'f'
 
@@ -312,12 +320,12 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm, Attr 
   //   Void block:     f greet() { print("hi") }
   //   Signature-only: body == NULL (interface / extern)
   AstNode *body = NULL;
-  if (check(p, TOKEN_LBRACE)) {
+  if (body_allowed && check(p, TOKEN_LBRACE)) {
     body = parse_block(p);
     if (!body)
       return NULL;
-  } else if (has_return) {
-    // one-liner — only valid when there IS a named return
+  } else if (body_allowed && has_return && p->current.line == p->prev_line) {
+    // one-liner — only valid when there IS a named return AND it's on the same line
     AstNode *expr = parse_expr(p);
     if (!expr)
       return NULL;
@@ -400,7 +408,8 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
 
   AstNode *fields = NULL, *ftail = NULL;
   bool braced = match(p, TOKEN_LBRACE);
-  do {
+  while (!check(p, TOKEN_EOF)) {
+    if (braced && check(p, TOKEN_RBRACE)) break;
     // optional field attributes: #[json("email_address")]
     Attr *attrs = parse_attrs(p);
     // optional volatile
@@ -431,7 +440,8 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
       ftail->next = fd;
       ftail = fd;
     }
-  } while (match(p, TOKEN_COMMA));
+    if (!match(p, TOKEN_COMMA)) break;
+  }
 
   if (braced) {
     expect(p, TOKEN_RBRACE, "expected '}' after type fields");
@@ -596,7 +606,7 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
     else if (match(p, TOKEN_FLEX))
       realm = REALM_FLEX;
 
-    AstNode *fn = parse_func_decl(p, false, realm, attrs);
+    AstNode *fn = parse_func_decl(p, false, realm, attrs, true);
     if (!fn) {
       synchronize(p);
       continue;
@@ -632,7 +642,8 @@ static AstNode *parse_interface_decl(Parser *p, bool is_pub) {
   AstNode *methods = NULL, *mtail = NULL;
   while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
     Attr *attrs = parse_attrs(p);
-    AstNode *fn = parse_func_decl(p, false, REALM_STACK, attrs);
+    // Functions in interfaces are always signatures, so pass REALM_INTERFACE_SIG
+    AstNode *fn = parse_func_decl(p, false, REALM_STACK, attrs, false);
     if (!fn) {
       synchronize(p);
       continue;
@@ -835,7 +846,7 @@ static AstNode *parse_decl(Parser *p) {
   }
 
   if (check(p, TOKEN_F) || has_realm) {
-    return parse_func_decl(p, is_pub, realm, attrs);
+    return parse_func_decl(p, is_pub, realm, attrs, true);
   }
   if (check(p, TOKEN_TYPE)) {
     return parse_type_decl(p, is_pub, attrs);
@@ -1398,6 +1409,42 @@ static AstNode *parse_primary(Parser *p) {
     return n;
   }
 
+  // ── asm { "..." } -> reg ────────────────────────────────────────────
+  if (check(p, TOKEN_ASM)) {
+    Token asm_tok = advance(p);
+    expect(p, TOKEN_LBRACE, "expected '{' after 'asm'");
+    if (p->panic_mode)
+      return NULL;
+    Token code = expect(p, TOKEN_STRING_LITERAL, "expected assembly string");
+    if (p->panic_mode)
+      return NULL;
+    expect(p, TOKEN_RBRACE, "expected '}' after assembly string");
+    if (p->panic_mode)
+      return NULL;
+    const char *output = NULL;
+    if (match(p, TOKEN_ARROW)) {
+      Token reg = expect(p, TOKEN_IDENTIFIER, "expected register name after '->'");
+      if (!p->panic_mode)
+        output = reg.str_val.ptr;
+    }
+    AstNode *n = ast_new_asm_expr(p->arena, code.str_val.ptr, output);
+    n->line = asm_tok.line;
+    n->col = asm_tok.column;
+    return n;
+  }
+
+  // ── volatile expr ──────────────────────────────────────────────────
+  if (check(p, TOKEN_VOLATILE)) {
+    Token vol_tok = advance(p);
+    AstNode *expr = parse_unary(p);
+    if (!expr)
+      return NULL;
+    AstNode *n = ast_new_volatile_expr(p->arena, expr);
+    n->line = vol_tok.line;
+    n->col = vol_tok.column;
+    return n;
+  }
+
   // ── promote(expr) as realm — Spec §5: promote(&t) as dynamic ────────
   if (check(p, TOKEN_PROMOTE)) {
     Token prom_tok = advance(p);
@@ -1488,7 +1535,7 @@ static AstNode *parse_primary(Parser *p) {
     AstNode *elems = NULL;
     if (!check(p, TOKEN_RBRACKET)) {
       AstNode *head = NULL, *tail = NULL;
-      do {
+      while (!check(p, TOKEN_RBRACKET) && !check(p, TOKEN_EOF)) {
         AstNode *elem = parse_expr(p);
         if (!elem)
           return NULL;
@@ -1498,7 +1545,8 @@ static AstNode *parse_primary(Parser *p) {
           tail->next = elem;
           tail = elem;
         }
-      } while (match(p, TOKEN_COMMA));
+        if (!match(p, TOKEN_COMMA)) break;
+      }
       elems = head;
     }
     expect(p, TOKEN_RBRACKET, "expected ']' after array literal");
@@ -1519,13 +1567,14 @@ static AstNode *parse_primary(Parser *p) {
     if (match(p, TOKEN_COMMA)) {
       // tuple: (a, b, ...)
       AstNode *head = first, *tail = first;
-      do {
+      while (!check(p, TOKEN_RPAREN) && !check(p, TOKEN_EOF)) {
         AstNode *elem = parse_expr(p);
         if (!elem)
           return NULL;
         tail->next = elem;
         tail = elem;
-      } while (match(p, TOKEN_COMMA));
+        if (!match(p, TOKEN_COMMA)) break;
+      }
       expect(p, TOKEN_RPAREN, "expected ')' after tuple");
       if (p->panic_mode)
         return NULL;
@@ -1561,6 +1610,7 @@ static AstNode *parse_postfix(Parser *p) {
   while (true) {
     // ── call: foo(a, b) — Spec §4 ─────────────────────────────────────
     if (check(p, TOKEN_LPAREN)) {
+      if (p->current.line > p->prev_line) break;
       Token open = advance(p);
       AstNode *args = parse_arg_list(p);
       expect(p, TOKEN_RPAREN, "expected ')' after arguments");
@@ -1573,6 +1623,7 @@ static AstNode *parse_postfix(Parser *p) {
 
       // ── index: arr[0] — Spec §3 ───────────────────────────────────────
     } else if (check(p, TOKEN_LBRACKET)) {
+      if (p->current.line > p->prev_line) break;
       Token open = advance(p);
       AstNode *index = parse_expr(p);
       if (!index)
@@ -1599,6 +1650,7 @@ static AstNode *parse_postfix(Parser *p) {
 
       // ── range: 0..10 or 0..=10 — Spec §6 ─────────────────────────────
     } else if (check(p, TOKEN_RANGE)) {
+      if (p->current.line > p->prev_line) break;
       Token range_tok = advance(p);
       AstNode *end = parse_additive(p); // range binds tighter than comparison
       if (!end)
@@ -1609,6 +1661,7 @@ static AstNode *parse_postfix(Parser *p) {
       left = n;
 
     } else if (check(p, TOKEN_RANGE_INC)) {
+      if (p->current.line > p->prev_line) break;
       Token range_tok = advance(p);
       AstNode *end = parse_additive(p);
       if (!end)
@@ -1631,6 +1684,7 @@ static AstNode *parse_cast(Parser *p) {
     return NULL;
 
   while (check(p, TOKEN_AS)) {
+    if (p->current.line > p->prev_line) break;
     Token as_tok = advance(p);
     AstNode *target = parse_type_expr(p);
     if (!target)
@@ -1665,6 +1719,7 @@ static AstNode *parse_multiplicative(Parser *p) {
 
   while (check(p, TOKEN_STAR) || check(p, TOKEN_SLASH) ||
          check(p, TOKEN_PERCENT)) {
+    if (p->current.line > p->prev_line) break;
     Token op = advance(p);
     AstNode *right = parse_unary(p);
     if (!right)
@@ -1683,6 +1738,7 @@ static AstNode *parse_additive(Parser *p) {
     return NULL;
 
   while (check(p, TOKEN_PLUS) || check(p, TOKEN_MINUS)) {
+    if (p->current.line > p->prev_line) break;
     Token op = advance(p);
     AstNode *right = parse_multiplicative(p);
     if (!right)
@@ -1702,6 +1758,7 @@ static AstNode *parse_bitwise(Parser *p) {
 
   while (check(p, TOKEN_AMP) || check(p, TOKEN_CARET) || check(p, TOKEN_PIPE) ||
          check(p, TOKEN_SHL) || check(p, TOKEN_SHR)) {
+    if (p->current.line > p->prev_line) break;
     Token op = advance(p);
     AstNode *right = parse_additive(p);
     if (!right)
@@ -1721,6 +1778,7 @@ static AstNode *parse_comparison(Parser *p) {
 
   while (check(p, TOKEN_LT) || check(p, TOKEN_LT_EQ) || check(p, TOKEN_GT) ||
          check(p, TOKEN_GT_EQ)) {
+    if (p->current.line > p->prev_line) break;
     Token op = advance(p);
     AstNode *right = parse_bitwise(p);
     if (!right)
@@ -1739,6 +1797,7 @@ static AstNode *parse_equality(Parser *p) {
     return NULL;
 
   while (check(p, TOKEN_EQ_EQ) || check(p, TOKEN_BANG_EQ)) {
+    if (p->current.line > p->prev_line) break;
     Token op = advance(p);
     AstNode *right = parse_comparison(p);
     if (!right)
@@ -1757,6 +1816,7 @@ static AstNode *parse_logical_and(Parser *p) {
     return NULL;
 
   while (check(p, TOKEN_AND)) {
+    if (p->current.line > p->prev_line) break;
     Token op = advance(p);
     AstNode *right = parse_equality(p);
     if (!right)
@@ -1775,6 +1835,7 @@ static AstNode *parse_logical_or(Parser *p) {
     return NULL;
 
   while (check(p, TOKEN_OR)) {
+    if (p->current.line > p->prev_line) break;
     Token op = advance(p);
     AstNode *right = parse_logical_and(p);
     if (!right)
