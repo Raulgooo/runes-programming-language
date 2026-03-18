@@ -66,6 +66,11 @@ static void collect_decls(Resolver *r, AstNode *node) {
       define_symbol(r, node, node->as.extern_decl.name, kind, true);
       break;
     }
+    case AST_METHOD_DECL:
+      // Methods don't define a name in this scope; they are typically
+      // resolved through their parent type, but we still need to
+      // traverse their bodies later.
+      break;
     case AST_MOD_DECL:
       define_symbol(r, node, node->as.mod_decl.name, SYM_MOD,
                     node->as.mod_decl.is_pub);
@@ -218,6 +223,14 @@ static void resolve_node(Resolver *r, AstNode *node) {
   case AST_TUPLE_DESTRUCTURE:
     resolve_node(r, node->as.tuple_destructure.init);
     resolve_list(r, node->as.tuple_destructure.targets);
+    break;
+
+  case AST_METHOD_DECL:
+    resolve_list(r, node->as.method_decl.methods);
+    break;
+
+  case AST_INTERFACE_DECL:
+    resolve_list(r, node->as.interface_decl.methods);
     break;
 
   default:
