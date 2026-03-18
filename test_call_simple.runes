@@ -1,0 +1,3 @@
+f test() {
+    render_point(self.x, self.y)
+}

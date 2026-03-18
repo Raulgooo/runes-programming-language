@@ -1,11 +1,14 @@
-runesprev ❯ # Run all tests                                                                                        main      
-$ echo "=== TEST RESULTS ==="
+#!/bin/bash
+# Run all tests
+echo "=== TEST RESULTS ==="
 for f in src/tests/samples/*.runes; do
-  errors=$(./ast_tool "$f" 2>&1 | grep -c "\[Error\]")
+  output=$(./runes "$f" 2>&1)
+  status=$?
   name=$(basename "$f")
-  if [ "$errors" -eq 0 ]; then
+  if [ $status -eq 0 ]; then
     echo "✅ $name"
   else
+    errors=$(echo "$output" | grep -c "Error")
     echo "❌ $name ($errors errors)"
   fi
 done

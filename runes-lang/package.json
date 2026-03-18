@@ -1,0 +1,21 @@
+{
+  "name": "runes-lang",
+  "displayName": "Runes",
+  "description": "Runes programming language support",
+  "version": "0.0.1",
+  "engines": { "vscode": "^1.60.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [{
+      "id": "runes",
+      "aliases": ["Runes", "runes"],
+      "extensions": [".runes"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "runes",
+      "scopeName": "source.runes",
+      "path": "./syntaxes/runes.tmLanguage.json"
+    }]
+  }
+}

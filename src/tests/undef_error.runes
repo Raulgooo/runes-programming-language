@@ -1,0 +1,3 @@
+f main() {
+    x = 10 -- Error: x is not defined
+}

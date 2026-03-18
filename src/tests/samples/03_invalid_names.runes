@@ -1,0 +1,7 @@
+f main() {
+    x := 10
+    y := x + z -- Error: z is undefined
+}
+
+f duplicate() {}
+f duplicate() {} -- Error: duplicate declaration

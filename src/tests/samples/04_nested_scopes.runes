@@ -1,0 +1,13 @@
+f main() {
+    outer := 1
+    {
+        inner := 2
+        outer = 3 -- Updates outer
+        shadow := 10
+        {
+            shadow := 20 -- Shadows shadow in previous block
+            x := shadow + inner + outer -- 20 + 2 + 3 = 25
+        }
+    }
+    -- inner = 4 -- Error: inner not defined here
+}

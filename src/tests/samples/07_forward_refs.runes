@@ -1,0 +1,11 @@
+f first() {
+    second() -- Will this be found?
+}
+
+f second() {
+    -- OK
+}
+
+f main() {
+    first()
+}

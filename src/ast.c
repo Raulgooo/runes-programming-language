@@ -29,9 +29,9 @@ AstNode *ast_new_func_decl(Arena *arena, MemoryRealm realm, bool is_pub,
   n->as.func_decl.realm = realm;
   n->as.func_decl.is_pub = is_pub;
   n->as.func_decl.is_main = is_main;
-  n->as.func_decl.name = arena_strdup(arena, name);
+  n->as.func_decl.name = name;
   n->as.func_decl.params = params;
-  n->as.func_decl.ret_name = ret_name ? arena_strdup(arena, ret_name) : NULL;
+  n->as.func_decl.ret_name = ret_name;
   n->as.func_decl.ret_type = ret_type;
   n->as.func_decl.body = body;
   n->as.func_decl.attrs = attrs;
@@ -44,7 +44,7 @@ AstNode *ast_new_var_decl(Arena *arena, bool is_const, bool is_volatile,
   AstNode *n = ast_alloc(arena, AST_VAR_DECL);
   n->as.var_decl.is_const = is_const;
   n->as.var_decl.is_volatile = is_volatile;
-  n->as.var_decl.name = arena_strdup(arena, name);
+  n->as.var_decl.name = name;
   n->as.var_decl.type = type;
   n->as.var_decl.init = init;
   n->as.var_decl.attrs = attrs;
@@ -55,7 +55,7 @@ AstNode *ast_new_type_decl(Arena *arena, bool is_pub, const char *name,
                            AstNode *fields, Attr *attrs) {
   AstNode *n = ast_alloc(arena, AST_TYPE_DECL);
   n->as.type_decl.is_pub = is_pub;
-  n->as.type_decl.name = arena_strdup(arena, name);
+  n->as.type_decl.name = name;
   n->as.type_decl.fields = fields;
   n->as.type_decl.attrs = attrs;
   return n;
@@ -65,14 +65,14 @@ AstNode *ast_new_variant_decl(Arena *arena, bool is_pub, const char *name,
                               AstNode *arms) {
   AstNode *n = ast_alloc(arena, AST_VARIANT_DECL);
   n->as.variant_decl.is_pub = is_pub;
-  n->as.variant_decl.name = arena_strdup(arena, name);
+  n->as.variant_decl.name = name;
   n->as.variant_decl.arms = arms;
   return n;
 }
 
 AstNode *ast_new_variant_arm(Arena *arena, const char *name, AstNode *fields) {
   AstNode *n = ast_alloc(arena, AST_VARIANT_ARM);
-  n->as.variant_arm.name = arena_strdup(arena, name);
+  n->as.variant_arm.name = name;
   n->as.variant_arm.fields = fields;
   return n;
 }
@@ -81,8 +81,8 @@ AstNode *ast_new_schema_decl(Arena *arena, bool is_pub, const char *name,
                              const char *parent, AstNode *fields) {
   AstNode *n = ast_alloc(arena, AST_SCHEMA_DECL);
   n->as.schema_decl.is_pub = is_pub;
-  n->as.schema_decl.name = arena_strdup(arena, name);
-  n->as.schema_decl.parent = parent ? arena_strdup(arena, parent) : NULL;
+  n->as.schema_decl.name = name;
+  n->as.schema_decl.parent = parent;
   n->as.schema_decl.fields = fields;
   return n;
 }
@@ -91,7 +91,7 @@ AstNode *ast_new_field_decl(Arena *arena, bool is_volatile, const char *name,
                             AstNode *type, AstNode *default_val, Attr *attrs) {
   AstNode *n = ast_alloc(arena, AST_FIELD_DECL);
   n->as.field_decl.is_volatile = is_volatile;
-  n->as.field_decl.name = arena_strdup(arena, name);
+  n->as.field_decl.name = name;
   n->as.field_decl.type = type;
   n->as.field_decl.default_val = default_val;
   n->as.field_decl.attrs = attrs;
@@ -102,9 +102,8 @@ AstNode *ast_new_method_decl(Arena *arena, bool is_pub, const char *type_name,
                              const char *iface_name, AstNode *methods) {
   AstNode *n = ast_alloc(arena, AST_METHOD_DECL);
   n->as.method_decl.is_pub = is_pub;
-  n->as.method_decl.type_name = arena_strdup(arena, type_name);
-  n->as.method_decl.iface_name =
-      iface_name ? arena_strdup(arena, iface_name) : NULL;
+  n->as.method_decl.type_name = type_name;
+  n->as.method_decl.iface_name = iface_name;
   n->as.method_decl.methods = methods;
   return n;
 }
@@ -113,7 +112,7 @@ AstNode *ast_new_interface_decl(Arena *arena, bool is_pub, const char *name,
                                 AstNode *methods) {
   AstNode *n = ast_alloc(arena, AST_INTERFACE_DECL);
   n->as.interface_decl.is_pub = is_pub;
-  n->as.interface_decl.name = arena_strdup(arena, name);
+  n->as.interface_decl.name = name;
   n->as.interface_decl.methods = methods;
   return n;
 }
@@ -122,7 +121,7 @@ AstNode *ast_new_error_decl(Arena *arena, bool is_pub, const char *name,
                             AstNode *variants) {
   AstNode *n = ast_alloc(arena, AST_ERROR_DECL);
   n->as.error_decl.is_pub = is_pub;
-  n->as.error_decl.name = arena_strdup(arena, name);
+  n->as.error_decl.name = name;
   n->as.error_decl.variants = variants;
   return n;
 }
@@ -131,7 +130,7 @@ AstNode *ast_new_mod_decl(Arena *arena, bool is_pub, const char *name,
                           AstNode *declarations) {
   AstNode *n = ast_alloc(arena, AST_MOD_DECL);
   n->as.mod_decl.is_pub = is_pub;
-  n->as.mod_decl.name = arena_strdup(arena, name);
+  n->as.mod_decl.name = name;
   n->as.mod_decl.declarations = declarations;
   return n;
 }
@@ -147,9 +146,9 @@ AstNode *ast_new_extern_decl(Arena *arena, bool is_func, const char *name,
                              AstNode *ret_type, AstNode *var_type) {
   AstNode *n = ast_alloc(arena, AST_EXTERN_DECL);
   n->as.extern_decl.is_func = is_func;
-  n->as.extern_decl.name = arena_strdup(arena, name);
+  n->as.extern_decl.name = name;
   n->as.extern_decl.params = params;
-  n->as.extern_decl.ret_name = ret_name ? arena_strdup(arena, ret_name) : NULL;
+  n->as.extern_decl.ret_name = ret_name;
   n->as.extern_decl.ret_type = ret_type;
   n->as.extern_decl.var_type = var_type;
   return n;
@@ -157,7 +156,7 @@ AstNode *ast_new_extern_decl(Arena *arena, bool is_func, const char *name,
 
 AstNode *ast_new_param(Arena *arena, const char *name, AstNode *type) {
   AstNode *n = ast_alloc(arena, AST_PARAM);
-  n->as.param.name = arena_strdup(arena, name);
+  n->as.param.name = name;
   n->as.param.type = type;
   return n;
 }
@@ -198,8 +197,8 @@ AstNode *ast_new_for_stmt(Arena *arena, AstNode *iter, CaptureKind cap_kind,
   AstNode *n = ast_alloc(arena, AST_FOR_STMT);
   n->as.for_stmt.iter = iter;
   n->as.for_stmt.cap_kind = cap_kind;
-  n->as.for_stmt.cap_value = arena_strdup(arena, cap_value);
-  n->as.for_stmt.cap_index = cap_index ? arena_strdup(arena, cap_index) : NULL;
+  n->as.for_stmt.cap_value = cap_value;
+  n->as.for_stmt.cap_index = cap_index;
   n->as.for_stmt.body = body;
   return n;
 }
@@ -232,7 +231,9 @@ AstNode *ast_new_unsafe_block(Arena *arena, AstNode *body) {
   return n;
 }
 
-AstNode *ast_new_break(Arena *arena) { return ast_alloc(arena, AST_BREAK_STMT); }
+AstNode *ast_new_break(Arena *arena) {
+  return ast_alloc(arena, AST_BREAK_STMT);
+}
 
 AstNode *ast_new_continue(Arena *arena) {
   return ast_alloc(arena, AST_CONTINUE_STMT);
@@ -254,7 +255,7 @@ AstNode *ast_new_float_literal(Arena *arena, double value) {
 
 AstNode *ast_new_string_literal(Arena *arena, const char *value) {
   AstNode *n = ast_alloc(arena, AST_STRING_LITERAL);
-  n->as.string_literal.value = arena_strdup(arena, value);
+  n->as.string_literal.value = value;
   return n;
 }
 
@@ -286,7 +287,7 @@ AstNode *ast_new_tuple_expr(Arena *arena, AstNode *elems) {
 
 AstNode *ast_new_identifier(Arena *arena, const char *name) {
   AstNode *n = ast_alloc(arena, AST_IDENTIFIER);
-  n->as.identifier.name = arena_strdup(arena, name);
+  n->as.identifier.name = name;
   return n;
 }
 
@@ -339,7 +340,7 @@ AstNode *ast_new_index(Arena *arena, AstNode *target, AstNode *index) {
 AstNode *ast_new_field(Arena *arena, AstNode *target, const char *field) {
   AstNode *n = ast_alloc(arena, AST_FIELD_EXPR);
   n->as.field.target = target;
-  n->as.field.field = arena_strdup(arena, field);
+  n->as.field.field = field;
   return n;
 }
 
@@ -381,7 +382,7 @@ AstNode *ast_new_catch_expr(Arena *arena, AstNode *expr, const char *err_name,
                             AstNode *handler) {
   AstNode *n = ast_alloc(arena, AST_CATCH_EXPR);
   n->as.catch_expr.expr = expr;
-  n->as.catch_expr.err_name = err_name ? arena_strdup(arena, err_name) : NULL;
+  n->as.catch_expr.err_name = err_name;
   n->as.catch_expr.handler = handler;
   return n;
 }
@@ -394,35 +395,38 @@ AstNode *ast_new_error_expr(Arena *arena, AstNode *path) {
 
 AstNode *ast_new_asm_expr(Arena *arena, const char *code, const char *output) {
   AstNode *n = ast_alloc(arena, AST_ASM_EXPR);
-  n->as.asm_expr.code = arena_strdup(arena, code);
-  n->as.asm_expr.output = output ? arena_strdup(arena, output) : NULL;
+  n->as.asm_expr.code = code;
+  n->as.asm_expr.output = output;
   return n;
 }
 
 AstNode *ast_new_named_arg(Arena *arena, const char *name, AstNode *value) {
   AstNode *n = ast_alloc(arena, AST_NAMED_ARG);
-  n->as.named_arg.name = arena_strdup(arena, name);
+  n->as.named_arg.name = name;
   n->as.named_arg.value = value;
   return n;
 }
 
-AstNode *ast_new_tuple_destructure(Arena *arena, AstNode *targets, AstNode *init) {
+AstNode *ast_new_tuple_destructure(Arena *arena, AstNode *targets,
+                                   AstNode *init) {
   AstNode *n = ast_alloc(arena, AST_TUPLE_DESTRUCTURE);
   n->as.tuple_destructure.targets = targets;
   n->as.tuple_destructure.init = init;
   return n;
 }
 
-AstNode *ast_new_struct_pattern(Arena *arena, const char *name, AstNode *fields) {
+AstNode *ast_new_struct_pattern(Arena *arena, const char *name,
+                                AstNode *fields) {
   AstNode *n = ast_alloc(arena, AST_STRUCT_PATTERN);
-  n->as.struct_pattern.name = arena_strdup(arena, name);
+  n->as.struct_pattern.name = name;
   n->as.struct_pattern.fields = fields;
   return n;
 }
 
-AstNode *ast_new_field_pattern(Arena *arena, const char *name, AstNode *pattern) {
+AstNode *ast_new_field_pattern(Arena *arena, const char *name,
+                               AstNode *pattern) {
   AstNode *n = ast_alloc(arena, AST_FIELD_PATTERN);
-  n->as.field_pattern.name = name ? arena_strdup(arena, name) : NULL;
+  n->as.field_pattern.name = name;
   n->as.field_pattern.pattern = pattern;
   return n;
 }
@@ -438,16 +442,17 @@ AstNode *ast_new_volatile_expr(Arena *arena, AstNode *expr) {
 AstNode *ast_new_type_named(Arena *arena, const char *name) {
   AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
   n->as.type_expr.kind = TYPE_NAMED;
-  n->as.type_expr.name = arena_strdup(arena, name);
+  n->as.type_expr.name = name;
   n->as.type_expr.module = NULL;
   return n;
 }
 
-AstNode *ast_new_type_qualified(Arena *arena, const char *module, const char *name) {
+AstNode *ast_new_type_qualified(Arena *arena, const char *module,
+                                const char *name) {
   AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
   n->as.type_expr.kind = TYPE_QUALIFIED;
-  n->as.type_expr.module = arena_strdup(arena, module);
-  n->as.type_expr.name = arena_strdup(arena, name);
+  n->as.type_expr.module = module;
+  n->as.type_expr.name = name;
   return n;
 }
 
@@ -502,7 +507,7 @@ AstNode *ast_new_type_j(Arena *arena) {
 
 Attr *attr_new(Arena *arena, const char *name, AstNode *arg) {
   Attr *a = arena_alloc(arena, sizeof(Attr));
-  a->name = arena_strdup(arena, name);
+  a->name = name;
   a->arg = arg;
   a->next = NULL;
   return a;

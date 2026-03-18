@@ -1,1 +1,16 @@
-str label = if x > 0 { "pos" } else { "neg" }
+x := 12
+label := if x > 0 { "pos" } else { "neg" }
+
+f main() {
+    i := 0
+    while i < 5 {
+        i = i + 1
+        label = test(label) 
+        print(label)
+    }
+}
+
+
+regional f test(val: str) = result: str {
+    result = if val == "pos" { "POS_UPDATED" } else { "neg" }
+}

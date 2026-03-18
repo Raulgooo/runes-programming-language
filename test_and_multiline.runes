@@ -1,0 +1,4 @@
+f contains(self, p: Vec2) = r: bool {
+    r = p.x >= self.x and p.x <= self.x + self.w
+        and p.y >= self.y and p.y <= self.y + self.h
+}

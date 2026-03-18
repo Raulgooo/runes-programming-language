@@ -400,15 +400,21 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile,
       }
     }
 
-    if (has_type) {
-      type = parse_type_expr(p);
-      if (!type)
+    Token name_tok;
+    if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_COLON_EQUAL) {
+      // Inferred deck: x := expr
+      name_tok = advance(p);
+      has_type = false;
+    } else {
+      if (has_type) {
+        type = parse_type_expr(p);
+        if (!type)
+          return NULL;
+      }
+      name_tok = expect(p, TOKEN_IDENTIFIER, "expected variable name");
+      if (p->panic_mode)
         return NULL;
     }
-
-    Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected variable name");
-    if (p->panic_mode)
-      return NULL;
 
     AstNode *n = ast_new_var_decl(p->arena, is_const, is_volatile,
                                   name_tok.str_val.ptr, type, NULL, attrs);
@@ -423,7 +429,7 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile,
     }
   } while (match(p, TOKEN_COMMA));
 
-  if (match(p, TOKEN_EQUAL)) {
+  if (match(p, TOKEN_EQUAL) || match(p, TOKEN_COLON_EQUAL)) {
     AstNode *init = parse_expr(p);
     if (!init)
       return NULL;
@@ -1069,6 +1075,10 @@ static AstNode *parse_block(Parser *p) {
     tail = s;
     while (tail->next)
       tail = tail->next;
+    skip_newlines(p);
+    while (match(p, TOKEN_SEMICOLON)) {
+      skip_newlines(p);
+    }
   }
   expect(p, TOKEN_RBRACE, "expected '}'");
   if (p->panic_mode)
@@ -1399,7 +1409,8 @@ static bool is_var_decl_lookahead(Parser *p) {
   if (check(p, TOKEN_CONST) || check(p, TOKEN_VOLATILE) ||
       is_type_keyword(p->current.kind))
     return true;
-  if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER)
+  if (check(p, TOKEN_IDENTIFIER) &&
+      (peek(p).kind == TOKEN_IDENTIFIER || peek(p).kind == TOKEN_COLON_EQUAL))
     return true;
   // Qualified type: Module.Type var
   if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_DOT &&
@@ -1493,6 +1504,8 @@ static AstNode *parse_stmt(Parser *p) {
     return parse_match_stmt(p);
   if (check(p, TOKEN_UNSAFE))
     return parse_unsafe_block(p);
+  if (check(p, TOKEN_LBRACE))
+    return parse_block(p);
   // declarations or expression statements
   if (check(p, TOKEN_PUB) || check(p, TOKEN_F) || check(p, TOKEN_TYPE) ||
       check(p, TOKEN_SCHEMA) || check(p, TOKEN_ERROR) || check(p, TOKEN_MOD) ||

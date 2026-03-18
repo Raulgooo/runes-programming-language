@@ -34,7 +34,7 @@ typedef enum {
 // ─────────────────────────────────────────────────────────────────────────────
 
 typedef struct Attr {
-  char *name;          // "packed" | "align" | "repr" | "section"
+  const char *name;    // "packed" | "align" | "repr" | "section"
                        // "link_name" | "callconv" | "interrupt"
                        // "json" | "json_skip"
   struct AstNode *arg; // NULL if attribute takes no argument
@@ -47,7 +47,7 @@ typedef struct Attr {
 
 // Type expression kinds
 typedef enum {
-  TYPE_NAMED,     // i32, u64, str, bool, char, usize — primitive or user-defined
+  TYPE_NAMED, // i32, u64, str, bool, char, usize — primitive or user-defined
   TYPE_QUALIFIED, // module.Type — qualified type name
   TYPE_PTR,       // *T
   TYPE_ARRAY,     // [N]T
@@ -148,9 +148,9 @@ typedef enum {
   AST_JSON_EXPR,
 
   AST_NAMED_ARG,
-  AST_TUPLE_DESTRUCTURE,  // x, y, z = tuple_expr
-  AST_STRUCT_PATTERN,     // Vec2(x: 0.0, y) - struct destructuring pattern
-  AST_FIELD_PATTERN,      // x: 0.0 or x: binding - field in struct pattern
+  AST_TUPLE_DESTRUCTURE, // x, y, z = tuple_expr
+  AST_STRUCT_PATTERN,    // Vec2(x: 0.0, y) - struct destructuring pattern
+  AST_FIELD_PATTERN,     // x: 0.0 or x: binding - field in struct pattern
 } AstKind;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -190,9 +190,9 @@ typedef struct AstNode {
       MemoryRealm realm;
       bool is_pub;
       bool is_main; // f main() — exempt from nesting rules
-      char *name;
+      const char *name;
       struct AstNode *params;   // linked list of AST_PARAM; NULL if ()
-      char *ret_name;           // NULL if void
+      const char *ret_name;     // NULL if void
       struct AstNode *ret_type; // NULL if void (AST_TYPE_EXPR)
       struct AstNode *body;     // AST_BLOCK; NULL for interface signatures
       Attr *attrs;              // #[section], #[interrupt], #[callconv], etc.
@@ -202,7 +202,7 @@ typedef struct AstNode {
     struct {
       bool is_const;
       bool is_volatile;
-      char *name;
+      const char *name;
       struct AstNode *type; // AST_TYPE_EXPR; NULL if inferred
       struct AstNode *init; // initializer expression; NULL if not present
       Attr *attrs;          // #[section], #[align], etc.
@@ -211,7 +211,7 @@ typedef struct AstNode {
     // type Vec2 = { x: f32, y: f32 }
     struct {
       bool is_pub;
-      char *name;
+      const char *name;
       struct AstNode *fields; // linked list of AST_FIELD_DECL
       Attr *attrs;            // #[packed], #[align], #[repr]
     } type_decl;
@@ -219,13 +219,13 @@ typedef struct AstNode {
     // type Color = | Red | Green | RGB(u8, u8, u8)
     struct {
       bool is_pub;
-      char *name;
+      const char *name;
       struct AstNode *arms; // linked list of AST_VARIANT_ARM
     } variant_decl;
 
     // Red | RGB(u8, u8, u8) | Hex(str)
     struct {
-      char *name;
+      const char *name;
       struct AstNode
           *fields; // linked list of AST_TYPE_EXPR; NULL if unit variant
     } variant_arm;
@@ -233,8 +233,8 @@ typedef struct AstNode {
     // schema RedShoe : Shoe = { color: str = "red", ... }
     struct {
       bool is_pub;
-      char *name;
-      char *parent;           // NULL if no inheritance
+      const char *name;
+      const char *parent;     // NULL if no inheritance
       struct AstNode *fields; // linked list of AST_FIELD_DECL
     } schema_decl;
 
@@ -242,7 +242,7 @@ typedef struct AstNode {
     // volatile data: u8  (inside type with volatile qualifier)
     struct {
       bool is_volatile;
-      char *name;
+      const char *name;
       struct AstNode *type;        // AST_TYPE_EXPR
       struct AstNode *default_val; // NULL if no default
       Attr *attrs;                 // #[json("key")], #[json_skip]
@@ -251,15 +251,15 @@ typedef struct AstNode {
     // method Vec2 { }   /   method Drawable for Vec2 { }
     struct {
       bool is_pub;
-      char *type_name;         // the type being extended
-      char *iface_name;        // NULL unless "for <iface>" form
+      const char *type_name;   // the type being extended
+      const char *iface_name;  // NULL unless "for <iface>" form
       struct AstNode *methods; // linked list of AST_FUNC_DECL
     } method_decl;
 
     // interface Drawable { f draw(self) ... }
     struct {
       bool is_pub;
-      char *name;
+      const char *name;
       struct AstNode
           *methods; // linked list of AST_FUNC_DECL (signatures, body == NULL)
     } interface_decl;
@@ -267,14 +267,14 @@ typedef struct AstNode {
     // error MathError = { | DivByZero | Overflow }
     struct {
       bool is_pub;
-      char *name;
+      const char *name;
       struct AstNode *variants; // linked list of AST_IDENTIFIER (variant names)
     } error_decl;
 
     // mod kernel { ... }
     struct {
       bool is_pub;
-      char *name;
+      const char *name;
       struct AstNode *declarations; // linked list
     } mod_decl;
 
@@ -288,16 +288,16 @@ typedef struct AstNode {
     // extern u64 KERNEL_START
     struct {
       bool is_func;
-      char *name;
+      const char *name;
       struct AstNode *params;   // linked list of AST_PARAM; NULL if variable
-      char *ret_name;           // NULL if void or variable
+      const char *ret_name;     // NULL if void or variable
       struct AstNode *ret_type; // NULL if void or variable (AST_TYPE_EXPR)
       struct AstNode *var_type; // NULL if func (AST_TYPE_EXPR)
     } extern_decl;
 
     // x: i32
     struct {
-      char *name;
+      const char *name;
       struct AstNode *type; // AST_TYPE_EXPR
     } param;
 
@@ -329,9 +329,9 @@ typedef struct AstNode {
     struct {
       struct AstNode *iter; // AST_RANGE_EXPR | AST_IDENTIFIER | AST_FIELD_EXPR
       CaptureKind cap_kind;
-      char *cap_value;      // main capture name (always present)
-      char *cap_index;      // only for CAPTURE_INDEXED; NULL otherwise
-      struct AstNode *body; // AST_BLOCK
+      const char *cap_value; // main capture name (always present)
+      const char *cap_index; // only for CAPTURE_INDEXED; NULL otherwise
+      struct AstNode *body;  // AST_BLOCK
     } for_stmt;
 
     struct {
@@ -371,7 +371,7 @@ typedef struct AstNode {
       double value;
     } float_literal;
     struct {
-      char *value;
+      const char *value;
     } string_literal; // arena-interned, UTF-8
     struct {
       bool value;
@@ -393,7 +393,7 @@ typedef struct AstNode {
     // ── Expressions ──────────────────────────────────────────────────────
 
     struct {
-      char *name;
+      const char *name;
     } identifier;
 
     // 0..10  /  0..=10
@@ -437,7 +437,7 @@ typedef struct AstNode {
     // foo.bar  /  self.entries
     struct {
       struct AstNode *target;
-      char *field;
+      const char *field;
     } field;
 
     // val as *u32  /  val as J  /  j as Point
@@ -472,7 +472,7 @@ typedef struct AstNode {
     // foo() catch |e| { ... }  /  foo() catch 0.0
     struct {
       struct AstNode *expr;
-      char *err_name;          // NULL for catch <default> form
+      const char *err_name;    // NULL for catch <default> form
       struct AstNode *handler; // AST_BLOCK or default-value expression
     } catch_expr;
 
@@ -483,32 +483,34 @@ typedef struct AstNode {
 
     // asm { "cli; hlt" }  /  asm { "mov %cr3, %rax" } -> r
     struct {
-      char *code;   // the raw assembly string
-      char *output; // bound output register name; NULL if no -> binding
+      const char *code;   // the raw assembly string
+      const char *output; // bound output register name; NULL if no -> binding
     } asm_expr;
 
     // x: 1.0 (inside call)
     struct {
-      char *name;
+      const char *name;
       struct AstNode *value;
     } named_arg;
 
     // Tuple destructuring: x, y, z = tuple_expr
     struct {
-      struct AstNode *targets;  // linked list of AST_VAR_DECL (without init)
-      struct AstNode *init;     // the tuple expression being destructured
+      struct AstNode *targets; // linked list of AST_VAR_DECL (without init)
+      struct AstNode *init;    // the tuple expression being destructured
     } tuple_destructure;
 
     // Struct pattern: Vec2(x: 0.0, y) or Vec2(x, y: 0.0)
     struct {
-      char *name;               // struct name (e.g., "Vec2")
-      struct AstNode *fields;   // linked list of AST_FIELD_PATTERN
+      const char *name;       // struct name (e.g., "Vec2")
+      struct AstNode *fields; // linked list of AST_FIELD_PATTERN
     } struct_pattern;
 
-    // Field pattern: x: 0.0 (literal) or x: binding (identifier) or just x (shorthand)
+    // Field pattern: x: 0.0 (literal) or x: binding (identifier) or just x
+    // (shorthand)
     struct {
-      char *name;               // field name (e.g., "x")
-      struct AstNode *pattern;  // NULL for shorthand (x means x: x), otherwise literal or identifier
+      const char *name;        // field name (e.g., "x")
+      struct AstNode *pattern; // NULL for shorthand (x means x: x), otherwise
+                               // literal or identifier
     } field_pattern;
 
     // volatile pointer read/write expression
@@ -519,9 +521,10 @@ typedef struct AstNode {
     // *u64 | i32 | [N]T | !T | !void | (T, U) | sl | dl | J | module.Type
     struct {
       TypeKind kind;
-      char *name; // TYPE_NAMED: type name (may be primitive or user-defined)
-                  // TYPE_QUALIFIED: type name (e.g., "Task")
-      char *module; // TYPE_QUALIFIED: module name (e.g., "scheduler")
+      const char
+          *name; // TYPE_NAMED: type name (may be primitive or user-defined)
+                 // TYPE_QUALIFIED: type name (e.g., "Task")
+      const char *module;    // TYPE_QUALIFIED: module name (e.g., "scheduler")
       struct AstNode *inner; // TYPE_PTR    → pointee type
                              // TYPE_ARRAY  → element type
                              // TYPE_FALLIBLE → inner type (NULL = !void)
@@ -627,14 +630,18 @@ AstNode *ast_new_catch_expr(Arena *arena, AstNode *expr, const char *err_name,
 AstNode *ast_new_error_expr(Arena *arena, AstNode *path);
 AstNode *ast_new_asm_expr(Arena *arena, const char *code, const char *output);
 AstNode *ast_new_named_arg(Arena *arena, const char *name, AstNode *value);
-AstNode *ast_new_tuple_destructure(Arena *arena, AstNode *targets, AstNode *init);
-AstNode *ast_new_struct_pattern(Arena *arena, const char *name, AstNode *fields);
-AstNode *ast_new_field_pattern(Arena *arena, const char *name, AstNode *pattern);
+AstNode *ast_new_tuple_destructure(Arena *arena, AstNode *targets,
+                                   AstNode *init);
+AstNode *ast_new_struct_pattern(Arena *arena, const char *name,
+                                AstNode *fields);
+AstNode *ast_new_field_pattern(Arena *arena, const char *name,
+                               AstNode *pattern);
 AstNode *ast_new_volatile_expr(Arena *arena, AstNode *expr);
 
 // type expressions
 AstNode *ast_new_type_named(Arena *arena, const char *name);
-AstNode *ast_new_type_qualified(Arena *arena, const char *module, const char *name);
+AstNode *ast_new_type_qualified(Arena *arena, const char *module,
+                                const char *name);
 AstNode *ast_new_type_ptr(Arena *arena, AstNode *inner);
 AstNode *ast_new_type_array(Arena *arena, AstNode *size, AstNode *elem_type);
 AstNode *ast_new_type_fallible(Arena *arena,

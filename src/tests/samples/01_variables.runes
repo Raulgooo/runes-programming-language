@@ -23,10 +23,10 @@ str  tag     = "runes"
 str  empty   = ""
 
 -- Type inference (no explicit type prefix)
-inferred_int   = 42
-inferred_float = 2.71
-inferred_str   = "hello, world"
-inferred_bool  = true
+inferred_int   := 42
+inferred_float := 2.71
+inferred_str   := "hello, world"
+inferred_bool  := true
 
 -- Immutable — typed
 const i32 MAX_PAGES    = 512

@@ -77,22 +77,23 @@ typedef enum {
   TOKEN_AND,
 
   /* Punctuation */
-  TOKEN_LPAREN,    /* ( */
-  TOKEN_RPAREN,    /* ) */
-  TOKEN_LBRACE,    /* { */
-  TOKEN_RBRACE,    /* } */
-  TOKEN_LBRACKET,  /* [ */
-  TOKEN_RBRACKET,  /* ] */
-  TOKEN_COMMA,     /* , */
-  TOKEN_DOT,       /* . */
-  TOKEN_COLON,     /* : */
-  TOKEN_SEMICOLON, /* ; */
-  TOKEN_NEWLINE,   /* \n */
-  TOKEN_ARROW,     /* -> */
-  TOKEN_RANGE,     /* .. */
-  TOKEN_RANGE_INC, /* ..= */
-  TOKEN_PIPE,      /* | */
-  TOKEN_HASH,      /* # */
+  TOKEN_LPAREN,      /* ( */
+  TOKEN_RPAREN,      /* ) */
+  TOKEN_LBRACE,      /* { */
+  TOKEN_RBRACE,      /* } */
+  TOKEN_LBRACKET,    /* [ */
+  TOKEN_RBRACKET,    /* ] */
+  TOKEN_COMMA,       /* , */
+  TOKEN_DOT,         /* . */
+  TOKEN_COLON,       /* : */
+  TOKEN_COLON_EQUAL, /* := */
+  TOKEN_SEMICOLON,   /* ; */
+  TOKEN_NEWLINE,     /* \n */
+  TOKEN_ARROW,       /* -> */
+  TOKEN_RANGE,       /* .. */
+  TOKEN_RANGE_INC,   /* ..= */
+  TOKEN_PIPE,        /* | */
+  TOKEN_HASH,        /* # */
 
   /* Operators */
   TOKEN_PLUS,    /* + */

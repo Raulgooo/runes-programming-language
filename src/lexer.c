@@ -582,6 +582,8 @@ static Token token_next(Lexer *L) {
   case ',':
     return make_token(L, TOKEN_COMMA);
   case ':':
+    if (match(L, '='))
+      return make_token(L, TOKEN_COLON_EQUAL);
     return make_token(L, TOKEN_COLON);
   case ';':
     return make_token(L, TOKEN_SEMICOLON);
@@ -799,6 +801,8 @@ const char *token_kind_to_string(TokenKind kind) {
     return ".";
   case TOKEN_COLON:
     return ":";
+  case TOKEN_COLON_EQUAL:
+    return ":=";
   case TOKEN_SEMICOLON:
     return ";";
   case TOKEN_NEWLINE:

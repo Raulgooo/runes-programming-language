@@ -1,0 +1,10 @@
+const x = 1
+
+f main() {
+    x := 2 -- Shadows global x
+    y := x + 1 -- 2 + 1 = 3
+}
+
+f other() {
+    z := x + 10 -- USES global x
+}

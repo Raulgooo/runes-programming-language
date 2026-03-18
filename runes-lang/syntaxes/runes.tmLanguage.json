@@ -1,0 +1,183 @@
+{
+  "name": "Runes",
+  "scopeName": "source.runes",
+  "fileTypes": ["runes"],
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#char-literals" },
+    { "include": "#attributes" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#punctuation" },
+    { "include": "#logic" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.runes",
+          "begin": "---",
+          "end": "---"
+        },
+        {
+          "name": "comment.line.double-dash.runes",
+          "match": "--.*$"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.runes",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.runes",
+          "match": "\\\\(n|r|t|\\\\|0|\"|x[0-9a-fA-F]{2}|u{[0-9a-fA-F]+})"
+        }
+      ]
+    },
+    "char-literals": {
+      "name": "string.quoted.single.runes",
+      "match": "'([^'\\\\]|\\\\(n|r|t|\\\\|0|'|x[0-9a-fA-F]{2}|u{[0-9a-fA-F]+}))'"
+    },
+    "attributes": {
+      "name": "meta.attribute.runes",
+      "begin": "#\\[",
+      "end": "\\]",
+      "patterns": [
+        {
+          "name": "entity.name.function.attribute.runes",
+          "match": "\\b(section|link_name|callconv|interrupt|align|packed|repr|json|json_skip)\\b"
+        },
+        { "include": "#strings" },
+        { "include": "#numbers" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.other.memory-strategy.runes",
+          "match": "\\b(flex|stack|dynamic|regional|gc)\\b"
+        },
+        {
+          "name": "keyword.declaration.runes",
+          "match": "\\b(f|type|error|mod|use|pub|const|method|interface|schema|extern|volatile)\\b"
+        },
+        {
+          "name": "keyword.control.runes",
+          "match": "\\b(if|else|while|loop|break|continue|return|match|for|try|catch)\\b"
+        },
+        {
+          "name": "keyword.other.systems.runes",
+          "match": "\\b(unsafe|asm|promote)\\b"
+        },
+        {
+          "name": "constant.language.runes",
+          "match": "\\b(true|false|self|None|Some|Ok|Err)\\b"
+        },
+        {
+          "name": "keyword.operator.cast.runes",
+          "match": "\\bas\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.runes",
+          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|str|char|usize|void|sl|dl|J)\\b"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.runes",
+          "match": "\\b0x[0-9a-fA-F_]+\\b"
+        },
+        {
+          "name": "constant.numeric.float.runes",
+          "match": "\\b[0-9]+\\.[0-9]+([eE][-+]?[0-9]+)?\\b"
+        },
+        {
+          "name": "constant.numeric.decimal.runes",
+          "match": "\\b[0-9_]+\\b"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.period.runes",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.separator.comma.runes",
+          "match": ","
+        },
+        {
+          "name": "punctuation.separator.colon.runes",
+          "match": ":"
+        },
+        {
+          "name": "punctuation.terminator.statement.runes",
+          "match": ";"
+        },
+        {
+          "name": "punctuation.section.brace.begin.runes",
+          "match": "{"
+        },
+        {
+          "name": "punctuation.section.brace.end.runes",
+          "match": "}"
+        },
+        {
+          "name": "punctuation.section.parens.begin.runes",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.section.parens.end.runes",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.section.bracket.begin.runes",
+          "match": "\\["
+        },
+        {
+          "name": "punctuation.section.bracket.end.runes",
+          "match": "\\]"
+        }
+      ]
+    },
+    "logic": {
+      "patterns": [
+        {
+          "name": "keyword.operator.logical.runes",
+          "match": "(and|or|not|\\!|\\?\\?|\\|)"
+        },
+        {
+          "name": "keyword.operator.comparison.runes",
+          "match": "(==|!=|<=|>=|<|>)"
+        },
+        {
+          "name": "keyword.operator.assignment.runes",
+          "match": "(=)"
+        },
+        {
+          "name": "keyword.operator.range.runes",
+          "match": "(\\.\\.=|\\.\\.)"
+        },
+        {
+          "name": "keyword.operator.arrow.runes",
+          "match": "(->)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.runes",
+          "match": "(\\+|\\-|\\*|/|%)"
+        }
+      ]
+    }
+  }
+}
