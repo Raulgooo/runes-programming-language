@@ -51,6 +51,28 @@ static const char *type_kind_to_string(TypeKind kind) {
   }
 }
 
+static void print_attrs(Attr *attrs, int level) {
+  Attr *a = attrs;
+  while (a) {
+    indent(level);
+    printf("#[%s", a->name);
+    if (a->arg) {
+      printf("(");
+      // For now, only simple literal args are common in attributes
+      if (a->arg->kind == AST_STRING_LITERAL) {
+        printf("\"%s\"", a->arg->as.string_literal.value);
+      } else if (a->arg->kind == AST_INT_LITERAL) {
+        printf("%llu", a->arg->as.int_literal.value);
+      } else {
+        printf("..."); // Complex expression
+      }
+      printf(")");
+    }
+    printf("]\n");
+    a = a->next;
+  }
+}
+
 void ast_print_ext(AstNode *node, int level) {
   if (!node)
     return;
@@ -64,6 +86,8 @@ void ast_print_ext(AstNode *node, int level) {
     break;
 
   case AST_FUNC_DECL:
+    print_attrs(node->as.func_decl.attrs, level);
+    indent(level);
     printf("FuncDecl name='%s' realm=%s is_pub=%s is_main=%s\n",
            node->as.func_decl.name ? node->as.func_decl.name : "(null)",
            realm_to_string(node->as.func_decl.realm),
@@ -93,6 +117,8 @@ void ast_print_ext(AstNode *node, int level) {
     break;
 
   case AST_VAR_DECL:
+    print_attrs(node->as.var_decl.attrs, level);
+    indent(level);
     printf("VarDecl name='%s' is_const=%s is_volatile=%s\n",
            node->as.var_decl.name ? node->as.var_decl.name : "(null)",
            node->as.var_decl.is_const ? "true" : "false",
@@ -108,6 +134,8 @@ void ast_print_ext(AstNode *node, int level) {
     break;
 
   case AST_TYPE_DECL:
+    print_attrs(node->as.type_decl.attrs, level);
+    indent(level);
     printf("TypeDecl name='%s' is_pub=%s\n",
            node->as.type_decl.name ? node->as.type_decl.name : "(null)",
            node->as.type_decl.is_pub ? "true" : "false");
@@ -136,6 +164,8 @@ void ast_print_ext(AstNode *node, int level) {
     break;
 
   case AST_FIELD_DECL:
+    print_attrs(node->as.field_decl.attrs, level);
+    indent(level);
     printf("FieldDecl name='%s' is_volatile=%s\n",
            node->as.field_decl.name ? node->as.field_decl.name : "(null)",
            node->as.field_decl.is_volatile ? "true" : "false");
@@ -463,8 +493,9 @@ void ast_print_ext(AstNode *node, int level) {
     break;
 
   case AST_STRUCT_PATTERN:
-    printf("StructPattern name='%s'\n",
-           node->as.struct_pattern.name ? node->as.struct_pattern.name : "(null)");
+    printf("StructPattern name='%s'\n", node->as.struct_pattern.name
+                                            ? node->as.struct_pattern.name
+                                            : "(null)");
     if (node->as.struct_pattern.fields) {
       indent(level + 1);
       printf("Fields:\n");
@@ -473,8 +504,9 @@ void ast_print_ext(AstNode *node, int level) {
     break;
 
   case AST_FIELD_PATTERN:
-    printf("FieldPattern name='%s'\n",
-           node->as.field_pattern.name ? node->as.field_pattern.name : "(null)");
+    printf("FieldPattern name='%s'\n", node->as.field_pattern.name
+                                           ? node->as.field_pattern.name
+                                           : "(null)");
     if (node->as.field_pattern.pattern) {
       indent(level + 1);
       printf("Pattern:\n");

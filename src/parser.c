@@ -427,17 +427,36 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile,
     AstNode *init = parse_expr(p);
     if (!init)
       return NULL;
-    // For now, we apply the initializer to the whole list (tuple destructure).
-    // semantically this means head is initialized by the tuple.
-    head->as.var_decl.init = init;
+
+    if (head->next) {
+      // Multiple variables with one initializer -> TupleDestructure
+      // e.g. u64 a, b = (1, 2)
+      AstNode *td = ast_new_tuple_destructure(p->arena, head, init);
+      td->line = head->line;
+      td->col = head->col;
+      head = td;
+    } else {
+      // Single variable
+      head->as.var_decl.init = init;
+    }
   }
 
-  // Apply attrs to all variables in the list
+  // Apply attrs to all variables (if not destructuring) or to the destructuring
+  // node
   if (attrs) {
-    AstNode *n = head;
-    while (n) {
-      n->as.var_decl.attrs = attrs;
-      n = n->next;
+    if (head->kind == AST_TUPLE_DESTRUCTURE) {
+      // For now, we don't have a place for attributes on TupleDestructure in
+      // the AST struct, but we should probably apply them to the individual
+      // variables or add them to the destructure node if needed.
+      // The spec says attributes before the decl apply to the whole decl.
+      AstNode *curr = head->as.tuple_destructure.targets;
+      while (curr) {
+        if (curr->kind == AST_VAR_DECL)
+          curr->as.var_decl.attrs = attrs;
+        curr = curr->next;
+      }
+    } else {
+      head->as.var_decl.attrs = attrs;
     }
   }
 
@@ -470,7 +489,7 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
     if (braced && check(p, TOKEN_RBRACE))
       break;
     // optional field attributes: #[json("email_address")]
-    Attr *attrs = parse_attrs(p);
+    Attr *field_attrs = parse_attrs(p);
     // optional volatile
     bool fvol = match(p, TOKEN_VOLATILE);
     Token fname = expect(p, TOKEN_IDENTIFIER, "expected field name");
@@ -490,7 +509,7 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
         return NULL;
     }
     AstNode *fd = ast_new_field_decl(p->arena, fvol, fname.str_val.ptr, ftype,
-                                     fdefault, attrs);
+                                     fdefault, field_attrs);
     fd->line = fname.line;
     fd->col = fname.column;
     if (!fields) {
@@ -889,6 +908,7 @@ static AstNode *parse_extern_decl(Parser *p) {
 // Top-level declaration dispatcher
 static AstNode *parse_decl(Parser *p) {
   Attr *attrs = parse_attrs(p);
+  skip_newlines(p);
 
   bool is_pub = match(p, TOKEN_PUB);
 
@@ -949,6 +969,9 @@ static AstNode *parse_decl(Parser *p) {
 AstNode *parser_parse(Parser *p) {
   AstNode *head = NULL, *tail = NULL;
   while (!check(p, TOKEN_EOF)) {
+    skip_newlines(p);
+    if (check(p, TOKEN_EOF))
+      break;
     AstNode *d = parse_stmt(p);
     if (!d) {
       synchronize(p);
@@ -970,7 +993,10 @@ AstNode *parser_parse(Parser *p) {
 static Attr *parse_attrs(Parser *p) {
   Attr *head = NULL, *tail = NULL;
 
-  while (check(p, TOKEN_HASH)) {
+  while (true) {
+    skip_newlines(p);
+    if (!check(p, TOKEN_HASH))
+      break;
     advance(p); // consume #
     expect(p, TOKEN_LBRACKET, "expected '[' after '#'");
     if (p->panic_mode)
@@ -994,6 +1020,8 @@ static Attr *parse_attrs(Parser *p) {
     expect(p, TOKEN_RBRACKET, "expected ']' after attribute");
     if (p->panic_mode)
       return NULL;
+
+    skip_newlines(p);
 
     Attr *a = attr_new(p->arena, name.str_val.ptr, arg);
     if (!head) {
@@ -1025,6 +1053,9 @@ static AstNode *parse_block(Parser *p) {
     return NULL;
   AstNode *head = NULL, *tail = NULL;
   while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
+    skip_newlines(p);
+    if (check(p, TOKEN_RBRACE) || check(p, TOKEN_EOF))
+      break;
     AstNode *s = parse_stmt(p);
     if (!s) {
       synchronize(p);
