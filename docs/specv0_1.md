@@ -1,19 +1,20 @@
 # Runes Language Specification — v1.0 (Draft)
 
 > Systems-level language with high-level ergonomics.
-> Designed for writing operating systems without sacrificing expressiveness.
+> Designed for writing operating systems, compilers, and tooling without sacrificing expressiveness. Stdlib aims to deliver a comprehensive set of tools for systems programming and high-level basic programming.
 > Bootstrap compiler: C → self-hosted.
 
 ---
 
 ## 1. Core Philosophy
 
-- **Explicit over magic** — the programmer controls what happens, the compiler enforces contracts
+- **Explicit over magic but ergonomics over explicitness** — the programmer controls what happens, the compiler enforces contracts, but we don't sacrifice ergonomics for explicitness. The language should be easy to read and write, but also easy to reason about, still almost all importat decisions are handed to the programmer.
 - **Mutable by default** — immutability is opt-in via `const`
-- **Scope-local memory** — memory strategy is declared per function, not globally
-- **Zero runtime by default** — GC is available but not mandatory
+- **Scope-local memory** — memory strategy is declared per function, not globally. This is a key feature of the language, and it is enforced by the compiler.
+- **Minimal runtime by default** — GC is available but not mandatory, the language tries to avoid runtime overhead as much as possible.
 - **Unsafe as an escape hatch** — not a loophole, a deliberate door
 - **Elegant syntax** — readable at a glance, no cryptic abbreviations
+- **Cover your own eyes** - The programmer can decide between memory safety with runtime overhead or no memory safety with no runtime overhead. This is the core of runes. Also it allows you to focus on what really matters.
 
 ---
 
@@ -42,7 +43,7 @@ u64 addr  = 0xFFFF800000000000
 ## 3. Primitive Types
 
 | Type        | Description                    |
-|-------------|--------------------------------|
+| ----------- | ------------------------------ |
 | `i8`–`i64`  | Signed integers                |
 | `u8`–`u64`  | Unsigned integers              |
 | `f32`,`f64` | Floats                         |
@@ -51,8 +52,6 @@ u64 addr  = 0xFFFF800000000000
 | `char`      | Single Unicode codepoint       |
 | `*T`        | Raw pointer to T               |
 | `[N]T`      | Fixed-size array of N elements |
-| `sl`        | Singly linked list (dynamic)   |
-| `dl`        | Doubly linked list (dynamic)   |
 
 ### Arrays
 
@@ -72,7 +71,7 @@ for (nums) |n| { print(n) }
 for (nums) |*n| { *n = *n * 2 }
 ```
 
-No dynamic arrays. Use `sl` or `dl` for growable collections.
+No dynamic arrays on compile time. You can use `gc` or `dynamic` memory strategies to create dynamic arrays. or stdlib
 
 ---
 
@@ -82,19 +81,19 @@ All functions use `f`, optionally preceded by a memory strategy keyword.
 **Named return variables are always required.** Anonymous return types are invalid.
 **Void functions omit the return clause entirely.**
 
-| Declaration    | Memory strategy                                      |
-|----------------|------------------------------------------------------|
-| `f`            | Stack — default, zero overhead, auto freed           |
-| `stack f`      | Explicitly stack-only — same as `f` but enforces no nesting of other strategies |
-| `dynamic f`    | Raw heap — like C `malloc`/`free`, no compiler help  |
-| `regional f`   | Region — arena bump allocator, freed at scope exit   |
-| `gc f`         | GC tracked — for userspace / high-level code         |
-| `flex f`       | Inherits caller's memory strategy                    |
+| Declaration  | Memory strategy                                                                 |
+| ------------ | ------------------------------------------------------------------------------- |
+| `f`          | Stack — default, zero overhead, auto freed                                      |
+| `stack f`    | Explicitly stack-only — same as `f` but enforces no nesting of other strategies |
+| `dynamic f`  | Raw heap — like C `malloc`/`free`, no compiler help                             |
+| `regional f` | Region — arena bump allocator, freed at scope exit                              |
+| `gc f`       | GC tracked — for userspace / high-level code                                    |
+| `flex f`     | Inherits caller's memory strategy                                               |
 
 ### `main` — the orchestrator
 
-`f main()` is special. When declared as plain `f`, it can contain any memory
-strategy nested inside — it is the program entry point and orchestrates everything.
+`f main()` is special. When declared as plain `f`, variables inside it are stack by default, but it can contain any memory
+strategy function nested inside — it is the program entry point and orchestrates everything.
 To restrict it, declare it with an explicit strategy modifier.
 
 ```runes
@@ -160,9 +159,7 @@ gc f run_shell(input: str) = result: sl {
     result = tokenize(input)
 }
 
--- Lambdas / closures (stack allocated, inherit caller's strategy)
-doubled = [1, 2, 3].map(|n| n * 2)
-evens   = [1, 2, 3, 4].filter(|n| n % 2 == 0)
+
 ```
 
 ### Named return rules
@@ -197,28 +194,28 @@ The memory strategy keyword before `f` defines how everything inside that functi
 is allocated. Violations of nesting rules are **compile errors** — the type checker
 rejects invalid combinations.
 
-| Keyword      | Allocator                    | Who frees             |
-|--------------|------------------------------|-----------------------|
-| `f`          | Stack                        | Auto on return        |
-| `dynamic f`  | Raw heap (`raw_alloc`)       | Caller, explicitly    |
-| `regional f` | Arena bump allocator         | Auto at scope exit    |
-| `gc f`       | GC heap                      | GC runtime            |
-| `flex f`     | Inherits caller's strategy   | Whoever caller is     |
+| Keyword      | Allocator                  | Who frees          |
+| ------------ | -------------------------- | ------------------ |
+| `f`          | Stack                      | Auto on return     |
+| `dynamic f`  | Raw heap (`raw_alloc`)     | Caller, explicitly |
+| `regional f` | Arena bump allocator       | Auto at scope exit |
+| `gc f`       | GC heap                    | GC runtime         |
+| `flex f`     | Inherits caller's strategy | Whoever caller is  |
 
 ### Nesting rules
 
 Each function type has strict rules about what can be nested inside it.
 The type checker enforces these at compile time.
 
-| Outer function    | Can contain                              | Cannot contain              |
-|-------------------|------------------------------------------|-----------------------------|
-| `f main()`        | anything — unrestricted orchestrator     | nothing blocked             |
-| `stack f`         | nothing — strictly stack only            | all other strategies        |
-| `f` (nested)      | other `f` only                           | any other strategy          |
-| `dynamic f`       | `f`, other `dynamic f`, `gc f`, `regional f` | none                    |
-| `regional f`      | `f` only                                 | `dynamic f`, `gc f`, `flex f` |
-| `gc f`            | `f`, other `gc f`                        | `dynamic f`, `regional f`   |
-| `flex f`          | inherits — same rules as caller          | whatever caller cannot have |
+| Outer function | Can contain                                  | Cannot contain                |
+| -------------- | -------------------------------------------- | ----------------------------- |
+| `f main()`     | anything — unrestricted orchestrator         | nothing blocked               |
+| `stack f`      | nothing — strictly stack only                | all other strategies          |
+| `f` (nested)   | other `f` only                               | any other strategy            |
+| `dynamic f`    | `f`, other `dynamic f`, `gc f`, `regional f` | none                          |
+| `regional f`   | `f` and `regional f` only                    | `dynamic f`, `gc f`, `flex f` |
+| `gc f`         | `f`, other `gc f`                            | `dynamic f`, `regional f`     |
+| `flex f`       | inherits — same rules as caller              | whatever caller cannot have   |
 
 ```runes
 -- ✅ f contains only f
@@ -263,12 +260,6 @@ f kernel_main() {
     }
 }
 
--- ❌ compile error — regional f inside dynamic f
-dynamic f init() {
-    regional f bad() {    -- ERROR: regional f cannot nest inside dynamic f
-        PageTable t = PageTable()
-    }
-}
 
 -- ❌ compile error — dynamic f inside regional f
 regional f build() {
@@ -365,6 +356,7 @@ regional f build() = r: *PageTable {
 ```
 
 What the compiler emits for `promote(&t) as dynamic`:
+
 ```llvm
 ; memcpy value to raw_alloc'd memory, return new pointer
 %new = call i8* @raw_alloc(i64 sizeof_PageTable)
@@ -434,12 +426,12 @@ gc f extract() = r: *Node {
 
 Summary of valid `promote` targets by source:
 
-| Source        | `as dynamic` | `as gc` | `as f`  |
-|---------------|-------------|---------|---------|
-| `regional f`  | ✅           | ✅       | ❌       |
-| `dynamic f`   | ✅           | ✅       | ❌       |
-| `gc f`        | ✅           | ✅       | ❌       |
-| `f`           | ❌           | ❌       | ❌       |
+| Source       | `as dynamic` | `as gc` | `as f` |
+| ------------ | ------------ | ------- | ------ |
+| `regional f` | ✅           | ✅      | ❌     |
+| `dynamic f`  | ✅           | ✅      | ❌     |
+| `gc f`       | ✅           | ✅      | ❌     |
+| `f`          | ❌           | ❌      | ❌     |
 
 ---
 
@@ -576,7 +568,7 @@ f render(d: Drawable) {
 
 ---
 
-## 8. Generics
+## 8. Generics not in v0.1
 
 ```runes
 type Stack<T> = {
@@ -750,6 +742,7 @@ u64 size = KERNEL_END - KERNEL_START
 ```
 
 LLVM IR emitted:
+
 ```llvm
 declare void @memset(i8*, i32, i64)
 @KERNEL_START = external global i64
@@ -780,6 +773,7 @@ type UARTRegs = {
 ```
 
 LLVM IR emitted:
+
 ```llvm
 store volatile i32 65, i32* %uart
 %status = load volatile i32, i32* %uart
@@ -811,6 +805,7 @@ const [256]u64 IDT_TABLE = []
 ```
 
 LLVM IR emitted:
+
 ```llvm
 define void @_start() section ".text.boot" { ... }
 @IDT_TABLE = constant [256 x i64] zeroinitializer, section ".rodata.tables"
@@ -851,6 +846,7 @@ f efi_main(handle: *void, table: *EFISystemTable) = r: u64 {
 ```
 
 LLVM IR emitted:
+
 ```llvm
 define x86_64_sysvcc i64 @syscall_entry(i64, i64, i64, i64) { ... }
 define x86_intr_cc void @page_fault_handler() { ... }
@@ -923,7 +919,7 @@ j.set("key", val) -- mutate field
 j.has("key")      -- bool, check if field exists
 ```
 
-### `as J` — serialize any type to JSON
+### `as J` — serialize any type to JSON \*not in v0.1
 
 ```runes
 type Point = { x: f32, y: f32 }
@@ -942,7 +938,7 @@ f32 x = j.get("x")  -- 1.0
 j.set("x", 5.0)
 ```
 
-### `as T` — deserialize JSON back to a type
+### `as T` — deserialize JSON back to a type \*not in v0.1
 
 ```runes
 str raw = "{\"x\":3.0,\"y\":4.0}"
@@ -1064,6 +1060,16 @@ f add(x: i32, y: i32) = result: i32 {
 
 ---
 
+## 15. Pipes
+
+pipes are some of the differential features of the language
+
+```runes
+pipe compile(input: str) = output: *Node {
+    lex | parse | resolve | typecheck
+}
+```
+
 ## 16. Full OS Example
 
 ```runes
@@ -1121,32 +1127,32 @@ pub f kernel_main() {
 
 ## 17. Keyword Reference
 
-| Keyword      | Meaning                                        |
-|--------------|------------------------------------------------|
-| `f`          | Stack function                                 |
+| Keyword      | Meaning                                                |
+| ------------ | ------------------------------------------------------ | --- |
+| `f`          | Stack function                                         |
 | `stack f`    | Explicitly stack-only function                         |
-| `dynamic f`  | Raw heap function (C-style malloc)             |
-| `regional f` | Arena/region allocated function                |
+| `dynamic f`  | Raw heap function (C-style malloc)                     |
+| `regional f` | Arena/region allocated function                        |
 | `gc f`       | Garbage collected function                             |
-| `flex f`     | Inherits caller's memory strategy (monomorphized v0.2)  |                     |
-| `method`     | Method block for a type                        |
-| `interface`  | Interface definition                           |
-| `type`       | Type definition (struct or variant)            |
-| `error`      | Error set definition                           |
-| `mod`        | Module definition                              |
-| `use`        | Import                                         |
-| `pub`        | Public visibility                              |
-| `const`      | Immutable binding                              |
-| `match`      | Pattern match                                  |
-| `if/else`    | Conditional                                    |
-| `for`        | Loop — `for (iter) \|val\| { }`               |
-| `while`      | Conditional loop                               |
-| `loop`       | Infinite loop                                  |
-| `break`      | Exit loop                                      |
-| `try`        | Propagate error to caller                      |
-| `catch`      | Handle error inline                            |
-| `unsafe`     | Unsafe block                                   |
-| `asm`        | Inline assembly                                |
+| `flex f`     | Inherits caller's memory strategy (monomorphized v0.2) |     |
+| `method`     | Method block for a type                                |
+| `interface`  | Interface definition                                   |
+| `type`       | Type definition (struct or variant)                    |
+| `error`      | Error set definition                                   |
+| `mod`        | Module definition                                      |
+| `use`        | Import                                                 |
+| `pub`        | Public visibility                                      |
+| `const`      | Immutable binding                                      |
+| `match`      | Pattern match                                          |
+| `if/else`    | Conditional                                            |
+| `for`        | Loop — `for (iter) \|val\| { }`                        |
+| `while`      | Conditional loop                                       |
+| `loop`       | Infinite loop                                          |
+| `break`      | Exit loop                                              |
+| `try`        | Propagate error to caller                              |
+| `catch`      | Handle error inline                                    |
+| `unsafe`     | Unsafe block                                           |
+| `asm`        | Inline assembly                                        |
 | `schema`     | Schema definition (type with inheritance + JSON)       |
 | `J`          | Built-in JSON type                                     |
 | `extern`     | Foreign function / variable declaration                |
@@ -1158,7 +1164,7 @@ pub f kernel_main() {
 ## 18. Feature Roadmap
 
 | Feature                        | Version |
-|-------------------------------|---------|
+| ------------------------------ | ------- |
 | Variables, primitives          | v0.1    |
 | Functions (f, dynamic, etc.)   | v0.1    |
 | Structs, variants, interfaces  | v0.1    |
@@ -1182,4 +1188,4 @@ pub f kernel_main() {
 
 ---
 
-*Runes — v1.0 draft. Backend: LLVM IR. Compiler: C bootstrap → self-hosted.*
+_Runes — v1.0 draft. Backend: LLVM IR. Compiler: C bootstrap → self-hosted._

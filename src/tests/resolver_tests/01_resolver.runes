@@ -1,0 +1,51 @@
+-- 1. variable básica
+
+-- 2. función con named return
+f add(x: i32, y: i32) = result: i32 {
+    result = x + y
+}
+
+-- 3. función void
+f greet(name: str) {
+    print(name)
+}
+
+-- 4. forward reference — función usada antes de declararse
+f main() {
+    helper()
+}
+f helper() {
+    print("hi")
+}
+
+-- 5. scopes anidados
+f outer() {
+    i32 x := 1
+    {
+        i32 y := 2
+    }
+}
+
+-- 6. match con patrones
+match color {
+    Red        -> print("red"),
+    RGB(r,g,b) -> print(r),
+    _          -> print("other"),
+}
+
+-- 7. try / catch
+f run() = r: !f32 {
+    f32 val := try divide(10.0, 2.0)
+    r = val
+}
+
+-- 8. for con capture
+for (nums) |n| {
+    print(n)
+}
+
+-- 9. shadowing en scope distinto
+x := 1
+{
+    i32 x = 2
+}

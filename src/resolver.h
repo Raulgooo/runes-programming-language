@@ -7,6 +7,7 @@ typedef struct {
   SymbolTable *st;
   int error_count;
   bool had_error;
+  MemoryRealm current_realm; // for nesting rule enforcement
 } Resolver;
 
 void resolver_init(Resolver *r, SymbolTable *st);
