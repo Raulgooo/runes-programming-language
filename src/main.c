@@ -3,6 +3,7 @@
 #include "parser.h"
 #include "resolver.h"
 #include "symbol_table.h"
+#include "typecheck.h"
 #include "utils/strtab.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -123,6 +124,21 @@ int main(int argc, char **argv) {
   if (resolver.had_error) {
     fprintf(stderr, "Name resolution failed with %d error(s)\n",
             resolver.error_count);
+    arena_destroy(&arena);
+    free(source);
+    return 1;
+  }
+
+  // Phase 3: Type Checking
+  TypeContext tctx;
+  type_context_init(&tctx, &arena);
+
+  TypeChecker tc;
+  typechecker_init(&tc, &arena, &tctx, &st);
+  typechecker_check(&tc, program);
+
+  if (tc.had_error) {
+    fprintf(stderr, "Type checking failed with %d error(s)\n", tc.error_count);
     arena_destroy(&arena);
     free(source);
     return 1;

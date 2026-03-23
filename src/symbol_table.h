@@ -18,8 +18,8 @@ typedef enum {
 typedef struct Symbol {
   const char *name; // interned
   SymbolKind kind;
-  AstNode *node; // the declaration node
-  void *type;    // placeholder for type checking phase
+  AstNode *node;     // the declaration node
+  struct Type *type; // type checker inferred type
   bool is_pub;
 } Symbol;
 

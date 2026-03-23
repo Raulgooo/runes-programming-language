@@ -1,0 +1,15 @@
+f add(a: i32, b: i32) = r: i32 {
+    result := a + b
+    return result
+}
+
+f main() = err: i32 {
+    x := 5
+    y := 10
+    sum := add(x, y)
+    
+    b := true
+    fail := x + b
+    
+    return sum
+}

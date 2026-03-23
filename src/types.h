@@ -13,18 +13,18 @@ typedef enum {
 } MemoryStrategy;
 
 typedef enum {
-  TYPE_PRIMITIVE, // i8, i32, f64, bool, str, char, usize, void...
-  TYPE_POINTER,   // *T
-  TYPE_ARRAY,     // [N]T
-  TYPE_TUPLE,     // (T1, T2, ...)
-  TYPE_FUNCTION,  // funct firm
-  TYPE_FALLIBLE,  // !T
-  TYPE_STRUCT,    // type Point = { x: f32, y: f32 }
-  TYPE_VARIANT,   // type Color = | Red | Green | RGB(u8,u8,u8)
-  TYPE_INTERFACE, // interface Drawable { ... }
-  TYPE_ERROR,     // error MathError = { | DivByZero | Overflow }
-  TYPE_UNKNOWN,   // pending
-} TypeKind;
+  TY_PRIMITIVE, // i8, i32, f64, bool, str, char, usize, void...
+  TY_POINTER,   // *T
+  TY_ARRAY,     // [N]T
+  TY_TUPLE,     // (T1, T2, ...)
+  TY_FUNCTION,  // funct firm
+  TY_FALLIBLE,  // !T
+  TY_STRUCT,    // type Point = { x: f32, y: f32 }
+  TY_VARIANT,   // type Color = | Red | Green | RGB(u8,u8,u8)
+  TY_INTERFACE, // interface Drawable { ... }
+  TY_ERROR,     // error MathError = { | DivByZero | Overflow }
+  TY_UNKNOWN,   // pending
+} SemTypeKind;
 
 typedef struct Type Type;
 
@@ -85,7 +85,7 @@ typedef struct {
 } ErrorType;
 
 struct Type {
-  TypeKind kind;
+  SemTypeKind kind;
   union {
     PrimitiveType primitive;
     PointerType pointer;
@@ -124,9 +124,6 @@ typedef struct {
   Type *type_void;
 
   // Singletons especiales
-  Type *type_j;
-  Type *type_sl;
-  Type *type_dl;
   Type *type_unknown;
 } TypeContext;
 
