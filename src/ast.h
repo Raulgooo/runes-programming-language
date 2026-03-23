@@ -167,12 +167,15 @@ typedef enum {
 //
 // All string fields point into the arena — no separate heap allocation.
 
+struct Type;
+
 typedef struct AstNode {
   AstKind kind;
   uint32_t line;
   uint32_t col;
   struct AstNode
       *next; // intrusive list — next sibling in whatever list owns this node
+  struct Type *resolved_type; // The type inferred by the type checker
 
   union {
 

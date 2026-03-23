@@ -1,1 +1,6 @@
+
+flex f print(x: i64) {
+    x := 1   
+}
+
 f main() { x := 5; print(x) }

@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Isrc -Wall -Wextra -g
 
-CORE_SRCS = src/lexer.c src/parser.c src/ast.c src/utils/arena.c src/utils/strtab.c src/tools/ast_print.c src/symbol_table.c src/resolver.c
+CORE_SRCS = src/lexer.c src/parser.c src/ast.c src/utils/arena.c src/utils/strtab.c src/tools/ast_print.c src/symbol_table.c src/resolver.c src/types.c
 MAIN_SRC = src/main.c
 TARGET = runes
 

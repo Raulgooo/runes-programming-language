@@ -1,3 +1,6 @@
+#ifndef RUNES_TYPES_H
+#define RUNES_TYPES_H
+
 #include <stddef.h> // size_t
 
 typedef enum {
@@ -96,3 +99,47 @@ struct Type {
     ErrorType error_t;
   } as;
 };
+
+#include "utils/arena.h"
+#include <stdbool.h>
+
+typedef struct {
+  Arena *arena;
+
+  // Singletons primitives
+  Type *type_i8;
+  Type *type_i16;
+  Type *type_i32;
+  Type *type_i64;
+  Type *type_u8;
+  Type *type_u16;
+  Type *type_u32;
+  Type *type_u64;
+  Type *type_f32;
+  Type *type_f64;
+  Type *type_bool;
+  Type *type_str;
+  Type *type_char;
+  Type *type_usize;
+  Type *type_void;
+
+  // Singletons especiales
+  Type *type_j;
+  Type *type_sl;
+  Type *type_dl;
+  Type *type_unknown;
+} TypeContext;
+
+void type_context_init(TypeContext *ctx, Arena *arena);
+Type *type_new_primitive(TypeContext *ctx, const char *name);
+Type *type_new_pointer(TypeContext *ctx, Type *inner);
+Type *type_new_array(TypeContext *ctx, Type *inner, size_t size);
+Type *type_new_tuple(TypeContext *ctx, Type **elems, int count);
+Type *type_new_function(TypeContext *ctx, Type **params, int param_count,
+                        Type *ret, MemoryStrategy strategy);
+Type *type_new_fallible(TypeContext *ctx, Type *inner);
+
+bool type_equals(Type *a, Type *b);
+bool type_is_assignable(Type *target, Type *source);
+
+#endif // RUNES_TYPES_H
