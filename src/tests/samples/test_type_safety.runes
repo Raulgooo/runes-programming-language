@@ -1,0 +1,49 @@
+-- This file should fail type checking with multiple errors
+
+-- Duplicate fields
+type Dup = {
+    x: i32,
+    x: f32,
+}
+
+-- Infinite recursion
+type Rec = {
+    val: i32,
+    next: Rec,
+}
+
+-- Legal pointer recursion (should NOT error)
+type Node = {
+    val: i32,
+    next: *Node,
+}
+
+-- Illegal alignment (not power of 2)
+#[align(3)]
+type BadAlign = {
+    x: i32,
+}
+
+#[align(4)]
+type GoodAlign = {
+    x: i32,
+}
+
+-- Duplicate variant arms
+type DupeColor =
+    | Red
+    | Blue
+    | Red
+
+-- Method/Field conflict
+type Conflict = {
+    len: i32,
+}
+
+method Conflict {
+    f len(self) = r: i32 { r = self.len }
+}
+
+pub f main() {
+    -- Nothing here
+}

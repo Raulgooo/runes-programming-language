@@ -1,6 +1,7 @@
 #ifndef RUNES_TYPES_H
 #define RUNES_TYPES_H
 
+#include <stdbool.h>
 #include <stddef.h> // size_t
 
 typedef enum {
@@ -51,24 +52,34 @@ typedef struct {
   int param_count;
   Type *ret;
   MemoryStrategy strategy; // f, dynamic, regional, gc, flex, stack
+  bool is_method;
 } FunctionType;
 
 typedef struct {
   Type *inner; // el T en !T
 } FallibleType;
 
+typedef struct Method {
+  const char *name;
+  Type *type;
+  struct AstNode *node;
+  struct Method *next;
+} Method;
+
 typedef struct {
   const char *name;
   const char **field_names;
   Type **field_types;
   int field_count;
+  Method *methods;
 } StructType;
 
 typedef struct {
   const char *name;
   const char **arm_names;
-  Type **arm_types; // NULL si el arm no tiene payload
+  Type **arm_types; // NULL side el arm no tiene payload
   int arm_count;
+  Method *methods;
 } VariantType;
 
 typedef struct {
@@ -133,8 +144,13 @@ Type *type_new_pointer(TypeContext *ctx, Type *inner);
 Type *type_new_array(TypeContext *ctx, Type *inner, size_t size);
 Type *type_new_tuple(TypeContext *ctx, Type **elems, int count);
 Type *type_new_function(TypeContext *ctx, Type **params, int param_count,
-                        Type *ret, MemoryStrategy strategy);
+                        Type *ret, MemoryStrategy strategy, bool is_method);
 Type *type_new_fallible(TypeContext *ctx, Type *inner);
+Type *type_new_struct(TypeContext *ctx, const char *name,
+                      const char **field_names, Type **field_types,
+                      int field_count);
+Type *type_new_variant(TypeContext *ctx, const char *name,
+                       const char **arm_names, Type **arm_types, int arm_count);
 
 bool type_equals(Type *a, Type *b);
 bool type_is_assignable(Type *target, Type *source);

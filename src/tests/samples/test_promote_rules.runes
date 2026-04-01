@@ -1,0 +1,37 @@
+--- test_promote_rules.runes
+    Phase 3: Validates promote expression rules.
+    promote is only valid inside non-stack realms,
+    and target must be dynamic or gc.
+---
+
+type Node = {
+    val: i32,
+    next: *Node,
+}
+
+-- promote from regional to dynamic (valid)
+regional f promote_to_dynamic() = r: *Node {
+    Node n = Node(val: 42, next: 0 as *Node)
+    r = promote(&n) as dynamic
+}
+
+-- promote from regional to gc (valid)
+regional f promote_to_gc() = r: *Node {
+    Node n = Node(val: 99, next: 0 as *Node)
+    r = promote(&n) as gc
+}
+
+-- promote both targets in same function (valid)
+regional f promote_both() = r: (*Node, *Node) {
+    Node a = Node(val: 1, next: 0 as *Node)
+    Node b = Node(val: 2, next: 0 as *Node)
+    *Node a_dyn = promote(&a) as dynamic
+    *Node b_gc  = promote(&b) as gc
+    r = (a_dyn, b_gc)
+}
+
+-- promote from dynamic f (valid)
+dynamic f promote_from_dynamic() = r: *Node {
+    Node n = Node(val: 7, next: 0 as *Node)
+    r = promote(&n) as dynamic
+}

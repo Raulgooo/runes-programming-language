@@ -69,3 +69,16 @@ type Token = { kind: i32 }
 type Error = { code: i32 }
 type PageTable = { entries: [512]u64 }
 type Task = { id: i32, name: str, state: i32 }
+
+method PageTable {
+    regional f new() = r: PageTable { r = PageTable(entries: []) }
+    f map(self, v: u64, p: u64, flags: u64) = r: !void {
+        -- mock
+    }
+}
+
+method Task {
+    f run(self) {
+        -- mock
+    }
+}

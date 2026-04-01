@@ -229,7 +229,7 @@ f handle_page_fault(addr: u64) = r: !void {
 -- VM setup
 -- ─────────────────────────────────────────────
 
-f setup_paging() = r: !void {
+dynamic f setup_paging() = r: !void {
     regional f make_tables() = out: (*PageTable, *PageTable) {
         PageTable pml4 = PageTable.new()
         PageTable pdpt = PageTable.new()
@@ -288,7 +288,7 @@ f pic_eoi(irq: u8) {
 -- Kernel main
 -- ─────────────────────────────────────────────
 
-pub f kernel_main() {
+pub dynamic f kernel_main() {
     -- Paging
     setup_paging() catch |e| {
         uart_puts("paging setup failed\n")

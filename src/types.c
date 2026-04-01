@@ -55,13 +55,14 @@ Type *type_new_tuple(TypeContext *ctx, Type **elems, int count) {
 }
 
 Type *type_new_function(TypeContext *ctx, Type **params, int param_count,
-                        Type *ret, MemoryStrategy strategy) {
+                        Type *ret, MemoryStrategy strategy, bool is_method) {
   Type *t = arena_alloc(ctx->arena, sizeof(Type));
   t->kind = TY_FUNCTION;
   t->as.function.params = params;
   t->as.function.param_count = param_count;
   t->as.function.ret = ret;
   t->as.function.strategy = strategy;
+  t->as.function.is_method = is_method;
   return t;
 }
 
@@ -69,6 +70,32 @@ Type *type_new_fallible(TypeContext *ctx, Type *inner) {
   Type *t = arena_alloc(ctx->arena, sizeof(Type));
   t->kind = TY_FALLIBLE;
   t->as.fallible.inner = inner;
+  return t;
+}
+
+Type *type_new_struct(TypeContext *ctx, const char *name,
+                      const char **field_names, Type **field_types,
+                      int field_count) {
+  Type *t = arena_alloc(ctx->arena, sizeof(Type));
+  t->kind = TY_STRUCT;
+  t->as.struct_t.name = name;
+  t->as.struct_t.field_names = field_names;
+  t->as.struct_t.field_types = field_types;
+  t->as.struct_t.field_count = field_count;
+  t->as.struct_t.methods = NULL;
+  return t;
+}
+
+Type *type_new_variant(TypeContext *ctx, const char *name,
+                       const char **arm_names, Type **arm_types,
+                       int arm_count) {
+  Type *t = arena_alloc(ctx->arena, sizeof(Type));
+  t->kind = TY_VARIANT;
+  t->as.variant.name = name;
+  t->as.variant.arm_names = arm_names;
+  t->as.variant.arm_types = arm_types;
+  t->as.variant.arm_count = arm_count;
+  t->as.variant.methods = NULL;
   return t;
 }
 

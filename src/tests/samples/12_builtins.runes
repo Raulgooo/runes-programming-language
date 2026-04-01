@@ -135,7 +135,7 @@ f allocate_aligned() = r: *u8 {
     r = mem
 }
 
-f copy_to_dynamic(src: *u8, len: usize) = r: *u8 {
+regional f copy_to_dynamic(src: *u8, len: usize) = r: *u8 {
     -- Allocate destination using sizeof calculation
     usize elem_size = sizeof(u8)
     usize total_size = len * elem_size

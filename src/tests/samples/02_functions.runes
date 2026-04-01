@@ -203,7 +203,7 @@ f demo_tuples() {
 -- pub and visibility
 -- ─────────────────────────────────────────────
 
-pub f kernel_main() {
+pub dynamic f kernel_main() {
     regional f setup_paging() {
         PageTable pml4 = PageTable.new()
         PageTable pdpt = PageTable.new()

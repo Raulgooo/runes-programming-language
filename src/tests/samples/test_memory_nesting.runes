@@ -1,0 +1,68 @@
+--- test_memory_nesting.runes
+    Phase 3: Tests every legal cell of the realm nesting matrix.
+    All nestings here should pass without type errors.
+
+    Matrix (§5):
+    MAIN   can nest: STACK, ARENA, HEAP, GC, FLEX
+    STACK  can nest: STACK only
+    ARENA  can nest: STACK only
+    HEAP   can nest: STACK, ARENA, HEAP, GC, FLEX
+    GC     can nest: STACK, GC only
+    FLEX   can nest: STACK, ARENA, HEAP, GC, FLEX (inherits)
+---
+
+-- MAIN nesting all types
+f main() {
+    f stack_child() {}
+
+    regional f arena_child() {}
+
+    dynamic f heap_child() {}
+
+    gc f gc_child() {}
+
+    flex f flex_child() {}
+}
+
+-- STACK nesting STACK only
+f outer_stack() {
+    f inner_stack() {}
+}
+
+-- ARENA nesting STACK only
+regional f outer_arena() {
+    f inner_stack() {}
+}
+
+-- HEAP nesting all types
+dynamic f outer_heap() {
+    f stack_in_heap() {}
+
+    regional f arena_in_heap() {}
+
+    dynamic f heap_in_heap() {}
+
+    gc f gc_in_heap() {}
+
+    flex f flex_in_heap() {}
+}
+
+-- GC nesting STACK and GC
+gc f outer_gc() {
+    f stack_in_gc() {}
+
+    gc f gc_in_gc() {}
+}
+
+-- FLEX nesting all types (inherits caller)
+flex f outer_flex() {
+    f stack_in_flex() {}
+
+    regional f arena_in_flex() {}
+
+    dynamic f heap_in_flex() {}
+
+    gc f gc_in_flex() {}
+
+    flex f flex_in_flex() {}
+}

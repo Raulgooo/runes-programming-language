@@ -1,0 +1,61 @@
+--- test_error_flow.runes
+    Phase 2: Validates try/catch type checking.
+    Tests try unwrapping, catch with block handler,
+    catch with default value, chained catch, and error binding.
+---
+
+error MathError = {
+    | DivByZero
+    | Overflow
+}
+
+-- Fallible function
+f divide(a: f32, b: f32) = result: !f32 {
+    if b == 0.0 {
+        result = error.MathError.DivByZero
+    } else {
+        result = a / b
+    }
+}
+
+-- try: unwraps !T to T, propagates error
+f try_chain() = r: !f32 {
+    f32 a = try divide(10.0, 2.0)
+    f32 b = try divide(a, 3.0)
+    r = a + b
+}
+
+-- catch with block handler and error binding
+f catch_block() {
+    f32 val = divide(10.0, 0.0) catch |e| {
+        print("caught:", e)
+        return
+    }
+    print(val)
+}
+
+-- catch with default value
+f catch_default() {
+    f32 val = divide(10.0, 0.0) catch 0.0
+    print(val)
+}
+
+-- chained catch: first fallback, then default
+f chained_catch(a: f32, b: f32, c: f32) = r: f32 {
+    r = divide(a, b) catch divide(a, c) catch -1.0
+}
+
+-- match on fallible result
+f match_result() = r: f32 {
+    r = match divide(10.0, 0.0) {
+        Ok(v)  -> v,
+        Err(_) -> 0.0,
+    }
+}
+
+f main() {
+    catch_block()
+    catch_default()
+    f32 c = chained_catch(10.0, 0.0, 5.0)
+    f32 m = match_result()
+}

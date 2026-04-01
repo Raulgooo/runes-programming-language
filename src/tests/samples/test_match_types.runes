@@ -1,0 +1,76 @@
+--- test_match_types.runes
+    Phase 2: Validates match statement type checking.
+    Tests literal patterns, binding patterns, wildcards,
+    struct/variant patterns, guards, and match-as-expression.
+---
+
+type Color =
+    | Red
+    | Green
+    | Blue
+    | RGB(u8, u8, u8)
+
+type Vec2 = {
+    x: f32,
+    y: f32,
+}
+
+-- Literal patterns on integer subject
+f classify(x: i32) = r: str {
+    r = match x {
+        0 -> "zero",
+        1 -> "one",
+        _ -> "many",
+    }
+}
+
+-- Binding patterns
+f bind_test(x: i32) {
+    match x {
+        val -> print("value:", val),
+    }
+}
+
+-- Guard expressions
+f guarded(x: i32) = r: str {
+    r = match x {
+        n if n < 0  -> "negative",
+        n if n == 0 -> "zero",
+        n if n > 0  -> "positive",
+        _           -> "unreachable",
+    }
+}
+
+-- Variant destructure with match-as-expression
+f color_name(c: Color) = r: str {
+    r = match c {
+        Red         -> "red",
+        Green       -> "green",
+        Blue        -> "blue",
+        RGB(r, g, b) -> "custom",
+    }
+}
+
+-- Struct pattern with field matching
+f point_label(p: Vec2) = r: str {
+    r = match p {
+        Vec2(x: 0.0, y: 0.0) -> "origin",
+        Vec2(x, y: 0.0)      -> "x-axis",
+        Vec2(x: 0.0, y)      -> "y-axis",
+        Vec2(x, y)            -> "general",
+    }
+}
+
+-- Match as statement (side effects only)
+f log_color(c: Color) {
+    match c {
+        Red   -> print("red"),
+        Green -> print("green"),
+        _     -> print("other"),
+    }
+}
+
+f main() {
+    str s = classify(0)
+    str g = guarded(-5)
+}

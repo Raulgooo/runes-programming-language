@@ -1,0 +1,24 @@
+type Point = {
+    x: i32,
+    y: i32,
+}
+
+f test_errors(x: i32, s: str, p: Point) {
+    -- Type mismatch: matching i32 against string literal
+    match x {
+        "hello" -> print("bad"),
+        _       -> print("ok"),
+    }
+
+    -- Type mismatch in guard: guard must be bool
+    match x {
+        n if n + 1 -> print("bad guard"),
+        _          -> print("ok"),
+    }
+
+    -- Struct pattern on wrong type
+    match x {
+        Point(x, y) -> print("not a point"),
+        _           -> print("ok"),
+    }
+}

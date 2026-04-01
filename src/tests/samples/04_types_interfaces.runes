@@ -20,7 +20,7 @@ type Vec3 = {
 }
 
 -- Struct without defaults (all fields required)
-type TestTestNode = {
+type TestNode = {
     val:  i32,
     next: *TestNode,
 }
