@@ -20,9 +20,9 @@ type Vec3 = {
 }
 
 -- Struct without defaults (all fields required)
-type Node = {
+type TestTestNode = {
     val:  i32,
-    next: *Node,
+    next: *TestNode,
 }
 
 type Rect = {
@@ -64,7 +64,7 @@ type Shape =
     | Triangle(Vec2, Vec2, Vec2)
     | Point
 
-type Token =
+type TestToken =
     | Ident(str)
     | Number(i64)
     | Float(f64)
@@ -139,15 +139,15 @@ method Rect {
 }
 
 -- Method block with memory strategy annotation
-method Node {
-    dynamic f new(val: i32) = r: *Node {
-        r = raw_alloc(sizeof(Node))
+method TestNode {
+    dynamic f new(val: i32) = r: *TestNode {
+        r = raw_alloc(sizeof(TestNode))
         r.val  = val
-        r.next = 0 as *Node
+        r.next = 0 as *TestNode
     }
 
     f is_tail(self) = r: bool {
-        r = self.next == 0 as *Node
+        r = self.next == 0 as *TestNode
     }
 }
 

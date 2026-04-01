@@ -427,6 +427,14 @@ static Token number(Lexer *L) {
     advance(L); // consume '.'
     while (is_digit(peek(L)))
       advance(L);
+    // Optional exponent
+    if (peek(L) == 'e' || peek(L) == 'E') {
+      advance(L); // consume 'e'/'E'
+      if (peek(L) == '+' || peek(L) == '-')
+        advance(L);
+      while (is_digit(peek(L)))
+        advance(L);
+    }
     tok = make_token(L, TOKEN_FLOAT_LITERAL);
     char buf[64];
     size_t len = (size_t)(L->current - L->start);

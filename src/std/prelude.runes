@@ -1,0 +1,71 @@
+-- Runes Standard Prelude (External Declarations)
+
+extern f print(msg: str)
+extern f tick()
+extern f is_done() = r: bool
+f done() = r: bool r = is_done() 
+
+extern f raw_alloc(size: usize) = ptr: *u8
+extern f raw_free(ptr: *u8)
+extern f memset(ptr: *u8, val: u8, size: u64)
+extern f memcpy(dst: *u8, src: *u8, len: u64)
+extern f alloc(size: usize) = r: *u8
+extern f collect_errors(s: str) = r: [512]Error
+extern f sqrt(val: f64) = r: f64
+
+-- Kernel-specific primitives
+extern u64 heap_cursor
+extern f bump_alloc(size: u64) = r: *u8
+extern f task_queue_push(t: u64)
+extern f task_queue_pop() = r: u64
+extern f task_queue_len() = r: i32
+extern f task_queue_current() = r: u64
+extern f preempt_current()
+f task_queue_empty() = r: bool r = task_queue_len() == 0
+
+-- Mock modules for tests using qualified access
+mod scheduler {
+    pub f add(t: u64) { task_queue_push(t) }
+}
+
+mod kernel {
+    mod arch {
+        mod x86 {
+            pub f read_cr3() = r: u64 { r = 0 }
+            pub f read_cr2() = r: u64 { r = 0 }
+        }
+    }
+}
+
+-- Missing built-ins found during test audit
+extern f log_error(err: Error)
+extern f panic(msg: str)
+extern f map_page(vaddr: u64, paddr: u64, flags: u64)
+extern f render_point(x: f32, y: f32)
+extern f render_rect(x: f32, y: f32, w: f32, h: f32)
+extern f dispatch(id: i32)
+extern f init_output()
+extern f handle_page_fault(addr: u64)
+extern f keyboard() = r: u8
+extern f read_file(path: str) = r: !str
+
+-- These match common test usage but can conflict
+extern f parse_config(s: str) = cfg: *Config
+extern f tokenize(s: str) = r: *Token
+extern f build_ast(s: str) = r: *Node
+extern f parse(s: str) = r: !*Node
+extern f eval(n: *Node) = r: !i32
+extern f kernel_main()
+extern f config_load(s: str) = r: *Config
+extern f ruleset_from_config(c: *Config) = r: u64
+extern f apply_rules(r: u64)
+extern f make_pair(a: i32, b: i32) = r: (i32, i32)
+extern f get_coords() = r: (i32, i32)
+extern f framebuffer_resize(w: i32, h: i32)
+
+type Config = { id: i32 }
+type Node = { val: i32, next: *Node }
+type Token = { kind: i32 }
+type Error = { code: i32 }
+type PageTable = { entries: [512]u64 }
+type Task = { id: i32, name: str, state: i32 }

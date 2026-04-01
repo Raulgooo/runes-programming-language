@@ -7,6 +7,7 @@
 ---
 
 use kernel.arch.x86
+use kernel.arch.x86.read_cr2
 
 -- ─────────────────────────────────────────────
 -- extern — C / linker symbols

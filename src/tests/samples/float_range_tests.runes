@@ -1,0 +1,11 @@
+-- Float Range Checking Test
+
+f main() {
+    -- 1. Valid f32
+    f32 small = 3.40282347e38
+    f32 neg = -3.40282347e38
+    
+    -- 2. Invalid f32 (overflow)
+    -- f32 overflow = 3.5e38
+}
+f32 overflow = 3.5e38

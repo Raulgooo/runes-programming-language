@@ -1,0 +1,27 @@
+-- Phase 1 Tests: Unary Expr, Index Expr, and Literal Sizing
+
+f main() {
+    -- 1. Unary Expressions (Negative integers)
+    i32 a = -1
+    i8  b = -128
+    i64 c = -1000
+
+    -- 2. Logical NOT
+    bool t = true
+    bool flag = !t
+    bool flag2 = !!false
+
+    -- 3. Array Indexing
+    [3]i32 nums = [10, 20, 30]
+    i32 first = nums[0]
+    i32 last = nums[2]
+    
+    -- Indexing with non-i32
+    u8 idx = 1
+    i32 second = nums[idx]
+
+    -- 4. Permissive Literal Sizing
+    u64 big = 0xFFFFFFFFFFFFFFFF
+    u8 small = 255
+    f32 pf = 3.14
+}

@@ -1,0 +1,668 @@
+Program
+  ExternDecl name='print' is_func=true
+    Params:
+      Param name='msg'
+        TypeExpr kind=named name='str'
+  ExternDecl name='tick' is_func=true
+  ExternDecl name='is_done' is_func=true
+    Return name='r'
+      TypeExpr kind=named name='bool'
+    FuncDecl name='done' realm=stack is_pub=false is_main=false
+    Return name='r'
+      TypeExpr kind=named name='bool'
+    Body:
+      Block
+        Assign
+          Target:
+            Identifier name='r'
+          Value:
+            CallExpr
+              Callee:
+                Identifier name='is_done'
+  ExternDecl name='raw_alloc' is_func=true
+    Params:
+      Param name='size'
+        TypeExpr kind=named name='usize'
+    Return name='ptr'
+      TypeExpr kind=pointer
+        TypeExpr kind=named name='u8'
+  ExternDecl name='raw_free' is_func=true
+    Params:
+      Param name='ptr'
+        TypeExpr kind=pointer
+          TypeExpr kind=named name='u8'
+  ExternDecl name='memset' is_func=true
+    Params:
+      Param name='ptr'
+        TypeExpr kind=pointer
+          TypeExpr kind=named name='u8'
+      Param name='val'
+        TypeExpr kind=named name='u8'
+      Param name='size'
+        TypeExpr kind=named name='u64'
+  ExternDecl name='memcpy' is_func=true
+    Params:
+      Param name='dst'
+        TypeExpr kind=pointer
+          TypeExpr kind=named name='u8'
+      Param name='src'
+        TypeExpr kind=pointer
+          TypeExpr kind=named name='u8'
+      Param name='len'
+        TypeExpr kind=named name='u64'
+  ExternDecl name='alloc' is_func=true
+    Params:
+      Param name='size'
+        TypeExpr kind=named name='usize'
+    Return name='r'
+      TypeExpr kind=pointer
+        TypeExpr kind=named name='u8'
+  ExternDecl name='collect_errors' is_func=true
+    Params:
+      Param name='s'
+        TypeExpr kind=named name='str'
+    Return name='r'
+      TypeExpr kind=array
+        TypeExpr kind=named name='Error'
+        Size:
+          IntLiteral value=512
+  ExternDecl name='sqrt' is_func=true
+    Params:
+      Param name='val'
+        TypeExpr kind=named name='f64'
+    Return name='r'
+      TypeExpr kind=named name='f64'
+  ExternDecl name='heap_cursor' is_func=false
+    TypeExpr kind=named name='u64'
+  ExternDecl name='bump_alloc' is_func=true
+    Params:
+      Param name='size'
+        TypeExpr kind=named name='u64'
+    Return name='r'
+      TypeExpr kind=pointer
+        TypeExpr kind=named name='u8'
+  ExternDecl name='task_queue_push' is_func=true
+    Params:
+      Param name='t'
+        TypeExpr kind=named name='u64'
+  ExternDecl name='task_queue_pop' is_func=true
+    Return name='r'
+      TypeExpr kind=named name='u64'
+  ExternDecl name='task_queue_len' is_func=true
+    Return name='r'
+      TypeExpr kind=named name='i32'
+  ExternDecl name='task_queue_current' is_func=true
+    Return name='r'
+      TypeExpr kind=named name='u64'
+  ExternDecl name='preempt_current' is_func=true
+    FuncDecl name='task_queue_empty' realm=stack is_pub=false is_main=false
+    Return name='r'
+      TypeExpr kind=named name='bool'
+    Body:
+      Block
+        Assign
+          Target:
+            Identifier name='r'
+          Value:
+            BinaryExpr op===
+              CallExpr
+                Callee:
+                  Identifier name='task_queue_len'
+              IntLiteral value=0
+  ModDecl name='scheduler' is_pub=false
+        FuncDecl name='add' realm=stack is_pub=true is_main=false
+      Params:
+        Param name='t'
+          TypeExpr kind=named name='u64'
+      Body:
+        Block
+          CallExpr
+            Callee:
+              Identifier name='task_queue_push'
+            Args:
+              Identifier name='t'
+  ModDecl name='kernel' is_pub=false
+    ModDecl name='arch' is_pub=false
+      ModDecl name='x86' is_pub=false
+                FuncDecl name='read_cr3' realm=stack is_pub=true is_main=false
+          Return name='r'
+            TypeExpr kind=named name='u64'
+          Body:
+            Block
+              Assign
+                Target:
+                  Identifier name='r'
+                Value:
+                  IntLiteral value=0
+                FuncDecl name='read_cr2' realm=stack is_pub=true is_main=false
+          Return name='r'
+            TypeExpr kind=named name='u64'
+          Body:
+            Block
+              Assign
+                Target:
+                  Identifier name='r'
+                Value:
+                  IntLiteral value=0
+  ExternDecl name='log_error' is_func=true
+    Params:
+      Param name='err'
+        TypeExpr kind=named name='Error'
+  ExternDecl name='panic' is_func=true
+    Params:
+      Param name='msg'
+        TypeExpr kind=named name='str'
+  ExternDecl name='map_page' is_func=true
+    Params:
+      Param name='vaddr'
+        TypeExpr kind=named name='u64'
+      Param name='paddr'
+        TypeExpr kind=named name='u64'
+      Param name='flags'
+        TypeExpr kind=named name='u64'
+  ExternDecl name='render_point' is_func=true
+    Params:
+      Param name='x'
+        TypeExpr kind=named name='f32'
+      Param name='y'
+        TypeExpr kind=named name='f32'
+  ExternDecl name='render_rect' is_func=true
+    Params:
+      Param name='x'
+        TypeExpr kind=named name='f32'
+      Param name='y'
+        TypeExpr kind=named name='f32'
+      Param name='w'
+        TypeExpr kind=named name='f32'
+      Param name='h'
+        TypeExpr kind=named name='f32'
+  ExternDecl name='dispatch' is_func=true
+    Params:
+      Param name='id'
+        TypeExpr kind=named name='i32'
+  ExternDecl name='init_output' is_func=true
+  ExternDecl name='handle_page_fault' is_func=true
+    Params:
+      Param name='addr'
+        TypeExpr kind=named name='u64'
+  ExternDecl name='keyboard' is_func=true
+    Return name='r'
+      TypeExpr kind=named name='u8'
+  ExternDecl name='read_file' is_func=true
+    Params:
+      Param name='path'
+        TypeExpr kind=named name='str'
+    Return name='r'
+      TypeExpr kind=fallible
+        TypeExpr kind=named name='str'
+  ExternDecl name='parse_config' is_func=true
+    Params:
+      Param name='s'
+        TypeExpr kind=named name='str'
+    Return name='cfg'
+      TypeExpr kind=pointer
+        TypeExpr kind=named name='Config'
+  ExternDecl name='tokenize' is_func=true
+    Params:
+      Param name='s'
+        TypeExpr kind=named name='str'
+    Return name='r'
+      TypeExpr kind=pointer
+        TypeExpr kind=named name='Token'
+  ExternDecl name='build_ast' is_func=true
+    Params:
+      Param name='s'
+        TypeExpr kind=named name='str'
+    Return name='r'
+      TypeExpr kind=pointer
+        TypeExpr kind=named name='Node'
+  ExternDecl name='parse' is_func=true
+    Params:
+      Param name='s'
+        TypeExpr kind=named name='str'
+    Return name='r'
+      TypeExpr kind=fallible
+        TypeExpr kind=pointer
+          TypeExpr kind=named name='Node'
+  ExternDecl name='eval' is_func=true
+    Params:
+      Param name='n'
+        TypeExpr kind=pointer
+          TypeExpr kind=named name='Node'
+    Return name='r'
+      TypeExpr kind=fallible
+        TypeExpr kind=named name='i32'
+  ExternDecl name='kernel_main' is_func=true
+  ExternDecl name='config_load' is_func=true
+    Params:
+      Param name='s'
+        TypeExpr kind=named name='str'
+    Return name='r'
+      TypeExpr kind=pointer
+        TypeExpr kind=named name='Config'
+  ExternDecl name='ruleset_from_config' is_func=true
+    Params:
+      Param name='c'
+        TypeExpr kind=pointer
+          TypeExpr kind=named name='Config'
+    Return name='r'
+      TypeExpr kind=named name='u64'
+  ExternDecl name='apply_rules' is_func=true
+    Params:
+      Param name='r'
+        TypeExpr kind=named name='u64'
+  ExternDecl name='make_pair' is_func=true
+    Params:
+      Param name='a'
+        TypeExpr kind=named name='i32'
+      Param name='b'
+        TypeExpr kind=named name='i32'
+    Return name='r'
+      TypeExpr kind=tuple
+        TypeExpr kind=named name='i32'
+        TypeExpr kind=named name='i32'
+  ExternDecl name='get_coords' is_func=true
+    Return name='r'
+      TypeExpr kind=tuple
+        TypeExpr kind=named name='i32'
+        TypeExpr kind=named name='i32'
+  ExternDecl name='framebuffer_resize' is_func=true
+    Params:
+      Param name='w'
+        TypeExpr kind=named name='i32'
+      Param name='h'
+        TypeExpr kind=named name='i32'
+    TypeDecl name='Config' is_pub=false
+        FieldDecl name='id' is_volatile=false
+      TypeExpr kind=named name='i32'
+    TypeDecl name='Node' is_pub=false
+        FieldDecl name='val' is_volatile=false
+      TypeExpr kind=named name='i32'
+        FieldDecl name='next' is_volatile=false
+      TypeExpr kind=pointer
+        TypeExpr kind=named name='Node'
+    TypeDecl name='Token' is_pub=false
+        FieldDecl name='kind' is_volatile=false
+      TypeExpr kind=named name='i32'
+    TypeDecl name='Error' is_pub=false
+        FieldDecl name='code' is_volatile=false
+      TypeExpr kind=named name='i32'
+    TypeDecl name='PageTable' is_pub=false
+        FieldDecl name='entries' is_volatile=false
+      TypeExpr kind=array
+        TypeExpr kind=named name='u64'
+        Size:
+          IntLiteral value=512
+    TypeDecl name='Task' is_pub=false
+        FieldDecl name='id' is_volatile=false
+      TypeExpr kind=named name='i32'
+        FieldDecl name='name' is_volatile=false
+      TypeExpr kind=named name='str'
+        FieldDecl name='state' is_volatile=false
+      TypeExpr kind=named name='i32'
+  ModDecl name='test_mem' is_pub=false
+        FuncDecl name='alloc_page' realm=regional is_pub=true is_main=false
+      Return name='r'
+        TypeExpr kind=fallible
+          TypeExpr kind=pointer
+            TypeExpr kind=named name='u8'
+      Body:
+        Block
+          Assign
+            Target:
+              Identifier name='r'
+            Value:
+              CallExpr
+                Callee:
+                  Identifier name='bump_alloc'
+                Args:
+                  IntLiteral value=4096
+          IfStmt
+            Condition:
+              BinaryExpr op===
+                Identifier name='r'
+                CastExpr kind=0
+                  Expr:
+                    IntLiteral value=0
+                  Target Type:
+                    TypeExpr kind=pointer
+                      TypeExpr kind=named name='u8'
+            Then:
+              Block
+                Assign
+                  Target:
+                    Identifier name='r'
+                  Value:
+                    ErrorExpr
+                      Identifier name='MemError'
+                      Identifier name='OutOfMemory'
+        FuncDecl name='free_page' realm=stack is_pub=true is_main=false
+      Params:
+        Param name='p'
+          TypeExpr kind=pointer
+            TypeExpr kind=named name='u8'
+      Body:
+        Block
+          CallExpr
+            Callee:
+              Identifier name='raw_free'
+            Args:
+              Identifier name='p'
+        FuncDecl name='get_heap_top' realm=stack is_pub=false is_main=false
+      Return name='r'
+        TypeExpr kind=named name='u64'
+      Body:
+        Block
+          Assign
+            Target:
+              Identifier name='r'
+            Value:
+              Identifier name='heap_cursor'
+        FuncDecl name='align_up' realm=stack is_pub=false is_main=false
+      Params:
+        Param name='addr'
+          TypeExpr kind=named name='u64'
+        Param name='align'
+          TypeExpr kind=named name='u64'
+      Return name='r'
+        TypeExpr kind=named name='u64'
+      Body:
+        Block
+          Assign
+            Target:
+              Identifier name='r'
+            Value:
+              BinaryExpr op=&
+                BinaryExpr op=-
+                  BinaryExpr op=+
+                    Identifier name='addr'
+                    Identifier name='align'
+                  IntLiteral value=1
+                BinaryExpr op=-
+                  IntLiteral value=0
+                  Identifier name='align'
+  ModDecl name='test_sched' is_pub=false
+        TypeDecl name='Task' is_pub=false
+            FieldDecl name='id' is_volatile=false
+        TypeExpr kind=named name='i32'
+            FieldDecl name='name' is_volatile=false
+        TypeExpr kind=named name='str'
+            FieldDecl name='state' is_volatile=false
+        TypeExpr kind=named name='i32'
+        FuncDecl name='add' realm=stack is_pub=true is_main=false
+      Params:
+        Param name='t'
+          TypeExpr kind=named name='Task'
+      Body:
+        Block
+          CallExpr
+            Callee:
+              Identifier name='task_queue_push'
+            Args:
+              Identifier name='t'
+        FuncDecl name='run_next' realm=stack is_pub=true is_main=false
+      Return name='r'
+        TypeExpr kind=named name='bool'
+      Body:
+        Block
+          Assign
+            Target:
+              Identifier name='r'
+            Value:
+              BinaryExpr op=>
+                CallExpr
+                  Callee:
+                    Identifier name='task_queue_len'
+                IntLiteral value=0
+          IfStmt
+            Condition:
+              Identifier name='r'
+            Then:
+              Block
+                                VarDecl name='t' is_const=false is_volatile=false
+                  TypeExpr kind=named name='Task'
+                  Init:
+                    CallExpr
+                      Callee:
+                        Identifier name='task_queue_pop'
+                Assign
+                  Target:
+                    FieldExpr field='state'
+                      Identifier name='t'
+                  Value:
+                    IntLiteral value=1
+                CallExpr
+                  Callee:
+                    FieldExpr field='run'
+                      Identifier name='t'
+        FuncDecl name='tick' realm=stack is_pub=true is_main=false
+      Body:
+        Block
+          CallExpr
+            Callee:
+              Identifier name='preempt_current'
+        FuncDecl name='preempt_current' realm=stack is_pub=false is_main=false
+      Body:
+        Block
+                    VarDecl name='cur' is_const=false is_volatile=false
+            TypeExpr kind=named name='Task'
+            Init:
+              CallExpr
+                Callee:
+                  Identifier name='task_queue_current'
+          Assign
+            Target:
+              FieldExpr field='state'
+                Identifier name='cur'
+            Value:
+              IntLiteral value=0
+          CallExpr
+            Callee:
+              Identifier name='task_queue_push'
+            Args:
+              Identifier name='cur'
+          CallExpr
+            Callee:
+              Identifier name='run_next'
+        FuncDecl name='idle' realm=stack is_pub=false is_main=false
+      Body:
+        Block
+          UnsafeBlock
+            Body:
+              Block
+                AsmExpr code='hlt' output='(none)'
+  ModDecl name='test_io' is_pub=false
+        FuncDecl name='write_byte' realm=stack is_pub=true is_main=false
+      Params:
+        Param name='port'
+          TypeExpr kind=named name='u16'
+        Param name='val'
+          TypeExpr kind=named name='u8'
+      Body:
+        Block
+          UnsafeBlock
+            Body:
+              Block
+                AsmExpr code='outb %al, %dx' output='(none)'
+        FuncDecl name='read_byte' realm=stack is_pub=true is_main=false
+      Params:
+        Param name='port'
+          TypeExpr kind=named name='u16'
+      Return name='r'
+        TypeExpr kind=named name='u8'
+      Body:
+        Block
+          UnsafeBlock
+            Body:
+              Block
+                AsmExpr code='inb %dx, %al' output='r'
+        FuncDecl name='write_word' realm=stack is_pub=true is_main=false
+      Params:
+        Param name='port'
+          TypeExpr kind=named name='u16'
+        Param name='val'
+          TypeExpr kind=named name='u16'
+      Body:
+        Block
+          UnsafeBlock
+            Body:
+              Block
+                AsmExpr code='outw %ax, %dx' output='(none)'
+        FuncDecl name='read_word' realm=stack is_pub=true is_main=false
+      Params:
+        Param name='port'
+          TypeExpr kind=named name='u16'
+      Return name='r'
+        TypeExpr kind=named name='u16'
+      Body:
+        Block
+          UnsafeBlock
+            Body:
+              Block
+                AsmExpr code='inw %dx, %ax' output='r'
+  ModDecl name='test_kern' is_pub=false
+    ModDecl name='arch' is_pub=false
+      ModDecl name='x86' is_pub=false
+                FuncDecl name='read_cr3' realm=stack is_pub=true is_main=false
+          Return name='r'
+            TypeExpr kind=named name='u64'
+          Body:
+            Block
+              AsmExpr code='mov %cr3, %rax' output='r'
+                FuncDecl name='write_cr3' realm=stack is_pub=true is_main=false
+          Params:
+            Param name='val'
+              TypeExpr kind=named name='u64'
+          Body:
+            Block
+              AsmExpr code='mov %rax, %cr3' output='(none)'
+                FuncDecl name='read_cr2' realm=stack is_pub=true is_main=false
+          Return name='r'
+            TypeExpr kind=named name='u64'
+          Body:
+            Block
+              AsmExpr code='mov %cr2, %rax' output='r'
+                FuncDecl name='halt' realm=stack is_pub=true is_main=false
+          Body:
+            Block
+              AsmExpr code='cli; hlt' output='(none)'
+        FuncDecl name='alloc_page' realm=regional is_pub=true is_main=false
+      Return name='r'
+        TypeExpr kind=fallible
+          TypeExpr kind=pointer
+            TypeExpr kind=named name='u8'
+      Body:
+        Block
+          Assign
+            Target:
+              Identifier name='r'
+            Value:
+              CallExpr
+                Callee:
+                  FieldExpr field='alloc_page'
+                    Identifier name='test_mem'
+        FuncDecl name='free_page' realm=stack is_pub=true is_main=false
+      Params:
+        Param name='p'
+          TypeExpr kind=pointer
+            TypeExpr kind=named name='u8'
+      Body:
+        Block
+          CallExpr
+            Callee:
+              FieldExpr field='free_page'
+                Identifier name='test_mem'
+            Args:
+              Identifier name='p'
+    FuncDecl name='demo_modules' realm=stack is_pub=false is_main=false
+    Body:
+      Block
+                VarDecl name='page' is_const=false is_volatile=false
+          TypeExpr kind=pointer
+            TypeExpr kind=named name='u8'
+          Init:
+            CatchExpr err_name='e'
+              Expr:
+                CallExpr
+                  Callee:
+                    FieldExpr field='alloc_page'
+                      Identifier name='test_mem'
+              Handler:
+                Block
+                  CallExpr
+                    Callee:
+                      Identifier name='print'
+                    Args:
+                      StringLiteral value="alloc failed:"
+                      Identifier name='e'
+                  ReturnStmt
+                VarDecl name='cr3' is_const=false is_volatile=false
+          TypeExpr kind=named name='u64'
+          Init:
+            CallExpr
+              Callee:
+                FieldExpr field='read_cr3'
+                  FieldExpr field='x86'
+                    FieldExpr field='arch'
+                      Identifier name='test_kern'
+                VarDecl name='t' is_const=false is_volatile=false
+          TypeExpr kind=qualified module='test_sched' name='Task'
+          Init:
+            CallExpr
+              Callee:
+                FieldExpr field='Task'
+                  Identifier name='test_sched'
+              Args:
+                NamedArg name='id'
+                  IntLiteral value=1
+                NamedArg name='name'
+                  StringLiteral value="init"
+                NamedArg name='state'
+                  IntLiteral value=0
+        CallExpr
+          Callee:
+            FieldExpr field='add'
+              Identifier name='test_sched'
+          Args:
+            Identifier name='t'
+        CallExpr
+          Callee:
+            FieldExpr field='run_next'
+              Identifier name='test_sched'
+        CallExpr
+          Callee:
+            FieldExpr field='free_page'
+              Identifier name='test_mem'
+          Args:
+            Identifier name='page'
+        CallExpr
+          Callee:
+            FieldExpr field='write_byte'
+              Identifier name='test_io'
+          Args:
+            IntLiteral value=1016
+            CastExpr kind=0
+              Expr:
+                CharLiteral codepoint=U+0048
+              Target Type:
+                TypeExpr kind=named name='u8'
+        CallExpr
+          Callee:
+            FieldExpr field='write_byte'
+              Identifier name='test_io'
+          Args:
+            IntLiteral value=1016
+            CastExpr kind=0
+              Expr:
+                CharLiteral codepoint=U+0069
+              Target Type:
+                TypeExpr kind=named name='u8'
+                VarDecl name='status' is_const=false is_volatile=false
+          TypeExpr kind=named name='u8'
+          Init:
+            CallExpr
+              Callee:
+                FieldExpr field='read_byte'
+                  Identifier name='test_io'
+              Args:
+                IntLiteral value=1016

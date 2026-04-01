@@ -1,0 +1,3 @@
+pipe compile(file: str) {
+    lex |parse | resolver | typecheck | codegen | link
+}

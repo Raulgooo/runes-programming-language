@@ -138,5 +138,6 @@ Type *type_new_fallible(TypeContext *ctx, Type *inner);
 
 bool type_equals(Type *a, Type *b);
 bool type_is_assignable(Type *target, Type *source);
+bool type_is_comparable(Type *a, Type *b);
 
 #endif // RUNES_TYPES_H

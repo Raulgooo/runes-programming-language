@@ -1951,8 +1951,7 @@ static AstNode *parse_postfix(Parser *p) {
     // ── call: foo(a, b) — Spec §4 ─────────────────────────────────────
     // Note: No line check for calls to allow multi-line function calls
     if (check(p, TOKEN_LPAREN)) {
-      if (p->current.line > p->prev_line && left->kind != AST_IDENTIFIER &&
-          left->kind != AST_FIELD_EXPR)
+      if (p->current.line > p->prev_line)
         break;
       Token open = advance(p);
       skip_newlines(p);
@@ -1967,8 +1966,7 @@ static AstNode *parse_postfix(Parser *p) {
 
       // ── index: arr[0] — Spec §3 ───────────────────────────────────────
     } else if (check(p, TOKEN_LBRACKET)) {
-      if (p->current.line > p->prev_line && left->kind != AST_IDENTIFIER &&
-          left->kind != AST_FIELD_EXPR && left->kind != AST_INDEX_EXPR)
+      if (p->current.line > p->prev_line)
         break;
       Token open = advance(p);
       AstNode *index = parse_expr(p);

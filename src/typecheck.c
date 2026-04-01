@@ -76,10 +76,16 @@ Type *typechecker_resolve_type_expr(TypeChecker *tc, AstNode *node) {
     case TYPE_PTR:
       return type_new_pointer(tc->tctx, typechecker_resolve_type_expr(
                                             tc, node->as.type_expr.inner));
-    case TYPE_ARRAY:
+    case TYPE_ARRAY: {
+      size_t size = 0;
+      if (node->as.type_expr.size &&
+          node->as.type_expr.size->kind == AST_INT_LITERAL) {
+        size = node->as.type_expr.size->as.int_literal.value;
+      }
       return type_new_array(
           tc->tctx, typechecker_resolve_type_expr(tc, node->as.type_expr.inner),
-          0);
+          size);
+    }
     case TYPE_FALLIBLE:
       return type_new_fallible(tc->tctx, typechecker_resolve_type_expr(
                                              tc, node->as.type_expr.inner));
@@ -94,6 +100,14 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
   while (decl) {
     if (decl->kind == AST_FUNC_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.func_decl.name);
+      if (!sym) {
+        Symbol new_sym = {0};
+        new_sym.name = decl->as.func_decl.name;
+        new_sym.kind = SYM_FUNC;
+        new_sym.node = decl;
+        symbol_table_define(tc->st, new_sym);
+        sym = symbol_table_lookup_local(tc->st, decl->as.func_decl.name);
+      }
       if (sym) {
         Type *ret_t =
             typechecker_resolve_type_expr(tc, decl->as.func_decl.ret_type);
@@ -120,6 +134,14 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
       }
     } else if (decl->kind == AST_VAR_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.var_decl.name);
+      if (!sym) {
+        Symbol new_sym = {0};
+        new_sym.name = decl->as.var_decl.name;
+        new_sym.kind = SYM_VAR;
+        new_sym.node = decl;
+        symbol_table_define(tc->st, new_sym);
+        sym = symbol_table_lookup_local(tc->st, decl->as.var_decl.name);
+      }
       if (sym && decl->as.var_decl.type) {
         sym->type = typechecker_resolve_type_expr(tc, decl->as.var_decl.type);
         decl->resolved_type = sym->type;
@@ -147,6 +169,13 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
   case AST_STRING_LITERAL:
     inferred = tc->tctx->type_str;
     break;
+  case AST_ARRAY_LITERAL: {
+    // Basic array literal inference: if empty, unknown inner?
+    // In Runes, literals are often used in VAR_DECL which provides the type.
+    // For now, return a generic array type or unknown.
+    inferred = tc->tctx->type_unknown;
+    break;
+  }
   case AST_BOOL_LITERAL:
     inferred = tc->tctx->type_bool;
     break;
@@ -178,7 +207,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     case TOKEN_SLASH:
     case TOKEN_PERCENT:
       if (lty->kind != TY_UNKNOWN && rty->kind != TY_UNKNOWN) {
-        if (!type_equals(lty, rty)) {
+        if (!type_is_assignable(lty, rty) && !type_is_assignable(rty, lty)) {
           typechecker_error(tc, expr->line, expr->col,
                             "Type mismatch in arithmetic operation");
         }
@@ -192,7 +221,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     case TOKEN_LT_EQ:
     case TOKEN_GT_EQ:
       if (lty->kind != TY_UNKNOWN && rty->kind != TY_UNKNOWN) {
-        if (!type_equals(lty, rty)) {
+        if (!type_is_comparable(lty, rty)) {
           typechecker_error(tc, expr->line, expr->col,
                             "Comparison type mismatch");
         }
@@ -223,6 +252,11 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     Type *rty = typechecker_infer_expr(tc, expr->as.assign.value);
     if (lty->kind != TY_UNKNOWN && rty->kind != TY_UNKNOWN) {
       if (!type_is_assignable(lty, rty)) {
+        printf("DEBUG ASSERT: Cannot assign %d to %d\n", rty->kind, lty->kind);
+        if (lty->kind == TY_PRIMITIVE)
+          printf("DEBUG: lty name: %s\n", lty->as.primitive.name);
+        if (rty->kind == TY_PRIMITIVE)
+          printf("DEBUG: rty name: %s\n", rty->as.primitive.name);
         typechecker_error(tc, expr->line, expr->col,
                           "Cannot assign value of mismatched type");
       }
@@ -257,6 +291,78 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     } else if (callee_t->kind != TY_UNKNOWN) {
       typechecker_error(tc, expr->line, expr->col,
                         "Cannot call non-function type");
+    }
+    break;
+  }
+
+  case AST_UNARY_EXPR: {
+    Type *inner_t = typechecker_infer_expr(tc, expr->as.unary.expr);
+    if (inner_t->kind != TY_UNKNOWN) {
+      if (expr->as.unary.op == TOKEN_STAR) {
+        // Dereference: *p
+        if (inner_t->kind == TY_POINTER) {
+          inferred = inner_t->as.pointer.inner;
+        } else {
+          typechecker_error(tc, expr->line, expr->col,
+                            "Cannot dereference non-pointer type");
+        }
+      } else if (expr->as.unary.op == TOKEN_AMP) {
+        // Address-of: &x
+        inferred = type_new_pointer(tc->tctx, inner_t);
+      } else if (expr->as.unary.op == TOKEN_MINUS) {
+        // Negation requires numeric type
+        inferred = inner_t;
+      } else if (expr->as.unary.op == TOKEN_BANG) {
+        // Logical NOT requires boolean
+        if (inner_t->kind != TY_PRIMITIVE ||
+            strcmp(inner_t->as.primitive.name, "bool") != 0) {
+          typechecker_error(tc, expr->line, expr->col,
+                            "Logical NOT requires boolean operand");
+        }
+        inferred = inner_t;
+      }
+    }
+    break;
+  }
+
+  case AST_INDEX_EXPR: {
+    Type *target_t = typechecker_infer_expr(tc, expr->as.index.target);
+    Type *index_t = typechecker_infer_expr(tc, expr->as.index.index);
+
+    if (target_t->kind == TY_ARRAY) {
+      inferred = target_t->as.array.inner;
+    } else if (target_t->kind != TY_UNKNOWN) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Cannot index non-array type");
+    }
+
+    if (index_t->kind != TY_UNKNOWN) {
+      // Index must be an integer (simplification: just check if it's a
+      // primitive starting with 'i' or 'u')
+      if (index_t->kind != TY_PRIMITIVE ||
+          (index_t->as.primitive.name[0] != 'i' &&
+           index_t->as.primitive.name[0] != 'u')) {
+        typechecker_error(tc, expr->as.index.index->line,
+                          expr->as.index.index->col,
+                          "Array index must be an integer");
+      }
+    }
+    break;
+  }
+
+  case AST_FIELD_EXPR: {
+    Type *target_t = typechecker_infer_expr(tc, expr->as.field.target);
+    if (target_t->kind == TY_STRUCT) {
+      // TODO: Look up field in struct
+      // For now, return unknown or try some basic checks if we had field lists
+      inferred = tc->tctx->type_unknown;
+    } else if (target_t->kind == TY_POINTER &&
+               target_t->as.pointer.inner->kind == TY_STRUCT) {
+      // Auto-dereference field access: p.x where p is *Struct
+      inferred = tc->tctx->type_unknown;
+    } else if (target_t->kind != TY_UNKNOWN) {
+      // typechecker_error(tc, expr->line, expr->col, "Cannot access field on
+      // non-struct type");
     }
     break;
   }
@@ -321,6 +427,46 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
           typechecker_error(
               tc, node->line, node->col,
               "Variable initializer does not match declared type");
+        } else if (node->as.var_decl.init->kind == AST_INT_LITERAL &&
+                   decl_t->kind == TY_PRIMITIVE) {
+          // Basic Range Checking
+          unsigned long long val = node->as.var_decl.init->as.int_literal.value;
+          const char *tn = decl_t->as.primitive.name;
+          bool overflow = false;
+          if (strcmp(tn, "i8") == 0) {
+            if (val > 127)
+              overflow = true;
+          } else if (strcmp(tn, "u8") == 0) {
+            if (val > 255)
+              overflow = true;
+          } else if (strcmp(tn, "i16") == 0) {
+            if (val > 32767)
+              overflow = true;
+          } else if (strcmp(tn, "u16") == 0) {
+            if (val > 65535)
+              overflow = true;
+          } else if (strcmp(tn, "u32") == 0) {
+            if (val > 4294967295ULL)
+              overflow = true;
+          }
+          if (overflow) {
+            typechecker_error(tc, node->as.var_decl.init->line,
+                              node->as.var_decl.init->col,
+                              "Integer literal overflow for target type");
+          }
+        } else if (node->as.var_decl.init->kind == AST_FLOAT_LITERAL &&
+                   decl_t->kind == TY_PRIMITIVE) {
+          double val = node->as.var_decl.init->as.float_literal.value;
+          const char *tn = decl_t->as.primitive.name;
+          if (strcmp(tn, "f32") == 0) {
+            // Basic float range check:
+            // f32 is approx +/- 3.4e38
+            if (val > 3.40282347e38 || val < -3.40282347e38) {
+              typechecker_error(tc, node->as.var_decl.init->line,
+                                node->as.var_decl.init->col,
+                                "Float literal overflow for f32");
+            }
+          }
         }
       } else {
         decl_t = init_t; // inference
@@ -352,6 +498,8 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
 
   case AST_BLOCK: {
     symbol_table_push(tc->st);
+    // Recursively collect declarations in the block before checking statements
+    typechecker_collect_decls(tc, node->as.block.statements);
     AstNode *stmt = node->as.block.statements;
     while (stmt) {
       typechecker_check_node(tc, stmt);

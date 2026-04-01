@@ -1,0 +1,24 @@
+-- Phase 1.5 Tests: Numeric Literacy and Range Checking
+
+f main() {
+    -- 1. Permissive Comparisons (usize vs i32 literal)
+    usize len = 10
+    if len == 0 {
+        -- should pass type checking now
+    }
+    if 0 == len {
+        -- symmetric check
+    }
+
+    -- 2. Range Checking (Valid)
+    i8 small_neg = -128
+    i8 small_pos = 127
+    u8 small_u   = 255
+    u16 mid_u    = 65535
+    u32 big_u    = 4000000000
+
+    -- 3. Range Checking (Invalid - uncomment one to test failure)
+    -- i8 overflow = 128
+    -- u8 underflow = -1
+    -- u8 overflow_u = 256
+}

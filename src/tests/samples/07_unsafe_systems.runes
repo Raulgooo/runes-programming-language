@@ -11,8 +11,8 @@ use kernel.arch.x86
 -- ─────────────────────────────────────────────
 
 -- Standard C memory functions
-extern f memset(ptr: *u8, val: i32, len: usize)
-extern f memcpy(dst: *u8, src: *u8, len: usize)
+-- extern f memset(ptr: *u8, val: i32, len: usize)
+-- extern f memcpy(dst: *u8, src: *u8, len: usize)
 extern f memcmp(a: *u8, b: *u8, len: usize) = r: i32
 extern f memmove(dst: *u8, src: *u8, len: usize)
 
@@ -31,7 +31,7 @@ extern u64 STACK_BOTTOM
 -- 4KB-aligned, no padding (packed)
 #[packed]
 #[align(4096)]
-type PageTable = {
+type TestTestPageTable = {
     entries: [512]u64,
 }
 

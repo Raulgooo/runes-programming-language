@@ -17,10 +17,16 @@ static void define_symbol(Resolver *r, AstNode *node, const char *name,
                           SymbolKind kind, bool is_pub) {
   if (!name)
     return;
-  Symbol sym = {.name = name, .kind = kind, .node = node, .is_pub = is_pub};
-  if (!symbol_table_define(r->st, sym)) {
+  Symbol *existing = symbol_table_lookup_local(r->st, name);
+  if (existing) {
+    if (existing->kind == kind) {
+      return;
+    }
     error(r, node->line, node->col, "duplicate declaration of '%s'", name);
+    return;
   }
+  Symbol sym = {.name = name, .kind = kind, .node = node, .is_pub = is_pub};
+  symbol_table_define(r->st, sym);
 }
 
 static void resolve_list(Resolver *r, AstNode *node) {
@@ -82,8 +88,96 @@ static void resolve_pattern(Resolver *r, AstNode *node) {
   }
 }
 
+static const char *get_node_name(AstNode *node) {
+  if (!node)
+    return NULL;
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return node->as.func_decl.name;
+  case AST_VAR_DECL:
+    return node->as.var_decl.name;
+  case AST_TYPE_DECL:
+    return node->as.type_decl.name;
+  case AST_VARIANT_DECL:
+    return node->as.variant_decl.name;
+  case AST_SCHEMA_DECL:
+    return node->as.schema_decl.name;
+  case AST_INTERFACE_DECL:
+    return node->as.interface_decl.name;
+  case AST_ERROR_DECL:
+    return node->as.error_decl.name;
+  case AST_MOD_DECL:
+    return node->as.mod_decl.name;
+  case AST_EXTERN_DECL:
+    return node->as.extern_decl.name;
+  default:
+    return NULL;
+  }
+}
+
+static SymbolKind get_node_sym_kind(AstNode *node) {
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return SYM_FUNC;
+  case AST_VAR_DECL:
+    return SYM_VAR;
+  case AST_TYPE_DECL:
+  case AST_VARIANT_DECL:
+  case AST_SCHEMA_DECL:
+  case AST_INTERFACE_DECL:
+  case AST_ERROR_DECL:
+    return SYM_TYPE;
+  case AST_MOD_DECL:
+    return SYM_MOD;
+  case AST_EXTERN_DECL:
+    return node->as.extern_decl.is_func ? SYM_FUNC : SYM_VAR;
+  default:
+    return SYM_VAR;
+  }
+}
+
+static Symbol *find_symbol_in_path(Resolver *r, AstNode *path) {
+  if (!path)
+    return NULL;
+  Symbol *current = symbol_table_lookup(r->st, path->as.identifier.name);
+  if (!current)
+    return NULL;
+
+  AstNode *seg = path->next;
+  while (seg) {
+    if (current->kind != SYM_MOD)
+      return NULL;
+    AstNode *decl = current->node->as.mod_decl.declarations;
+    bool found = false;
+    while (decl) {
+      const char *name = get_node_name(decl);
+      if (name && strcmp(name, seg->as.identifier.name) == 0) {
+        // Create a temporary symbol to return.
+        // NOTE: This is slightly risky if we don't copy the symbol into the
+        // table immediately.
+        static Symbol tmp;
+        tmp.name = name;
+        tmp.kind = get_node_sym_kind(decl);
+        tmp.node = decl;
+        tmp.is_pub = true;
+        current = &tmp;
+        found = true;
+        break;
+      }
+      decl = decl->next;
+    }
+    if (!found)
+      return NULL;
+    seg = seg->next;
+  }
+  return current;
+}
+
 // Pass 1: Collect top-level declarations
 static void collect_decls(Resolver *r, AstNode *node) {
+  AstNode *head = node;
+
+  // First pass: define all non-use symbols
   while (node) {
     switch (node->kind) {
     case AST_FUNC_DECL:
@@ -115,10 +209,8 @@ static void collect_decls(Resolver *r, AstNode *node) {
       define_symbol(r, node, node->as.extern_decl.name, kind, true);
       break;
     }
-    case AST_METHOD_DECL:
-      // Methods don't define a name in this scope; they are typically
-      // resolved through their parent type, but we still need to
-      // traverse their bodies later.
+    case AST_VAR_DECL:
+      define_symbol(r, node, node->as.var_decl.name, SYM_VAR, false);
       break;
     case AST_MOD_DECL:
       define_symbol(r, node, node->as.mod_decl.name, SYM_MOD,
@@ -126,6 +218,28 @@ static void collect_decls(Resolver *r, AstNode *node) {
       break;
     default:
       break;
+    }
+    node = node->next;
+  }
+
+  // Second pass: handle use declarations now that all symbols are defined
+  node = head;
+  while (node) {
+    if (node->kind == AST_USE_DECL) {
+      Symbol *target = find_symbol_in_path(r, node->as.use_decl.path);
+      if (target) {
+        AstNode *last = node->as.use_decl.path;
+        while (last->next)
+          last = last->next;
+        const char *alias = last->as.identifier.name;
+        // Only define if not already present in this local scope
+        // (to avoid conflicts with local mod definitions in the same file)
+        if (!symbol_table_lookup_local(r->st, alias)) {
+          define_symbol(r, node, alias, target->kind, false);
+        }
+      } else {
+        error(r, node->line, node->col, "could not resolve module path", NULL);
+      }
     }
     node = node->next;
   }
@@ -165,7 +279,11 @@ static void resolve_node(Resolver *r, AstNode *node) {
     if (node->as.var_decl.init) {
       resolve_node(r, node->as.var_decl.init);
     }
-    define_symbol(r, node, node->as.var_decl.name, SYM_VAR, false);
+    // Only define if not already present (handled by collect_decls for
+    // top-level/mod-level)
+    if (!symbol_table_lookup_local(r->st, node->as.var_decl.name)) {
+      define_symbol(r, node, node->as.var_decl.name, SYM_VAR, false);
+    }
     if (node->as.var_decl.type) {
       resolve_node(r, node->as.var_decl.type);
     }
@@ -345,7 +463,8 @@ static void resolve_node(Resolver *r, AstNode *node) {
   case AST_ERROR_DECL:
     // Variants are currently just names (AST_IDENTIFIER in a list)
     // but we can traverse them to be safe.
-    resolve_list(r, node->as.error_decl.variants);
+    // However, do NOT resolve them as uses here, because they are definitions.
+    // resolve_list(r, node->as.error_decl.variants);
     break;
 
   case AST_MOD_DECL:
@@ -358,7 +477,6 @@ static void resolve_node(Resolver *r, AstNode *node) {
     break;
 
   case AST_USE_DECL:
-    // No-op — module paths are resolved in a separate phase
     break;
 
   default:

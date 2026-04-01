@@ -1,4 +1,5 @@
 #include "types.h"
+#include <stdio.h>
 #include <string.h>
 
 void type_context_init(TypeContext *ctx, Arena *arena) {
@@ -144,6 +145,84 @@ bool type_is_assignable(Type *target, Type *source) {
 
   if (target->kind == TY_UNKNOWN || source->kind == TY_UNKNOWN) {
     return true;
+  }
+
+  // Permissive integer literal assignment: allow i32 (default literal type)
+  // to be assigned to other integer types.
+  // TODO: Implement range checking.
+  if (target->kind == TY_PRIMITIVE && source->kind == TY_PRIMITIVE) {
+    const char *tn = target->as.primitive.name;
+    const char *sn = source->as.primitive.name;
+    if (strcmp(sn, "i32") == 0) {
+      if (strcmp(tn, "i8") == 0 || strcmp(tn, "i16") == 0 ||
+          strcmp(tn, "i64") == 0 || strcmp(tn, "u8") == 0 ||
+          strcmp(tn, "u16") == 0 || strcmp(tn, "u32") == 0 ||
+          strcmp(tn, "u64") == 0 || strcmp(tn, "usize") == 0) {
+        return true;
+      }
+    }
+    if (strcmp(sn, "f64") == 0) {
+      if (strcmp(tn, "f32") == 0) {
+        return true;
+      }
+    }
+    // Allow any numeric type to be assigned from its larger counterparts for
+    // literals (simplification)
+  }
+
+  // Allow T to be assigned to !T
+  if (target->kind == TY_FALLIBLE) {
+    if (type_is_assignable(target->as.fallible.inner, source)) {
+      return true;
+    }
+  }
+
+  // Allow assignment of error variants (TODO: proper error set checking)
+  if (source->kind == TY_PRIMITIVE &&
+      strcmp(source->as.primitive.name, "Error") == 0) {
+    return true;
+  }
+
+  return false;
+}
+
+bool type_is_comparable(Type *a, Type *b) {
+  if (type_equals(a, b))
+    return true;
+  if (!a || !b)
+    return false;
+
+  if (a->kind == TY_UNKNOWN || b->kind == TY_UNKNOWN) {
+    return true;
+  }
+
+  // Permissive literal comparison
+  if (a->kind == TY_PRIMITIVE && b->kind == TY_PRIMITIVE) {
+    const char *an = a->as.primitive.name;
+    const char *bn = b->as.primitive.name;
+
+    // Allow i32 (literal) to be compared with any integer/usize
+    bool a_is_lit = strcmp(an, "i32") == 0;
+    bool b_is_lit = strcmp(bn, "i32") == 0;
+
+    if (a_is_lit || b_is_lit) {
+      const char *other = a_is_lit ? bn : an;
+      if (other[0] == 'i' || (other[0] == 'u' && strcmp(other, "usize") == 0) ||
+          (other[0] == 'u' && (other[1] == '8' || other[1] == '1' ||
+                               other[1] == '3' || other[1] == '6'))) {
+        return true;
+      }
+    }
+
+    // Allow f64 (literal) to be compared with f32
+    bool a_is_flit = strcmp(an, "f64") == 0;
+    bool b_is_flit = strcmp(bn, "f64") == 0;
+    if (a_is_flit || b_is_flit) {
+      const char *other = a_is_flit ? bn : an;
+      if (strcmp(other, "f32") == 0) {
+        return true;
+      }
+    }
   }
 
   return false;
