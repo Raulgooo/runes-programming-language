@@ -268,3 +268,48 @@ bool type_is_comparable(Type *a, Type *b) {
 
   return false;
 }
+
+static const NumericTypeInfo numeric_types[] = {
+  {"i8",    true,  false, 8,  -128LL,                   127ULL,                   1},
+  {"i16",   true,  false, 16, -32768LL,                 32767ULL,                 2},
+  {"i32",   true,  false, 32, -2147483648LL,            2147483647ULL,            3},
+  {"i64",   true,  false, 64, (-9223372036854775807LL - 1), 9223372036854775807ULL, 4},
+  {"u8",    false, false, 8,  0,                        255ULL,                   1},
+  {"u16",   false, false, 16, 0,                        65535ULL,                 2},
+  {"u32",   false, false, 32, 0,                        4294967295ULL,            3},
+  {"u64",   false, false, 64, 0,                        18446744073709551615ULL,  4},
+  {"f32",   true,  true,  32, 0,                        0,                        1},
+  {"f64",   true,  true,  64, 0,                        0,                        2},
+  {"usize", false, false, 64, 0,                        18446744073709551615ULL,  4},
+};
+
+const NumericTypeInfo *get_numeric_info(const char *name) {
+  for (int i = 0; i < (int)(sizeof(numeric_types)/sizeof(numeric_types[0])); i++) {
+    if (strcmp(numeric_types[i].name, name) == 0)
+      return &numeric_types[i];
+  }
+  return NULL;
+}
+
+bool type_is_integer(Type *t) {
+  if (!t || t->kind != TY_PRIMITIVE) return false;
+  const NumericTypeInfo *info = get_numeric_info(t->as.primitive.name);
+  return info && !info->is_float;
+}
+
+bool type_is_float(Type *t) {
+  if (!t || t->kind != TY_PRIMITIVE) return false;
+  const NumericTypeInfo *info = get_numeric_info(t->as.primitive.name);
+  return info && info->is_float;
+}
+
+bool type_is_numeric(Type *t) {
+  if (!t || t->kind != TY_PRIMITIVE) return false;
+  return get_numeric_info(t->as.primitive.name) != NULL;
+}
+
+bool type_is_signed_int(Type *t) {
+  if (!t || t->kind != TY_PRIMITIVE) return false;
+  const NumericTypeInfo *info = get_numeric_info(t->as.primitive.name);
+  return info && info->is_signed && !info->is_float;
+}

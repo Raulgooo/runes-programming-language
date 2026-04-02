@@ -1,0 +1,6 @@
+-- EXPECT FAIL: overflow
+-- Tests: TYPE-03, TYPE-04 — literal range checking and overflow detection
+
+f test_overflow() {
+  u8 x = 256  -- error: overflow for u8
+}

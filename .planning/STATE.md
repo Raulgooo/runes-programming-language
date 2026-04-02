@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
 status: verifying
-stopped_at: Phase 2 context gathered
-last_updated: "2026-04-02T21:12:32.043Z"
+stopped_at: Completed 02-01-PLAN.md
+last_updated: "2026-04-02T21:42:53.173Z"
 last_activity: 2026-04-02
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 4
-  completed_plans: 4
+  completed_plans: 5
   percent: 0
 ---
 
@@ -56,6 +56,7 @@ Progress: [..........] 0%
 | Phase 01 P01 | 6min | 2 tasks | 3 files |
 | Phase 01 P03 | 8min | 3 tasks | 6 files |
 | Phase 01 P04 | 5min | 2 tasks | 2 files |
+| Phase 02 P01 | 3min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -75,6 +76,8 @@ Recent decisions affecting current work:
 - [Phase 01]: Literal coercion in binary expressions: allow int/float literals to widen to matching types for ergonomics while enforcing strict type equality between typed variables
 - [Phase 01]: ICE walk infrastructure defined but gated until type checker handles all expression types to avoid false positives
 - [Phase 01]: Narrowed ICE whitelist to literal kinds only — identifiers, calls, binary, unary, assign, and field expressions legitimately return TY_UNKNOWN
+- [Phase 02]: Range checking at AST level in typecheck.c, not in type_is_assignable, to preserve backward compat
+- [Phase 02]: Negation fusion pattern: AST_UNARY_EXPR(MINUS, AST_INT_LITERAL) for signed min values
 
 ### Pending Todos
 
@@ -86,6 +89,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-02T21:12:32.027Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-type-system-completion/02-CONTEXT.md
+Last session: 2026-04-02T21:42:53.155Z
+Stopped at: Completed 02-01-PLAN.md
+Resume file: None

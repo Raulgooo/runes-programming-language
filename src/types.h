@@ -158,4 +158,21 @@ bool type_equals(Type *a, Type *b);
 bool type_is_assignable(Type *target, Type *source);
 bool type_is_comparable(Type *a, Type *b);
 
+// Numeric type metadata for range checking and cast suggestions
+typedef struct {
+  const char *name;
+  bool is_signed;
+  bool is_float;
+  int bit_width;
+  long long min_val;
+  unsigned long long max_val;
+  int rank; // for widening direction: higher rank = wider type
+} NumericTypeInfo;
+
+const NumericTypeInfo *get_numeric_info(const char *name);
+bool type_is_integer(Type *t);
+bool type_is_float(Type *t);
+bool type_is_numeric(Type *t);
+bool type_is_signed_int(Type *t);
+
 #endif // RUNES_TYPES_H
