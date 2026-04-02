@@ -1046,12 +1046,69 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     break;
   }
 
+  case AST_TUPLE_EXPR: {
+    int count = 0;
+    AstNode *elem = expr->as.tuple_expr.elems;
+    while (elem) { count++; elem = elem->next; }
+    Type **elem_types = arena_alloc(tc->arena, sizeof(Type *) * count);
+    elem = expr->as.tuple_expr.elems;
+    for (int i = 0; i < count; i++) {
+      elem_types[i] = typechecker_infer_expr(tc, elem);
+      elem = elem->next;
+    }
+    inferred = type_new_tuple(tc->tctx, elem_types, count);
+    break;
+  }
+
+  case AST_CAST_EXPR: {
+    Type *target_t = typechecker_resolve_type_expr(tc, expr->as.cast.target_type);
+    inferred = target_t;
+    break;
+  }
+
   default:
     break;
   }
 
   expr->resolved_type = inferred;
   return inferred;
+}
+
+// D-15: Check if every execution path through a node ends in a return statement.
+// Used only for functions that use explicit returns (no named return variable).
+static bool all_paths_return(AstNode *node) {
+  if (!node) return false;
+  switch (node->kind) {
+  case AST_RETURN_STMT:
+    return true;
+  case AST_BLOCK: {
+    // A block returns on all paths if its last statement does
+    AstNode *stmt = node->as.block.statements;
+    AstNode *last = NULL;
+    while (stmt) { last = stmt; stmt = stmt->next; }
+    return all_paths_return(last);
+  }
+  case AST_IF_STMT:
+    // Both branches must exist and both must return
+    return node->as.if_stmt.else_branch &&
+           all_paths_return(node->as.if_stmt.then_branch) &&
+           all_paths_return(node->as.if_stmt.else_branch);
+  case AST_MATCH_STMT: {
+    // Every arm must return (exhaustiveness is Phase 3)
+    AstNode *arm = node->as.match_stmt.arms;
+    if (!arm) return false;
+    while (arm) {
+      if (arm->kind == AST_MATCH_ARM) {
+        if (!all_paths_return(arm->as.match_arm.body))
+          return false;
+      }
+      arm = arm->next;
+    }
+    return true;
+  }
+  default:
+    return false;
+  }
 }
 
 static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
@@ -1099,6 +1156,19 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
 
     if (node->as.func_decl.body) {
       typechecker_check_node(tc, node->as.func_decl.body);
+    }
+
+    // D-15: All-paths return check for non-void functions without named returns
+    if (tc->expected_ret && type_is_resolved(tc->expected_ret) &&
+        !(tc->expected_ret->kind == TY_PRIMITIVE &&
+          strcmp(tc->expected_ret->as.primitive.name, "void") == 0) &&
+        !node->as.func_decl.ret_name &&
+        node->as.func_decl.body) {
+      if (!all_paths_return(node->as.func_decl.body)) {
+        typechecker_error(tc, node->line, node->col,
+                          "Function '%s' does not return a value on all paths",
+                          node->as.func_decl.name);
+      }
     }
 
     tc->expected_ret = NULL;
@@ -1492,6 +1562,8 @@ static bool should_have_resolved_type(AstKind kind) {
   case AST_STRING_LITERAL:
   case AST_BOOL_LITERAL:
   case AST_CHAR_LITERAL:
+  case AST_TUPLE_EXPR:
+  case AST_CAST_EXPR:
     return true;
   default:
     return false;

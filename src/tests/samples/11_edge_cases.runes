@@ -70,7 +70,7 @@ f main() {
         }
 
         PageTable pt = PageTable(entries: [])
-        helper(&pt as *u8)
+        helper((&pt) as *u8)
     }
 
     prepare()

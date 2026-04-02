@@ -185,6 +185,15 @@ bool type_is_assignable(Type *target, Type *source) {
     return true;
   }
 
+  // Pointer assignability: if both are pointers and either inner is
+  // TY_UNKNOWN (unresolved recursive type), allow assignment.
+  if (target->kind == TY_POINTER && source->kind == TY_POINTER) {
+    if (target->as.pointer.inner->kind == TY_UNKNOWN ||
+        source->as.pointer.inner->kind == TY_UNKNOWN)
+      return true;
+    return type_equals(target->as.pointer.inner, source->as.pointer.inner);
+  }
+
   // Permissive integer literal assignment: allow i32 (default literal type)
   // to be assigned to other integer types.
   // TODO: Implement range checking.
@@ -235,6 +244,15 @@ bool type_is_comparable(Type *a, Type *b) {
 
   if (a->kind == TY_UNKNOWN || b->kind == TY_UNKNOWN) {
     return true;
+  }
+
+  // Pointer comparability: if both are pointers and either inner is
+  // TY_UNKNOWN (unresolved recursive type), allow comparison.
+  if (a->kind == TY_POINTER && b->kind == TY_POINTER) {
+    if (a->as.pointer.inner->kind == TY_UNKNOWN ||
+        b->as.pointer.inner->kind == TY_UNKNOWN)
+      return true;
+    return type_equals(a->as.pointer.inner, b->as.pointer.inner);
   }
 
   // Permissive literal comparison

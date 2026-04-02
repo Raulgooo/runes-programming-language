@@ -51,7 +51,7 @@ f read_byte(p: *u8) = r: u8 {
 stack f fast_hash(data: *u8, len: usize) = r: u64 {
     r = 0
     for (0..len) |i| {
-        r = r ^ (*(data + i) as u64)
+        r = r ^ ((*(data + i)) as u64)
         r = r * 0x9e3779b97f4a7c15
     }
 }
@@ -108,8 +108,8 @@ regional f build_tables() {
 
     PageTable pml4 = PageTable(entries: [])
     PageTable pdpt = PageTable(entries: [])
-    zero(&pml4 as *u8)
-    zero(&pdpt as *u8)
+    zero((&pml4) as *u8)
+    zero((&pdpt) as *u8)
 }
 
 -- promote out of regional into dynamic
@@ -207,7 +207,7 @@ pub dynamic f kernel_main() {
     regional f setup_paging() {
         PageTable pml4 = PageTable.new()
         PageTable pdpt = PageTable.new()
-        try pml4.map(0xFFFF800000000000, &pdpt as u64, 0x3)
+        try pml4.map(0xFFFF800000000000, (&pdpt) as u64, 0x3)
     }
 
     setup_paging()
