@@ -1,0 +1,24 @@
+-- Tests: TYPE-07 -- return type verification (named-return guard)
+-- Runes requires named return variables for non-void functions, so the
+-- all_paths_return check is guarded by !ret_name. These tests verify
+-- that named-return functions do NOT produce false "missing return" errors.
+
+f full_return(x: i32) = r: i32 {
+  if x > 0 {
+    r = x
+  } else {
+    r = 0
+  }
+}
+
+f single_path(x: i32) = r: i32 {
+  r = x * 2
+}
+
+f no_else_named(x: i32) = r: i32 {
+  r = 0
+  if x > 0 {
+    r = x
+  }
+  -- r is already initialized; no return needed
+}
