@@ -16,10 +16,10 @@
 
 ### Type System
 
-- [ ] **TYPE-01**: Integer type promotion — i8->i16->i32->i64, u8->u16->u32->u64 widening in binary ops and assignments; mixed-sign requires explicit cast
-- [ ] **TYPE-02**: Float type promotion — f32->f64 in mixed float expressions
-- [ ] **TYPE-03**: Literal type inference — integer literals contextually typed (u8 x = 255 works), uncontextualized default to i32, float to f64
-- [ ] **TYPE-04**: Negative literal overflow handled correctly — -128 accepted as i8, unary negation context respected
+- [x] **TYPE-01**: Integer type promotion — i8->i16->i32->i64, u8->u16->u32->u64 widening in binary ops and assignments; mixed-sign requires explicit cast
+- [x] **TYPE-02**: Float type promotion — f32->f64 in mixed float expressions
+- [x] **TYPE-03**: Literal type inference — integer literals contextually typed (u8 x = 255 works), uncontextualized default to i32, float to f64
+- [x] **TYPE-04**: Negative literal overflow handled correctly — -128 accepted as i8, unary negation context respected
 - [ ] **TYPE-05**: Struct field type checking complete — default values, missing field errors, field suggestions in diagnostics
 - [ ] **TYPE-06**: Variant constructor type checking — payload types verified against variant arm definition
 - [ ] **TYPE-07**: Return type verified on all code paths — named return variable properly typed and assigned
@@ -108,10 +108,10 @@
 | FOUND-04 | Phase 1 | Complete |
 | FOUND-05 | Phase 1 | Complete |
 | FOUND-06 | Phase 1 | Complete |
-| TYPE-01 | Phase 2 | Pending |
-| TYPE-02 | Phase 2 | Pending |
-| TYPE-03 | Phase 2 | Pending |
-| TYPE-04 | Phase 2 | Pending |
+| TYPE-01 | Phase 2 | Complete |
+| TYPE-02 | Phase 2 | Complete |
+| TYPE-03 | Phase 2 | Complete |
+| TYPE-04 | Phase 2 | Complete |
 | TYPE-05 | Phase 2 | Pending |
 | TYPE-06 | Phase 2 | Pending |
 | TYPE-07 | Phase 2 | Pending |
