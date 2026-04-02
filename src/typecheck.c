@@ -32,6 +32,25 @@ static inline bool type_is_resolved(Type *t) {
   return t && t->kind != TY_UNKNOWN && t->kind != TY_INFER_ERROR;
 }
 
+static const char *type_display_name(Type *t) {
+  if (!t) return "<unknown>";
+  switch (t->kind) {
+    case TY_PRIMITIVE: return t->as.primitive.name;
+    case TY_POINTER:   return "pointer";
+    case TY_ARRAY:     return "array";
+    case TY_TUPLE:     return "tuple";
+    case TY_FUNCTION:  return "function";
+    case TY_FALLIBLE:  return "fallible";
+    case TY_STRUCT:    return t->as.struct_t.name ? t->as.struct_t.name : "struct";
+    case TY_VARIANT:   return t->as.variant.name ? t->as.variant.name : "variant";
+    case TY_INTERFACE: return t->as.interface_t.name ? t->as.interface_t.name : "interface";
+    case TY_ERROR:     return t->as.error_t.name ? t->as.error_t.name : "error";
+    case TY_UNKNOWN:   return "<unknown>";
+    case TY_INFER_ERROR: return "<error>";
+  }
+  return "<unknown>";
+}
+
 // ── Phase 3 helpers ──────────────────────────────────────────────────────────
 
 static bool is_realm_nesting_legal(MemoryRealm outer, MemoryRealm inner) {
@@ -1477,6 +1496,20 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   case AST_TUPLE_DESTRUCTURE: {
     Type *init_t = typechecker_infer_expr(tc, node->as.tuple_destructure.init);
 
+    // Count targets for mismatch check.
+    int target_count = 0;
+    for (AstNode *t = node->as.tuple_destructure.targets; t; t = t->next)
+      target_count++;
+
+    // Check count mismatch when init is a resolved tuple.
+    if (init_t->kind == TY_TUPLE &&
+        target_count != init_t->as.tuple.count) {
+      typechecker_error(tc, node->line, node->col,
+        "Tuple destructuring expects %d elements, got %d targets",
+        init_t->as.tuple.count, target_count);
+      break;
+    }
+
     // Walk the target VarDecls and bind each one, matching positional tuple
     // element types when the init resolves to a known tuple.
     AstNode *target = node->as.tuple_destructure.targets;
@@ -1488,6 +1521,18 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
         // If the target has an explicit type annotation, use it.
         if (target->as.var_decl.type) {
           elem_t = typechecker_resolve_type_expr(tc, target->as.var_decl.type);
+          // Validate annotation against actual tuple element type.
+          if (init_t->kind == TY_TUPLE &&
+              elem_idx < init_t->as.tuple.count) {
+            Type *actual_t = init_t->as.tuple.elems[elem_idx];
+            if (type_is_resolved(elem_t) && type_is_resolved(actual_t) &&
+                !type_is_assignable(elem_t, actual_t)) {
+              typechecker_error(tc, target->line, target->col,
+                "Tuple element %d has type '%s', cannot assign to '%s'",
+                elem_idx, type_display_name(actual_t),
+                type_display_name(elem_t));
+            }
+          }
         } else if (init_t->kind == TY_TUPLE) {
           // Index into the tuple's elems array by position.
           if (elem_idx < init_t->as.tuple.count)
