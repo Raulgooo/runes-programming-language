@@ -39,6 +39,7 @@ Every valid Runes program (per spec v0.1, excluding deprecated features) passes 
 - List types (sl/dl) — deferred to future version
 - JSON serialization / `as J` / schema JSON features (spec §13) — deprecated, will not be implemented
 - Code generation backend — separate project after frontend completion
+- Flex function realm checking — depends on generics, deferred to v2+
 - Runtime / standard library implementation — depends on codegen
 - Language server / IDE tooling — future work
 

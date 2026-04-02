@@ -16,8 +16,8 @@
 
 ### Type System
 
-- [ ] **TYPE-01**: Integer type promotion — i8→i16→i32→i64, u8→u16→u32→u64 widening in binary ops and assignments; mixed-sign requires explicit cast
-- [ ] **TYPE-02**: Float type promotion — f32→f64 in mixed float expressions
+- [ ] **TYPE-01**: Integer type promotion — i8->i16->i32->i64, u8->u16->u32->u64 widening in binary ops and assignments; mixed-sign requires explicit cast
+- [ ] **TYPE-02**: Float type promotion — f32->f64 in mixed float expressions
 - [ ] **TYPE-03**: Literal type inference — integer literals contextually typed (u8 x = 255 works), uncontextualized default to i32, float to f64
 - [ ] **TYPE-04**: Negative literal overflow handled correctly — -128 accepted as i8, unary negation context respected
 - [ ] **TYPE-05**: Struct field type checking complete — default values, missing field errors, field suggestions in diagnostics
@@ -57,8 +57,7 @@
 - [ ] **REALM-01**: Scope-exit escape detection — pointer values cannot leave their realm without promote() or being Copy type
 - [ ] **REALM-02**: Promote validation — promote(&t) as dynamic/gc checked against full spec matrix
 - [ ] **REALM-03**: Copy-type auto-escape — primitive types and value structs can escape scope without promote
-- [ ] **REALM-04**: Flex function conservative checking — flex bodies restricted to realm-neutral operations for v0.1
-- [ ] **REALM-05**: Nesting matrix as 6x6 lookup table — replaces current if-chain for maintainability
+- [ ] **REALM-04**: Nesting matrix as 6x6 lookup table — replaces current if-chain for maintainability
 
 ### Testing
 
@@ -88,7 +87,7 @@
 | Feature | Reason |
 |---------|--------|
 | Generics (<T>) | Massive complexity, deferred to v2+ |
-| JSON serialization / as J / schema JSON features | Deprecated — spec §13 will not be implemented |
+| JSON serialization / as J / schema JSON features | Deprecated -- spec section 13 will not be implemented |
 | Pipes (pipe syntax) | Deferred to v2+ |
 | List types (sl/dl) | Depends on generics |
 | Code generation backend | Separate project after frontend |
@@ -97,18 +96,59 @@
 | Incremental compilation | Not needed for bootstrap compiler |
 | Implicit type conversions beyond numeric promotion | Explicit casts only, prevents surprise behavior |
 | Async/await | v0.2 spec feature |
+| Flex function realm checking | Depends on generics, deferred to v2+ |
 
 ## Traceability
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| *(populated during roadmap creation)* | | |
+| FOUND-01 | Phase 1 | Pending |
+| FOUND-02 | Phase 1 | Pending |
+| FOUND-03 | Phase 1 | Pending |
+| FOUND-04 | Phase 1 | Pending |
+| FOUND-05 | Phase 1 | Pending |
+| FOUND-06 | Phase 1 | Pending |
+| TYPE-01 | Phase 2 | Pending |
+| TYPE-02 | Phase 2 | Pending |
+| TYPE-03 | Phase 2 | Pending |
+| TYPE-04 | Phase 2 | Pending |
+| TYPE-05 | Phase 2 | Pending |
+| TYPE-06 | Phase 2 | Pending |
+| TYPE-07 | Phase 2 | Pending |
+| TYPE-08 | Phase 2 | Pending |
+| TYPE-09 | Phase 2 | Pending |
+| TYPE-10 | Phase 2 | Pending |
+| TYPE-11 | Phase 2 | Pending |
+| MATCH-01 | Phase 3 | Pending |
+| MATCH-02 | Phase 3 | Pending |
+| MATCH-03 | Phase 3 | Pending |
+| MATCH-04 | Phase 3 | Pending |
+| MATCH-05 | Phase 3 | Pending |
+| MATCH-06 | Phase 3 | Pending |
+| MATCH-07 | Phase 3 | Pending |
+| IFACE-01 | Phase 4 | Pending |
+| IFACE-02 | Phase 4 | Pending |
+| IFACE-03 | Phase 4 | Pending |
+| MOD-01 | Phase 5 | Pending |
+| MOD-02 | Phase 5 | Pending |
+| MOD-03 | Phase 5 | Pending |
+| MOD-04 | Phase 5 | Pending |
+| MOD-05 | Phase 5 | Pending |
+| REALM-01 | Phase 6 | Pending |
+| REALM-02 | Phase 6 | Pending |
+| REALM-03 | Phase 6 | Pending |
+| REALM-04 | Phase 6 | Pending |
+| TEST-01 | Phase 7 | Pending |
+| TEST-02 | Phase 7 | Pending |
+| TEST-03 | Phase 7 | Pending |
+| TEST-04 | Phase 7 | Pending |
+| TEST-05 | Phase 7 | Pending |
 
 **Coverage:**
-- v1 requirements: 38 total
-- Mapped to phases: 0
-- Unmapped: 38 ⚠️
+- v1 requirements: 37 total
+- Mapped to phases: 37
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-04-02*
-*Last updated: 2026-04-02 after initial definition*
+*Last updated: 2026-04-02 after roadmap creation*
