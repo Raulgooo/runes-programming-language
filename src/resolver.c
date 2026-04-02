@@ -152,15 +152,13 @@ static Symbol *find_symbol_in_path(Resolver *r, AstNode *path) {
     while (decl) {
       const char *name = get_node_name(decl);
       if (name && strcmp(name, seg->as.identifier.name) == 0) {
-        // Create a temporary symbol to return.
-        // NOTE: This is slightly risky if we don't copy the symbol into the
-        // table immediately.
-        static Symbol tmp;
-        tmp.name = name;
-        tmp.kind = get_node_sym_kind(decl);
-        tmp.node = decl;
-        tmp.is_pub = true;
-        current = &tmp;
+        // Arena-allocated symbol for module path lookup
+        Symbol *tmp = arena_alloc(r->st->arena, sizeof(Symbol));
+        tmp->name = name;
+        tmp->kind = get_node_sym_kind(decl);
+        tmp->node = decl;
+        tmp->is_pub = true;
+        current = tmp;
         found = true;
         break;
       }
