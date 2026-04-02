@@ -558,9 +558,30 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
                  expr->as.binary.right->kind == AST_INT_LITERAL ||
                  expr->as.binary.right->kind == AST_FLOAT_LITERAL);
             if (!has_literal) {
-              typechecker_error(tc, expr->line, expr->col,
-                  "Type mismatch in binary expression: '%s' and '%s' require explicit cast with 'as'",
-                  lty->as.primitive.name, rty->as.primitive.name);
+              const NumericTypeInfo *linfo = get_numeric_info(lty->as.primitive.name);
+              const NumericTypeInfo *rinfo = get_numeric_info(rty->as.primitive.name);
+              if (linfo && rinfo && linfo->is_signed == rinfo->is_signed && linfo->is_float == rinfo->is_float) {
+                // Same family: suggest widening to the higher-rank type
+                const char *wider = linfo->rank >= rinfo->rank ? lty->as.primitive.name : rty->as.primitive.name;
+                typechecker_error(tc, expr->line, expr->col,
+                    "Type mismatch: %s and %s. Use explicit cast: (%s as %s)",
+                    lty->as.primitive.name, rty->as.primitive.name,
+                    linfo->rank < rinfo->rank ? "left" : "right", wider);
+              } else if (linfo && rinfo && linfo->is_signed != rinfo->is_signed) {
+                // Mixed sign
+                typechecker_error(tc, expr->line, expr->col,
+                    "Type mismatch: %s and %s (mixed signed/unsigned). Use explicit cast with 'as'",
+                    lty->as.primitive.name, rty->as.primitive.name);
+              } else if (linfo && rinfo && linfo->is_float != rinfo->is_float) {
+                // Cross-family
+                typechecker_error(tc, expr->line, expr->col,
+                    "Type mismatch: %s and %s (cannot mix integer and float). Use explicit cast with 'as'",
+                    lty->as.primitive.name, rty->as.primitive.name);
+              } else {
+                typechecker_error(tc, expr->line, expr->col,
+                    "Type mismatch in binary expression: '%s' and '%s'",
+                    lty->as.primitive.name, rty->as.primitive.name);
+              }
               inferred = tc->tctx->type_error;
               break;
             }
@@ -1120,44 +1141,72 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
           typechecker_error(
               tc, node->line, node->col,
               "Variable initializer does not match declared type");
-        } else if (node->as.var_decl.init->kind == AST_INT_LITERAL &&
-                   decl_t->kind == TY_PRIMITIVE) {
-          // Basic Range Checking
-          unsigned long long val = node->as.var_decl.init->as.int_literal.value;
-          const char *tn = decl_t->as.primitive.name;
-          bool overflow = false;
-          if (strcmp(tn, "i8") == 0) {
-            if (val > 127)
-              overflow = true;
-          } else if (strcmp(tn, "u8") == 0) {
-            if (val > 255)
-              overflow = true;
-          } else if (strcmp(tn, "i16") == 0) {
-            if (val > 32767)
-              overflow = true;
-          } else if (strcmp(tn, "u16") == 0) {
-            if (val > 65535)
-              overflow = true;
-          } else if (strcmp(tn, "u32") == 0) {
-            if (val > 4294967295ULL)
-              overflow = true;
-          }
-          if (overflow) {
-            typechecker_error(tc, node->as.var_decl.init->line,
-                              node->as.var_decl.init->col,
-                              "Integer literal overflow for target type");
-          }
-        } else if (node->as.var_decl.init->kind == AST_FLOAT_LITERAL &&
-                   decl_t->kind == TY_PRIMITIVE) {
-          double val = node->as.var_decl.init->as.float_literal.value;
-          const char *tn = decl_t->as.primitive.name;
-          if (strcmp(tn, "f32") == 0) {
-            // Basic float range check:
-            // f32 is approx +/- 3.4e38
-            if (val > 3.40282347e38 || val < -3.40282347e38) {
-              typechecker_error(tc, node->as.var_decl.init->line,
-                                node->as.var_decl.init->col,
-                                "Float literal overflow for f32");
+        } else {
+          // Contextual literal typing with range checking (D-06, D-09)
+          AstNode *init = node->as.var_decl.init;
+          if (decl_t->kind == TY_PRIMITIVE) {
+            const NumericTypeInfo *info = get_numeric_info(decl_t->as.primitive.name);
+            if (info) {
+              bool is_negated_literal = false;
+              unsigned long long lit_val = 0;
+              bool is_int_literal = false;
+              bool is_float_literal = false;
+
+              if (init->kind == AST_INT_LITERAL) {
+                lit_val = init->as.int_literal.value;
+                is_int_literal = true;
+              } else if (init->kind == AST_UNARY_EXPR &&
+                         init->as.unary.op == TOKEN_MINUS &&
+                         init->as.unary.expr->kind == AST_INT_LITERAL) {
+                lit_val = init->as.unary.expr->as.int_literal.value;
+                is_negated_literal = true;
+                is_int_literal = true;
+              } else if (init->kind == AST_FLOAT_LITERAL) {
+                is_float_literal = true;
+              } else if (init->kind == AST_UNARY_EXPR &&
+                         init->as.unary.op == TOKEN_MINUS &&
+                         init->as.unary.expr->kind == AST_FLOAT_LITERAL) {
+                is_float_literal = true;
+              }
+
+              if (is_int_literal && !info->is_float) {
+                bool overflow = false;
+                if (is_negated_literal) {
+                  if (info->is_signed) {
+                    // For signed types: max negative magnitude is 2^(bits-1)
+                    unsigned long long max_neg = 1ULL << (info->bit_width - 1);
+                    overflow = (lit_val > max_neg);
+                  } else {
+                    // Negative value in unsigned type is always overflow
+                    overflow = true;
+                  }
+                } else {
+                  overflow = (lit_val > info->max_val);
+                  // Also check: unsigned literal assigned to signed type must fit in positive range
+                  if (!overflow && info->is_signed) {
+                    overflow = (lit_val > (unsigned long long)info->max_val);
+                  }
+                }
+                if (overflow) {
+                  typechecker_error(tc, init->line, init->col,
+                                    "Integer literal overflow for type '%s'",
+                                    info->name);
+                }
+              } else if (is_float_literal && info->is_float) {
+                // Float range check for f32
+                double val = 0.0;
+                if (init->kind == AST_FLOAT_LITERAL) {
+                  val = init->as.float_literal.value;
+                } else if (init->kind == AST_UNARY_EXPR) {
+                  val = init->as.unary.expr->as.float_literal.value;
+                }
+                if (strcmp(info->name, "f32") == 0) {
+                  if (val > 3.40282347e38 || val < -3.40282347e38) {
+                    typechecker_error(tc, init->line, init->col,
+                                      "Float literal overflow for f32");
+                  }
+                }
+              }
             }
           }
         }
