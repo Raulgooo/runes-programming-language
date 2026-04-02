@@ -50,13 +50,14 @@ Plans:
   3. Struct construction errors name the missing or extra fields; variant constructors reject wrong payload types; tuple access and destructuring are type-checked
   4. Const bindings reject reassignment; if/while conditions reject non-bool expressions; return types are verified on all code paths
   5. Schema inheritance chains are walked for field access (non-JSON aspects)
-**Plans:** 4 plans
+**Plans:** 5 plans
 
 Plans:
 - [ ] 02-01-PLAN.md -- Numeric type info table, cast-suggesting error messages, literal range checking with negation fusion
 - [x] 02-02-PLAN.md -- Struct missing-field detection, variant payload validation, const reassignment, bool strictness tests
 - [ ] 02-03-PLAN.md -- Tuple expression inference, cast expression handler, all-paths return analysis
 - [ ] 02-04-PLAN.md -- Schema declaration handling with parent field inheritance
+- [ ] 02-05-PLAN.md -- Tuple destructuring type annotation and count validation (gap closure)
 
 ### Phase 3: Pattern Matching
 **Goal**: Match expressions are fully validated -- exhaustiveness enforced, bindings correctly typed, arms consistent, guards and duplicates handled
@@ -120,7 +121,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Foundation Fixes | 4/4 | Complete | 2026-04-02 |
-| 2. Type System Completion | 1/4 | In progress | - |
+| 2. Type System Completion | 1/5 | In progress | - |
 | 3. Pattern Matching | 0/? | Not started | - |
 | 4. Interface System | 0/? | Not started | - |
 | 5. Module System | 0/? | Not started | - |
