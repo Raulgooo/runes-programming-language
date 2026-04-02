@@ -1,0 +1,16 @@
+-- Tests: TYPE-10 -- tuple type checking
+
+f test_tuple_construct() {
+  tup := (42, "hello")
+  i32 a, str b = tup
+}
+
+f test_tuple_multi() {
+  triple := (1, 2, 3)
+  i32 x, i32 y, i32 z = triple
+}
+
+f test_tuple_nested() {
+  pair := (true, 3.14)
+  bool flag, f64 val = pair
+}
