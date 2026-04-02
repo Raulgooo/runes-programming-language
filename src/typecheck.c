@@ -386,10 +386,24 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
         for (int i = 0; i < arm_count; i++) {
           arm_names[i] = a->as.variant_arm.name;
           if (a->as.variant_arm.fields) {
-            // ... (Simplified for v0.1)
-            arm_types[i] = tc->tctx->type_unknown;
+            // Resolve variant arm payload types
+            int field_count = 0;
+            AstNode *f = a->as.variant_arm.fields;
+            while (f) { field_count++; f = f->next; }
+
+            if (field_count == 1) {
+              arm_types[i] = typechecker_resolve_type_expr(tc, a->as.variant_arm.fields);
+            } else {
+              Type **field_ts = arena_alloc(tc->arena, sizeof(Type*) * field_count);
+              f = a->as.variant_arm.fields;
+              for (int j = 0; j < field_count; j++) {
+                field_ts[j] = typechecker_resolve_type_expr(tc, f);
+                f = f->next;
+              }
+              arm_types[i] = type_new_tuple(tc->tctx, field_ts, field_count);
+            }
           } else {
-            arm_types[i] = NULL;
+            arm_types[i] = NULL; // unit variant (no payload)
           }
           a = a->next;
         }
@@ -529,17 +543,36 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     case TOKEN_SLASH:
     case TOKEN_PERCENT:
       if (type_is_resolved(lty) && type_is_resolved(rty)) {
-        bool ok = type_is_assignable(lty, rty) || type_is_assignable(rty, lty);
-        // Allow pointer arithmetic: pointer + integer or pointer - integer
-        if (!ok) {
-          if ((lty->kind == TY_POINTER && rty->kind == TY_PRIMITIVE) ||
-              (rty->kind == TY_POINTER && lty->kind == TY_PRIMITIVE)) {
-            ok = true;
+        // Allow pointer arithmetic: pointer +/- integer
+        if ((lty->kind == TY_POINTER && rty->kind == TY_PRIMITIVE) ||
+            (rty->kind == TY_POINTER && lty->kind == TY_PRIMITIVE)) {
+          // pointer arithmetic is ok
+        } else if (lty->kind == TY_PRIMITIVE && rty->kind == TY_PRIMITIVE) {
+          if (!type_equals(lty, rty)) {
+            // D-04: Strict type checking for binary expressions
+            // Allow literal coercion: if either operand is a literal,
+            // it can adapt to the other's type (e.g., u64 * 0x...)
+            bool has_literal =
+                (expr->as.binary.left->kind == AST_INT_LITERAL ||
+                 expr->as.binary.left->kind == AST_FLOAT_LITERAL ||
+                 expr->as.binary.right->kind == AST_INT_LITERAL ||
+                 expr->as.binary.right->kind == AST_FLOAT_LITERAL);
+            if (!has_literal) {
+              typechecker_error(tc, expr->line, expr->col,
+                  "Type mismatch in binary expression: '%s' and '%s' require explicit cast with 'as'",
+                  lty->as.primitive.name, rty->as.primitive.name);
+              inferred = tc->tctx->type_error;
+              break;
+            }
           }
-        }
-        if (!ok) {
-          typechecker_error(tc, expr->line, expr->col,
-                            "Type mismatch in arithmetic operation");
+        } else {
+          bool ok = type_is_assignable(lty, rty) || type_is_assignable(rty, lty);
+          if (!ok) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Type mismatch in arithmetic operation");
+            inferred = tc->tctx->type_error;
+            break;
+          }
         }
       }
       inferred = lty;
@@ -1446,6 +1479,120 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   }
 }
 
+// D-03: Post-check walk to detect TY_UNKNOWN surviving type checking
+static void check_unresolved_types(TypeChecker *tc, AstNode *node) {
+  if (!node) return;
+
+  // Only report on nodes that went through type inference (have resolved_type set)
+  if (node->resolved_type && node->resolved_type->kind == TY_UNKNOWN) {
+    fprintf(stderr, "internal error: unresolved type at line %u — please report this bug\n",
+            node->line);
+    tc->had_error = true;
+    tc->error_count++;
+  }
+
+  // Recurse into children based on node kind
+  switch (node->kind) {
+  case AST_PROGRAM:
+    check_unresolved_types(tc, node->as.program.declarations);
+    break;
+  case AST_FUNC_DECL:
+    check_unresolved_types(tc, node->as.func_decl.params);
+    check_unresolved_types(tc, node->as.func_decl.body);
+    break;
+  case AST_VAR_DECL:
+    check_unresolved_types(tc, node->as.var_decl.init);
+    break;
+  case AST_BLOCK:
+    check_unresolved_types(tc, node->as.block.statements);
+    break;
+  case AST_RETURN_STMT:
+    check_unresolved_types(tc, node->as.return_stmt.value);
+    break;
+  case AST_IF_STMT:
+    check_unresolved_types(tc, node->as.if_stmt.condition);
+    check_unresolved_types(tc, node->as.if_stmt.then_branch);
+    check_unresolved_types(tc, node->as.if_stmt.else_branch);
+    break;
+  case AST_WHILE_STMT:
+    check_unresolved_types(tc, node->as.while_stmt.condition);
+    check_unresolved_types(tc, node->as.while_stmt.body);
+    break;
+  case AST_FOR_STMT:
+    check_unresolved_types(tc, node->as.for_stmt.iter);
+    check_unresolved_types(tc, node->as.for_stmt.body);
+    break;
+  case AST_LOOP_STMT:
+    check_unresolved_types(tc, node->as.loop_stmt.body);
+    break;
+  case AST_MATCH_STMT:
+    check_unresolved_types(tc, node->as.match_stmt.subject);
+    check_unresolved_types(tc, node->as.match_stmt.arms);
+    break;
+  case AST_MATCH_ARM:
+    check_unresolved_types(tc, node->as.match_arm.pattern);
+    check_unresolved_types(tc, node->as.match_arm.guard);
+    check_unresolved_types(tc, node->as.match_arm.body);
+    break;
+  case AST_UNSAFE_BLOCK:
+    check_unresolved_types(tc, node->as.unsafe_block.body);
+    break;
+  case AST_BINARY_EXPR:
+    check_unresolved_types(tc, node->as.binary.left);
+    check_unresolved_types(tc, node->as.binary.right);
+    break;
+  case AST_UNARY_EXPR:
+    check_unresolved_types(tc, node->as.unary.expr);
+    break;
+  case AST_ASSIGN:
+    check_unresolved_types(tc, node->as.assign.target);
+    check_unresolved_types(tc, node->as.assign.value);
+    break;
+  case AST_CALL_EXPR:
+    check_unresolved_types(tc, node->as.call.callee);
+    check_unresolved_types(tc, node->as.call.args);
+    break;
+  case AST_INDEX_EXPR:
+    check_unresolved_types(tc, node->as.index.target);
+    check_unresolved_types(tc, node->as.index.index);
+    break;
+  case AST_FIELD_EXPR:
+    check_unresolved_types(tc, node->as.field.target);
+    break;
+  case AST_CAST_EXPR:
+    check_unresolved_types(tc, node->as.cast.expr);
+    break;
+  case AST_TRY_EXPR:
+    check_unresolved_types(tc, node->as.try_expr.expr);
+    break;
+  case AST_CATCH_EXPR:
+    check_unresolved_types(tc, node->as.catch_expr.expr);
+    check_unresolved_types(tc, node->as.catch_expr.handler);
+    break;
+  case AST_ARRAY_LITERAL:
+    check_unresolved_types(tc, node->as.array_literal.elems);
+    break;
+  case AST_TUPLE_EXPR:
+    check_unresolved_types(tc, node->as.tuple_expr.elems);
+    break;
+  case AST_RANGE_EXPR:
+    check_unresolved_types(tc, node->as.range_expr.start);
+    check_unresolved_types(tc, node->as.range_expr.end);
+    break;
+  case AST_METHOD_DECL:
+    check_unresolved_types(tc, node->as.method_decl.methods);
+    break;
+  case AST_MOD_DECL:
+    check_unresolved_types(tc, node->as.mod_decl.declarations);
+    break;
+  default:
+    break;
+  }
+
+  // Walk linked list siblings
+  check_unresolved_types(tc, node->next);
+}
+
 void typechecker_check(TypeChecker *tc, AstNode *program) {
   if (!program || program->kind != AST_PROGRAM)
     return;
@@ -1457,4 +1604,10 @@ void typechecker_check(TypeChecker *tc, AstNode *program) {
     typechecker_check_node(tc, decl);
     decl = decl->next;
   }
+
+  // D-03: Post-check validation — detect TY_UNKNOWN surviving type checking.
+  // Infrastructure ready; enabled once all expression types are fully handled
+  // to avoid false positives on legitimately unhandled node kinds.
+  // Usage: check_unresolved_types(tc, program);
+  (void)check_unresolved_types; // suppress unused warning
 }
