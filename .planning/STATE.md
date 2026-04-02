@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 01-03-PLAN.md
-last_updated: "2026-04-02T16:59:48.730Z"
+stopped_at: Completed 01-04-PLAN.md
+last_updated: "2026-04-02T17:37:37.073Z"
 last_activity: 2026-04-02
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 3
-  completed_plans: 3
+  total_plans: 4
+  completed_plans: 4
   percent: 0
 ---
 
@@ -55,6 +55,7 @@ Progress: [..........] 0%
 | Phase 01 P02 | 3min | 2 tasks | 4 files |
 | Phase 01 P01 | 6min | 2 tasks | 3 files |
 | Phase 01 P03 | 8min | 3 tasks | 6 files |
+| Phase 01 P04 | 5min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -73,6 +74,7 @@ Recent decisions affecting current work:
 - [Phase 01]: type_is_resolved() helper established as canonical guard pattern in typecheck.c
 - [Phase 01]: Literal coercion in binary expressions: allow int/float literals to widen to matching types for ergonomics while enforcing strict type equality between typed variables
 - [Phase 01]: ICE walk infrastructure defined but gated until type checker handles all expression types to avoid false positives
+- [Phase 01]: Narrowed ICE whitelist to literal kinds only — identifiers, calls, binary, unary, assign, and field expressions legitimately return TY_UNKNOWN
 
 ### Pending Todos
 
@@ -84,6 +86,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-02T16:59:48.719Z
-Stopped at: Completed 01-03-PLAN.md
+Last session: 2026-04-02T17:37:37.059Z
+Stopped at: Completed 01-04-PLAN.md
 Resume file: None

@@ -38,7 +38,7 @@ Plans:
 - [x] 01-01-PLAN.md -- TY_INFER_ERROR poison type and typecheck.c guard migration
 - [x] 01-02-PLAN.md -- Static Symbol fix, compiler warnings, debug guards, Makefile
 - [x] 01-03-PLAN.md -- Variant payloads, binary expr strictness, test infrastructure and fixes
-- [ ] 01-04-PLAN.md -- Activate ICE walk with whitelist guard (gap closure)
+- [x] 01-04-PLAN.md -- Activate ICE walk with whitelist guard (gap closure)
 
 ### Phase 2: Type System Completion
 **Goal**: All numeric operations, literal assignments, struct/variant/tuple constructions, and control flow expressions type-check correctly per spec v0.1
