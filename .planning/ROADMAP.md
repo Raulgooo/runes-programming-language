@@ -35,7 +35,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Plans:** 3 plans
 
 Plans:
-- [ ] 01-01-PLAN.md -- TY_INFER_ERROR poison type and typecheck.c guard migration
+- [x] 01-01-PLAN.md -- TY_INFER_ERROR poison type and typecheck.c guard migration
 - [x] 01-02-PLAN.md -- Static Symbol fix, compiler warnings, debug guards, Makefile
 - [ ] 01-03-PLAN.md -- Variant payloads, binary expr strictness, test infrastructure and fixes
 
