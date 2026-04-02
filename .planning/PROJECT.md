@@ -23,10 +23,15 @@ Every valid Runes program (per spec v0.1, excluding deprecated features) passes 
 - ✓ Static Symbol corruption in resolver fixed (arena allocation); zero compiler warnings — Validated in Phase 1: Foundation Fixes
 - ✓ Variant arm payload types fully resolved; binary expression strict type checking enforced — Validated in Phase 1: Foundation Fixes
 - ✓ Test infrastructure: expected-failure support in tester.bash; all existing tests pass (27 normal + 5 expected-failure) — Validated in Phase 1: Foundation Fixes
+- ✓ Numeric type strictness: all mixed-width/mixed-sign/float-int operations rejected with cast-direction suggestions — Validated in Phase 2: Type System Completion
+- ✓ Literal contextual typing: u8 x = 255 works, u8 x = 256 overflows, negation fusion (i8 x = -128) — Validated in Phase 2: Type System Completion
+- ✓ Struct/variant/tuple validation: missing-field detection, extra-field errors, payload type checking, tuple destructuring with annotation validation — Validated in Phase 2: Type System Completion
+- ✓ Control flow strictness: const reassignment errors, bool-only conditions, all-paths return analysis — Validated in Phase 2: Type System Completion
+- ✓ Schema inheritance chain walking for field access — Validated in Phase 2: Type System Completion
 
 ### Active
 
-- [ ] Complete type checker: type promotion rules (i32→i64, etc.), interface satisfaction checking, full struct field lookup in patterns
+- [ ] Complete type checker: interface satisfaction checking, full struct field lookup in patterns
 - [ ] Complete type checker: exhaustiveness checking for match expressions
 - [ ] Complete resolver: cross-file module resolution, visibility enforcement (pub/private), cyclic dependency detection, proper use-aliasing
 - [ ] Implement realm checker as proper validation pass — lifetime/scope-exit enforcement, copy-type auto-escape validation, region cleanup guarantees
@@ -51,7 +56,7 @@ Every valid Runes program (per spec v0.1, excluding deprecated features) passes 
 - **Spec**: `docs/specv0_1.md` — the authoritative language reference
 - **Type checker guide**: `type_checker_guide1.md` — implementation roadmap for type checking phases
 - **Codebase map**: `.planning/codebase/` — 7 documents covering architecture, stack, conventions, etc.
-- **Test suite**: `src/tests/tester.bash` runs all `.runes` samples through the compiler with prelude; 32 tests pass (27 normal + 5 expected-failure), zero failures
+- **Test suite**: `src/tests/tester.bash` runs all `.runes` samples through the compiler with prelude; 42 tests pass (30 normal + 12 expected-failure), zero failures
 - **Memory model**: Arena allocator exclusively — no malloc in compiler logic, no manual freeing
 - **Naming convention**: Module-prefixed functions (`lexer_*`, `parser_*`, `typechecker_*`, `resolver_*`), `ast_new_*` constructors, UPPERCASE constants
 
@@ -90,4 +95,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-02 after Phase 1: Foundation Fixes completion*
+*Last updated: 2026-04-02 after Phase 2: Type System Completion*
