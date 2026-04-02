@@ -53,10 +53,10 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 02-01-PLAN.md -- Numeric type info table, cast-suggesting error messages, literal range checking with negation fusion
+- [x] 02-01-PLAN.md -- Numeric type info table, cast-suggesting error messages, literal range checking with negation fusion
 - [x] 02-02-PLAN.md -- Struct missing-field detection, variant payload validation, const reassignment, bool strictness tests
-- [ ] 02-03-PLAN.md -- Tuple expression inference, cast expression handler, all-paths return analysis
-- [ ] 02-04-PLAN.md -- Schema declaration handling with parent field inheritance
+- [x] 02-03-PLAN.md -- Tuple expression inference, cast expression handler, all-paths return analysis
+- [x] 02-04-PLAN.md -- Schema declaration handling with parent field inheritance
 
 ### Phase 3: Pattern Matching
 **Goal**: Match expressions are fully validated -- exhaustiveness enforced, bindings correctly typed, arms consistent, guards and duplicates handled

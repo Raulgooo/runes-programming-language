@@ -25,7 +25,7 @@
 - [ ] **TYPE-07**: Return type verified on all code paths — named return variable properly typed and assigned
 - [ ] **TYPE-08**: Const correctness enforced — const bindings cannot be reassigned
 - [ ] **TYPE-09**: Boolean strictness — conditions in if/while must be bool, no implicit truthiness
-- [ ] **TYPE-10**: Tuple type checking complete — construction, destructuring, field access, return position
+- [x] **TYPE-10**: Tuple type checking complete — construction, destructuring, field access, return position
 - [x] **TYPE-11**: Schema inheritance chain walked — derived schema fields accessible, inheritance validated (non-JSON aspects only)
 
 ### Pattern Matching
@@ -117,7 +117,7 @@
 | TYPE-07 | Phase 2 | Pending |
 | TYPE-08 | Phase 2 | Pending |
 | TYPE-09 | Phase 2 | Pending |
-| TYPE-10 | Phase 2 | Pending |
+| TYPE-10 | Phase 2 | Complete |
 | TYPE-11 | Phase 2 | Complete |
 | MATCH-01 | Phase 3 | Pending |
 | MATCH-02 | Phase 3 | Pending |
