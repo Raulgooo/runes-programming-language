@@ -24,7 +24,8 @@ typedef enum {
   TY_VARIANT,   // type Color = | Red | Green | RGB(u8,u8,u8)
   TY_INTERFACE, // interface Drawable { ... }
   TY_ERROR,     // error MathError = { | DivByZero | Overflow }
-  TY_UNKNOWN,   // pending
+  TY_UNKNOWN,     // pending inference -- not yet resolved
+  TY_INFER_ERROR, // inference failed, error already reported (poison type)
 } SemTypeKind;
 
 typedef struct Type Type;
@@ -136,6 +137,7 @@ typedef struct {
 
   // Singletons especiales
   Type *type_unknown;
+  Type *type_error;   // singleton for TY_INFER_ERROR (poison)
 } TypeContext;
 
 void type_context_init(TypeContext *ctx, Arena *arena);

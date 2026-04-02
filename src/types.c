@@ -22,6 +22,9 @@ void type_context_init(TypeContext *ctx, Arena *arena) {
 
   ctx->type_unknown = arena_alloc(arena, sizeof(Type));
   ctx->type_unknown->kind = TY_UNKNOWN;
+
+  ctx->type_error = arena_alloc(arena, sizeof(Type));
+  ctx->type_error->kind = TY_INFER_ERROR;
 }
 
 Type *type_new_primitive(TypeContext *ctx, const char *name) {
@@ -104,6 +107,8 @@ bool type_equals(Type *a, Type *b) {
     return true;
   if (!a || !b)
     return false;
+  if (a->kind == TY_INFER_ERROR || b->kind == TY_INFER_ERROR)
+    return true;  // poison: suppress cascading errors (per D-02)
   if (a->kind != b->kind)
     return false;
 
@@ -159,6 +164,9 @@ bool type_equals(Type *a, Type *b) {
 
   case TY_UNKNOWN:
     return true;
+
+  case TY_INFER_ERROR:
+    return true;  // poison: handled above, but satisfy switch exhaustiveness
   }
 
   return false;
@@ -169,6 +177,9 @@ bool type_is_assignable(Type *target, Type *source) {
     return true;
   if (!target || !source)
     return false;
+
+  if (target->kind == TY_INFER_ERROR || source->kind == TY_INFER_ERROR)
+    return true;  // poison: suppress cascading errors (per D-02)
 
   if (target->kind == TY_UNKNOWN || source->kind == TY_UNKNOWN) {
     return true;
@@ -218,6 +229,9 @@ bool type_is_comparable(Type *a, Type *b) {
     return true;
   if (!a || !b)
     return false;
+
+  if (a->kind == TY_INFER_ERROR || b->kind == TY_INFER_ERROR)
+    return true;  // poison: suppress cascading errors (per D-02)
 
   if (a->kind == TY_UNKNOWN || b->kind == TY_UNKNOWN) {
     return true;
