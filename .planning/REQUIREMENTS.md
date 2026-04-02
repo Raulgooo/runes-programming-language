@@ -8,10 +8,10 @@
 ### Foundation
 
 - [ ] **FOUND-01**: TY_UNKNOWN/TY_ERROR split — failed type inference produces TY_ERROR (suppresses cascading), TY_UNKNOWN reaching validation is an internal compiler error
-- [ ] **FOUND-02**: Static Symbol bug in resolver fixed — module path resolution uses arena-allocated symbols instead of static variable
+- [x] **FOUND-02**: Static Symbol bug in resolver fixed — module path resolution uses arena-allocated symbols instead of static variable
 - [ ] **FOUND-03**: Variant arm payload types fully resolved — every variant constructor has a concrete payload type, not TY_UNKNOWN
 - [ ] **FOUND-04**: Binary expressions infer correct result type via type promotion, not always left operand
-- [ ] **FOUND-05**: All existing compiler warnings fixed (sign comparison, unused variables)
+- [x] **FOUND-05**: All existing compiler warnings fixed (sign comparison, unused variables)
 - [ ] **FOUND-06**: All 3 genuine test failures fixed (float_range_tests, test_type_safety false positives, 08_schema_json deprecated gracefully)
 
 ### Type System
@@ -103,10 +103,10 @@
 | Requirement | Phase | Status |
 |-------------|-------|--------|
 | FOUND-01 | Phase 1 | Pending |
-| FOUND-02 | Phase 1 | Pending |
+| FOUND-02 | Phase 1 | Complete |
 | FOUND-03 | Phase 1 | Pending |
 | FOUND-04 | Phase 1 | Pending |
-| FOUND-05 | Phase 1 | Pending |
+| FOUND-05 | Phase 1 | Complete |
 | FOUND-06 | Phase 1 | Pending |
 | TYPE-01 | Phase 2 | Pending |
 | TYPE-02 | Phase 2 | Pending |
