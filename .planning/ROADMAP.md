@@ -32,7 +32,12 @@ Decimal phases appear between their surrounding integers in numeric order.
   3. Every variant constructor has a concrete payload type after resolution (no TY_UNKNOWN payloads)
   4. Binary expression `i32 + i64` infers i64 (not silently i32); type promotion determines result type
   5. All 32 existing tests pass (the 3 genuine failures fixed, 2 expected-failure tests handled correctly), zero compiler warnings
-**Plans**: TBD
+**Plans:** 3 plans
+
+Plans:
+- [ ] 01-01-PLAN.md -- TY_INFER_ERROR poison type and typecheck.c guard migration
+- [ ] 01-02-PLAN.md -- Static Symbol fix, compiler warnings, debug guards, Makefile
+- [ ] 01-03-PLAN.md -- Variant payloads, binary expr strictness, test infrastructure and fixes
 
 ### Phase 2: Type System Completion
 **Goal**: All numeric operations, literal assignments, struct/variant/tuple constructions, and control flow expressions type-check correctly per spec v0.1
@@ -107,7 +112,7 @@ Phases execute in numeric order: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Foundation Fixes | 0/? | Not started | - |
+| 1. Foundation Fixes | 0/3 | Planning complete | - |
 | 2. Type System Completion | 0/? | Not started | - |
 | 3. Pattern Matching | 0/? | Not started | - |
 | 4. Interface System | 0/? | Not started | - |
