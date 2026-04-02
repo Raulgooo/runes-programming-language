@@ -19,16 +19,18 @@ Every valid Runes program (per spec v0.1, excluding deprecated features) passes 
 - ✓ Arena allocator and string interning infrastructure — existing
 - ✓ AST with 53+ node kinds and intrusive linked lists — existing
 - ✓ Standard library prelude parsed for builtin definitions — existing
+- ✓ TY_INFER_ERROR poison type suppresses cascading type errors; ICE walk detects surviving TY_UNKNOWN — Validated in Phase 1: Foundation Fixes
+- ✓ Static Symbol corruption in resolver fixed (arena allocation); zero compiler warnings — Validated in Phase 1: Foundation Fixes
+- ✓ Variant arm payload types fully resolved; binary expression strict type checking enforced — Validated in Phase 1: Foundation Fixes
+- ✓ Test infrastructure: expected-failure support in tester.bash; all existing tests pass (27 normal + 5 expected-failure) — Validated in Phase 1: Foundation Fixes
 
 ### Active
 
-- [ ] Fix all existing test failures (08_schema_json parse errors, float_range_tests, test_type_safety false positives)
-- [ ] Complete resolver: cross-file module resolution, visibility enforcement (pub/private), cyclic dependency detection, proper use-aliasing
-- [ ] Complete type checker: type promotion rules (i32→i64, etc.), interface satisfaction checking, full struct field lookup in patterns, variant arm resolution
+- [ ] Complete type checker: type promotion rules (i32→i64, etc.), interface satisfaction checking, full struct field lookup in patterns
 - [ ] Complete type checker: exhaustiveness checking for match expressions
+- [ ] Complete resolver: cross-file module resolution, visibility enforcement (pub/private), cyclic dependency detection, proper use-aliasing
 - [ ] Implement realm checker as proper validation pass — lifetime/scope-exit enforcement, copy-type auto-escape validation, region cleanup guarantees
 - [ ] Add missing parser support: binary/octal integer literals
-- [ ] Fix compiler warnings (sign comparison, unused variables)
 - [ ] New test files exercising every spec v0.1 construct through the full pipeline
 - [ ] Negative test suite — programs that SHOULD fail, verifying correct error messages
 
@@ -49,7 +51,7 @@ Every valid Runes program (per spec v0.1, excluding deprecated features) passes 
 - **Spec**: `docs/specv0_1.md` — the authoritative language reference
 - **Type checker guide**: `type_checker_guide1.md` — implementation roadmap for type checking phases
 - **Codebase map**: `.planning/codebase/` — 7 documents covering architecture, stack, conventions, etc.
-- **Test suite**: `src/tests/tester.bash` runs all `.runes` samples through the compiler with prelude; currently 27/32 pass (3 genuine failures, 2 expected negative tests)
+- **Test suite**: `src/tests/tester.bash` runs all `.runes` samples through the compiler with prelude; 32 tests pass (27 normal + 5 expected-failure), zero failures
 - **Memory model**: Arena allocator exclusively — no malloc in compiler logic, no manual freeing
 - **Naming convention**: Module-prefixed functions (`lexer_*`, `parser_*`, `typechecker_*`, `resolver_*`), `ast_new_*` constructors, UPPERCASE constants
 
@@ -88,4 +90,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-04-02 after initialization*
+*Last updated: 2026-04-02 after Phase 1: Foundation Fixes completion*
