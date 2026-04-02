@@ -1479,12 +1479,32 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   }
 }
 
+// D-03: Whitelist of expression kinds where TY_UNKNOWN is always a bug.
+// Literal kinds always resolve to a concrete primitive type — if they end up
+// TY_UNKNOWN something went wrong.  Other expression kinds (identifiers,
+// calls, binary, etc.) may legitimately return TY_UNKNOWN when their operands
+// have no type info (e.g., extern symbols without type annotations).  Those
+// will be promoted to the whitelist as the type checker coverage expands.
+static bool should_have_resolved_type(AstKind kind) {
+  switch (kind) {
+  case AST_INT_LITERAL:
+  case AST_FLOAT_LITERAL:
+  case AST_STRING_LITERAL:
+  case AST_BOOL_LITERAL:
+  case AST_CHAR_LITERAL:
+    return true;
+  default:
+    return false;
+  }
+}
+
 // D-03: Post-check walk to detect TY_UNKNOWN surviving type checking
 static void check_unresolved_types(TypeChecker *tc, AstNode *node) {
   if (!node) return;
 
   // Only report on nodes that went through type inference (have resolved_type set)
-  if (node->resolved_type && node->resolved_type->kind == TY_UNKNOWN) {
+  if (node->resolved_type && node->resolved_type->kind == TY_UNKNOWN
+      && should_have_resolved_type(node->kind)) {
     fprintf(stderr, "internal error: unresolved type at line %u — please report this bug\n",
             node->line);
     tc->had_error = true;
@@ -1606,8 +1626,7 @@ void typechecker_check(TypeChecker *tc, AstNode *program) {
   }
 
   // D-03: Post-check validation — detect TY_UNKNOWN surviving type checking.
-  // Infrastructure ready; enabled once all expression types are fully handled
-  // to avoid false positives on legitimately unhandled node kinds.
-  // Usage: check_unresolved_types(tc, program);
-  (void)check_unresolved_types; // suppress unused warning
+  // Only ICEs on expression kinds that have handlers in typechecker_infer_expr;
+  // unhandled kinds legitimately remain TY_UNKNOWN until their handlers are added.
+  check_unresolved_types(tc, program);
 }
