@@ -215,7 +215,7 @@ pub dynamic f kernel_main() {
     unsafe { asm { "mov %rax, %cr3" } }
 
     gc f run_userspace() {
-        Task t = Task(id: 1, name: "shell")
+        Task t = Task(id: 1, name: "shell", state: 0)
         scheduler.add(t)
     }
 

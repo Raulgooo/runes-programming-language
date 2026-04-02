@@ -632,6 +632,17 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
   }
 
   case AST_ASSIGN: {
+    // Const reassignment check
+    if (expr->as.assign.target->kind == AST_IDENTIFIER) {
+      Symbol *sym = symbol_table_lookup(tc->st,
+          expr->as.assign.target->as.identifier.name);
+      if (sym && sym->node && sym->node->kind == AST_VAR_DECL &&
+          sym->node->as.var_decl.is_const) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Cannot reassign constant '%s'",
+                          expr->as.assign.target->as.identifier.name);
+      }
+    }
     Type *lty = typechecker_infer_expr(tc, expr->as.assign.target);
     Type *rty = typechecker_infer_expr(tc, expr->as.assign.value);
     if (type_is_resolved(lty) && type_is_resolved(rty)) {
@@ -719,6 +730,13 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     } else if (callee_t->kind == TY_STRUCT) {
       // Constructor: Vec2(x: 1.0, y: 2.0)
       inferred = callee_t;
+
+      // Track which fields are provided for missing-field detection
+      bool *field_provided = arena_alloc(tc->arena,
+          sizeof(bool) * (callee_t->as.struct_t.field_count + 1));
+      memset(field_provided, 0,
+             sizeof(bool) * (callee_t->as.struct_t.field_count + 1));
+
       AstNode *arg = expr->as.call.args;
       while (arg) {
         if (arg->kind == AST_NAMED_ARG) {
@@ -728,6 +746,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
           for (int i = 0; i < callee_t->as.struct_t.field_count; i++) {
             if (strcmp(callee_t->as.struct_t.field_names[i], name) == 0) {
               found = true;
+              field_provided[i] = true;
               if (!type_is_assignable(callee_t->as.struct_t.field_types[i],
                                       val_t)) {
                 typechecker_error(tc, arg->line, arg->col,
@@ -750,10 +769,112 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         }
         arg = arg->next;
       }
+
+      // Check for missing required fields (those without defaults)
+      Symbol *type_sym = symbol_table_lookup(tc->st,
+                                             callee_t->as.struct_t.name);
+      AstNode *field_node = (type_sym && type_sym->node &&
+                             type_sym->node->kind == AST_TYPE_DECL)
+          ? type_sym->node->as.type_decl.fields : NULL;
+      for (int i = 0; i < callee_t->as.struct_t.field_count; i++) {
+        if (!field_provided[i]) {
+          bool has_default = (field_node &&
+                              field_node->as.field_decl.default_val != NULL);
+          if (!has_default) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Struct '%s' missing required field: '%s'",
+                              callee_t->as.struct_t.name,
+                              callee_t->as.struct_t.field_names[i]);
+          }
+        }
+        if (field_node) field_node = field_node->next;
+      }
     } else if (callee_t->kind == TY_VARIANT) {
       // Variant arm constructor: RGB(255, 0, 0)
       inferred = callee_t;
-      // TODO: Full variant arm resolution
+
+      // Determine which variant arm is being constructed
+      const char *arm_name = NULL;
+      if (expr->as.call.callee->kind == AST_IDENTIFIER) {
+        arm_name = expr->as.call.callee->as.identifier.name;
+      } else if (expr->as.call.callee->kind == AST_FIELD_EXPR) {
+        arm_name = expr->as.call.callee->as.field.field;
+      }
+
+      if (arm_name) {
+        for (int i = 0; i < callee_t->as.variant.arm_count; i++) {
+          if (strcmp(callee_t->as.variant.arm_names[i], arm_name) == 0) {
+            Type *expected_payload = callee_t->as.variant.arm_types[i];
+            // Count actual args
+            int actual_count = 0;
+            AstNode *a = expr->as.call.args;
+            while (a) { actual_count++; a = a->next; }
+
+            if (!expected_payload && actual_count > 0) {
+              typechecker_error(tc, expr->line, expr->col,
+                                "Variant arm '%s' takes no payload, got %d "
+                                "argument(s)", arm_name, actual_count);
+            } else if (expected_payload &&
+                       expected_payload->kind == TY_TUPLE) {
+              // Multi-field payload
+              if (actual_count != expected_payload->as.tuple.count) {
+                typechecker_error(tc, expr->line, expr->col,
+                                  "Variant arm '%s' expects %d payload "
+                                  "value(s), got %d", arm_name,
+                                  expected_payload->as.tuple.count,
+                                  actual_count);
+              }
+              a = expr->as.call.args;
+              for (int j = 0;
+                   j < expected_payload->as.tuple.count && a; j++) {
+                Type *arg_t = typechecker_infer_expr(tc, a);
+                if (type_is_resolved(arg_t) &&
+                    !type_is_assignable(
+                        expected_payload->as.tuple.elems[j], arg_t)) {
+                  typechecker_error(tc, a->line, a->col,
+                      "Variant arm '%s' expects payload type %s, got %s",
+                      arm_name,
+                      expected_payload->as.tuple.elems[j]->kind ==
+                          TY_PRIMITIVE
+                        ? expected_payload->as.tuple.elems[j]
+                              ->as.primitive.name : "?",
+                      arg_t->kind == TY_PRIMITIVE
+                        ? arg_t->as.primitive.name : "?");
+                }
+                a = a->next;
+              }
+            } else if (expected_payload) {
+              // Single-field payload
+              if (actual_count != 1) {
+                typechecker_error(tc, expr->line, expr->col,
+                    "Variant arm '%s' expects 1 payload value, got %d",
+                    arm_name, actual_count);
+              }
+              if (actual_count >= 1) {
+                Type *arg_t = typechecker_infer_expr(tc,
+                                                     expr->as.call.args);
+                if (type_is_resolved(arg_t) &&
+                    type_is_resolved(expected_payload) &&
+                    !type_is_assignable(expected_payload, arg_t)) {
+                  typechecker_error(tc, expr->as.call.args->line,
+                      expr->as.call.args->col,
+                      "Variant arm '%s' expects payload type %s, got %s",
+                      arm_name,
+                      expected_payload->kind == TY_PRIMITIVE
+                        ? expected_payload->as.primitive.name : "?",
+                      arg_t->kind == TY_PRIMITIVE
+                        ? arg_t->as.primitive.name : "?");
+                }
+              }
+            }
+            break;
+          }
+        }
+      } else {
+        // Cannot determine arm name, infer args but skip validation
+        AstNode *a = expr->as.call.args;
+        while (a) { typechecker_infer_expr(tc, a); a = a->next; }
+      }
     } else if (type_is_resolved(callee_t)) {
       typechecker_error(tc, expr->line, expr->col,
                         "Cannot call non-function type");

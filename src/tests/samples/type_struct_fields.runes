@@ -1,0 +1,11 @@
+-- EXPECT FAIL: missing required field
+-- Tests: TYPE-05 -- struct field validation
+
+type Point = {
+  x: f64,
+  y: f64,
+}
+
+f test_missing_field() {
+  Point p = Point(x: 1.0)
+}
