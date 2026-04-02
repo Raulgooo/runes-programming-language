@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Tuple element
+-- Tests: TYPE-10 -- tuple destructuring type validation
+
+f test_type_mismatch() {
+  i32 a, i32 b = (42, "hello")
+}
