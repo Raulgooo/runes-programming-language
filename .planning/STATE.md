@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
-status: executing
-stopped_at: Completed 01-01-PLAN.md
-last_updated: "2026-04-02T16:47:44.423Z"
+status: verifying
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-04-02T16:59:48.730Z"
 last_activity: 2026-04-02
 progress:
   total_phases: 7
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 3
-  completed_plans: 2
+  completed_plans: 3
   percent: 0
 ---
 
@@ -27,7 +27,7 @@ See: .planning/PROJECT.md (updated 2026-04-02)
 
 Phase: 01 (foundation-fixes) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-04-02
 
 Progress: [..........] 0%
@@ -54,6 +54,7 @@ Progress: [..........] 0%
 *Updated after each plan completion*
 | Phase 01 P02 | 3min | 2 tasks | 4 files |
 | Phase 01 P01 | 6min | 2 tasks | 3 files |
+| Phase 01 P03 | 8min | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -70,6 +71,8 @@ Recent decisions affecting current work:
 - [Phase 01]: Cast p->current.line to uint32_t at comparison sites to avoid cascading Token struct changes
 - [Phase 01]: TY_INFER_ERROR poison type added as prerequisite for all type system fixes
 - [Phase 01]: type_is_resolved() helper established as canonical guard pattern in typecheck.c
+- [Phase 01]: Literal coercion in binary expressions: allow int/float literals to widen to matching types for ergonomics while enforcing strict type equality between typed variables
+- [Phase 01]: ICE walk infrastructure defined but gated until type checker handles all expression types to avoid false positives
 
 ### Pending Todos
 
@@ -81,6 +84,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-02T16:47:44.384Z
-Stopped at: Completed 01-01-PLAN.md
+Last session: 2026-04-02T16:59:48.719Z
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None
