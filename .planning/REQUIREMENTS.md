@@ -22,11 +22,11 @@
 - [ ] **TYPE-04**: Negative literal overflow handled correctly — -128 accepted as i8, unary negation context respected
 - [ ] **TYPE-05**: Struct field type checking complete — default values, missing field errors, field suggestions in diagnostics
 - [ ] **TYPE-06**: Variant constructor type checking — payload types verified against variant arm definition
-- [x] **TYPE-07**: Return type verified on all code paths — named return variable properly typed and assigned
+- [ ] **TYPE-07**: Return type verified on all code paths — named return variable properly typed and assigned
 - [ ] **TYPE-08**: Const correctness enforced — const bindings cannot be reassigned
 - [ ] **TYPE-09**: Boolean strictness — conditions in if/while must be bool, no implicit truthiness
-- [x] **TYPE-10**: Tuple type checking complete — construction, destructuring, field access, return position
-- [ ] **TYPE-11**: Schema inheritance chain walked — derived schema fields accessible, inheritance validated (non-JSON aspects only)
+- [ ] **TYPE-10**: Tuple type checking complete — construction, destructuring, field access, return position
+- [x] **TYPE-11**: Schema inheritance chain walked — derived schema fields accessible, inheritance validated (non-JSON aspects only)
 
 ### Pattern Matching
 
@@ -114,11 +114,11 @@
 | TYPE-04 | Phase 2 | Pending |
 | TYPE-05 | Phase 2 | Pending |
 | TYPE-06 | Phase 2 | Pending |
-| TYPE-07 | Phase 2 | Complete |
+| TYPE-07 | Phase 2 | Pending |
 | TYPE-08 | Phase 2 | Pending |
 | TYPE-09 | Phase 2 | Pending |
-| TYPE-10 | Phase 2 | Complete |
-| TYPE-11 | Phase 2 | Pending |
+| TYPE-10 | Phase 2 | Pending |
+| TYPE-11 | Phase 2 | Complete |
 | MATCH-01 | Phase 3 | Pending |
 | MATCH-02 | Phase 3 | Pending |
 | MATCH-03 | Phase 3 | Pending |

@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v0.1
 milestone_name: milestone
 status: verifying
-stopped_at: Completed 02-03-PLAN.md
-last_updated: "2026-04-02T21:53:27.615Z"
+stopped_at: Completed 02-04-PLAN.md
+last_updated: "2026-04-02T21:58:20.185Z"
 last_activity: 2026-04-02
 progress:
   total_phases: 7
@@ -56,7 +56,7 @@ Progress: [..........] 0%
 | Phase 01 P01 | 6min | 2 tasks | 3 files |
 | Phase 01 P03 | 8min | 3 tasks | 6 files |
 | Phase 01 P04 | 5min | 2 tasks | 2 files |
-| Phase 02 P03 | 13min | 2 tasks | 7 files |
+| Phase 02 P04 | 2min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -76,9 +76,7 @@ Recent decisions affecting current work:
 - [Phase 01]: Literal coercion in binary expressions: allow int/float literals to widen to matching types for ergonomics while enforcing strict type equality between typed variables
 - [Phase 01]: ICE walk infrastructure defined but gated until type checker handles all expression types to avoid false positives
 - [Phase 01]: Narrowed ICE whitelist to literal kinds only — identifiers, calls, binary, unary, assign, and field expressions legitimately return TY_UNKNOWN
-- [Phase 02]: Cast handler defers source expression inference to avoid surfacing pre-existing errors
-- [Phase 02]: all_paths_return guarded by !ret_name since Runes requires named return variables
-- [Phase 02]: Pointer TY_UNKNOWN inner permissiveness added to type_is_assignable/type_is_comparable
+- [Phase 02]: Schemas registered as TY_STRUCT (no new type kind), reusing all existing struct machinery
 
 ### Pending Todos
 
@@ -90,6 +88,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-04-02T21:53:27.601Z
-Stopped at: Completed 02-03-PLAN.md
+Last session: 2026-04-02T21:58:20.167Z
+Stopped at: Completed 02-04-PLAN.md
 Resume file: None

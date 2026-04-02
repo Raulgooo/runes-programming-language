@@ -421,6 +421,64 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
         sym->type->as.variant.methods = existing_methods;
         decl->resolved_type = sym->type;
       }
+    } else if (decl->kind == AST_SCHEMA_DECL) {
+      Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.schema_decl.name);
+      if (sym) {
+        // Count own fields
+        int own_field_count = 0;
+        AstNode *f = decl->as.schema_decl.fields;
+        while (f) { own_field_count++; f = f->next; }
+
+        // Count parent fields (if parent exists)
+        int parent_field_count = 0;
+        Type *parent_type = NULL;
+        if (decl->as.schema_decl.parent) {
+          Symbol *parent_sym = symbol_table_lookup(tc->st, decl->as.schema_decl.parent);
+          if (parent_sym && parent_sym->type && parent_sym->type->kind == TY_STRUCT) {
+            parent_type = parent_sym->type;
+            parent_field_count = parent_type->as.struct_t.field_count;
+          } else if (parent_sym) {
+            typechecker_error(tc, decl->line, decl->col,
+                              "Schema parent '%s' is not a valid schema/struct type",
+                              decl->as.schema_decl.parent);
+          } else {
+            typechecker_error(tc, decl->line, decl->col,
+                              "Unknown schema parent '%s'",
+                              decl->as.schema_decl.parent);
+          }
+        }
+
+        int total_field_count = parent_field_count + own_field_count;
+        const char **field_names =
+            arena_alloc(tc->arena, sizeof(char *) * total_field_count);
+        Type **field_types =
+            arena_alloc(tc->arena, sizeof(Type *) * total_field_count);
+
+        // Copy parent fields first (inherited)
+        for (int i = 0; i < parent_field_count; i++) {
+          field_names[i] = parent_type->as.struct_t.field_names[i];
+          field_types[i] = parent_type->as.struct_t.field_types[i];
+        }
+
+        // Then own fields
+        f = decl->as.schema_decl.fields;
+        for (int i = 0; i < own_field_count; i++) {
+          field_names[parent_field_count + i] = f->as.field_decl.name;
+          field_types[parent_field_count + i] =
+              typechecker_resolve_type_expr(tc, f->as.field_decl.type);
+          f = f->next;
+        }
+
+        Method *existing_methods = NULL;
+        if (sym->type && sym->type->kind == TY_STRUCT) {
+          existing_methods = sym->type->as.struct_t.methods;
+        }
+
+        sym->type = type_new_struct(tc->tctx, decl->as.schema_decl.name,
+                                    field_names, field_types, total_field_count);
+        sym->type->as.struct_t.methods = existing_methods;
+        decl->resolved_type = sym->type;
+      }
     } else if (decl->kind == AST_METHOD_DECL) {
       Symbol *type_sym =
           symbol_table_lookup(tc->st, decl->as.method_decl.type_name);
