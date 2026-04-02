@@ -577,11 +577,13 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     Type *rty = typechecker_infer_expr(tc, expr->as.assign.value);
     if (lty->kind != TY_UNKNOWN && rty->kind != TY_UNKNOWN) {
       if (!type_is_assignable(lty, rty)) {
+#ifdef DEBUG
         printf("DEBUG ASSERT: Cannot assign %d to %d\n", rty->kind, lty->kind);
         if (lty->kind == TY_PRIMITIVE)
           printf("DEBUG: lty name: %s\n", lty->as.primitive.name);
         if (rty->kind == TY_PRIMITIVE)
           printf("DEBUG: rty name: %s\n", rty->as.primitive.name);
+#endif
         typechecker_error(tc, expr->line, expr->col,
                           "Cannot assign value of mismatched type");
       }
@@ -596,7 +598,6 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       inferred = callee_t->as.function.ret;
 
       AstNode *arg = expr->as.call.args;
-      int arg_count = 0;
       int param_start = 0;
 
       // Handle method call self-injection
