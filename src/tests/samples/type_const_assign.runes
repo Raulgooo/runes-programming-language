@@ -1,0 +1,7 @@
+-- EXPECT FAIL: Cannot reassign constant
+-- Tests: TYPE-08 -- const correctness
+
+f test_const() {
+  const i32 x = 42
+  x = 10
+}
