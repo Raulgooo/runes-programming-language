@@ -298,37 +298,107 @@ Type *typechecker_resolve_type_expr(TypeChecker *tc, AstNode *node) {
   return tc->tctx->type_unknown;
 }
 
-static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
+static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
+  // Pass 1: Types (Structs, Variants)
+  AstNode *decl = node->as.program.declarations;
+  while (decl) {
+    if (decl->kind == AST_TYPE_DECL) {
+      Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.type_decl.name);
+      if (sym) {
+        sym->type =
+            type_new_struct(tc->tctx, decl->as.type_decl.name, NULL, NULL, 0);
+        decl->resolved_type = sym->type;
+      }
+    } else if (decl->kind == AST_VARIANT_DECL) {
+      Symbol *sym =
+          symbol_table_lookup_local(tc->st, decl->as.variant_decl.name);
+      if (sym) {
+        sym->type = type_new_variant(tc->tctx, decl->as.variant_decl.name, NULL,
+                                     NULL, 0);
+        decl->resolved_type = sym->type;
+      }
+    }
+    decl = decl->next;
+  }
+
+  // Pass 1.5: Populate Type fields (now that all type objects exist)
+  decl = node->as.program.declarations;
+  while (decl) {
+    if (decl->kind == AST_TYPE_DECL) {
+      Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.type_decl.name);
+      if (sym && sym->type) {
+        int field_count = 0;
+        AstNode *f = decl->as.type_decl.fields;
+        while (f) {
+          field_count++;
+          f = f->next;
+        }
+        const char **field_names =
+            arena_alloc(tc->arena, sizeof(char *) * field_count);
+        Type **field_types =
+            arena_alloc(tc->arena, sizeof(Type *) * field_count);
+        f = decl->as.type_decl.fields;
+        for (int i = 0; i < field_count; i++) {
+          field_names[i] = f->as.field_decl.name;
+          field_types[i] =
+              typechecker_resolve_type_expr(tc, f->as.field_decl.type);
+          f = f->next;
+        }
+        sym->type->as.struct_t.field_names = field_names;
+        sym->type->as.struct_t.field_types = field_types;
+        sym->type->as.struct_t.field_count = field_count;
+      }
+    } else if (decl->kind == AST_VARIANT_DECL) {
+      Symbol *sym =
+          symbol_table_lookup_local(tc->st, decl->as.variant_decl.name);
+      if (sym && sym->type) {
+        int arm_count = 0;
+        AstNode *a = decl->as.variant_decl.arms;
+        while (a) {
+          arm_count++;
+          a = a->next;
+        }
+        const char **arm_names =
+            arena_alloc(tc->arena, sizeof(char *) * arm_count);
+        Type **arm_types = arena_alloc(tc->arena, sizeof(Type *) * arm_count);
+        a = decl->as.variant_decl.arms;
+        for (int i = 0; i < arm_count; i++) {
+          arm_names[i] = a->as.variant_arm.name;
+          arm_types[i] =
+              a->as.variant_arm.fields
+                  ? typechecker_resolve_type_expr(tc, a->as.variant_arm.fields)
+                  : NULL;
+          a = a->next;
+        }
+        sym->type->as.variant.arm_names = arm_names;
+        sym->type->as.variant.arm_types = arm_types;
+        sym->type->as.variant.arm_count = arm_count;
+      }
+    }
+    decl = decl->next;
+  }
+
+  // Pass 2: Functions, Externs, Variables, Methods
+  decl = node->as.program.declarations;
   while (decl) {
     if (decl->kind == AST_FUNC_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.func_decl.name);
-      if (!sym) {
-        Symbol new_sym = {0};
-        new_sym.name = decl->as.func_decl.name;
-        new_sym.kind = SYM_FUNC;
-        new_sym.node = decl;
-        symbol_table_define(tc->st, new_sym);
-        sym = symbol_table_lookup_local(tc->st, decl->as.func_decl.name);
-      }
       if (sym) {
         Type *ret_t =
             typechecker_resolve_type_expr(tc, decl->as.func_decl.ret_type);
-
-        AstNode *param = decl->as.func_decl.params;
         int param_c = 0;
-        while (param) {
+        AstNode *p = decl->as.func_decl.params;
+        while (p) {
           param_c++;
-          param = param->next;
+          p = p->next;
         }
-
-        Type **ptypes = NULL;
-        if (param_c > 0) {
-          ptypes = arena_alloc(tc->arena, sizeof(Type *) * param_c);
-          param = decl->as.func_decl.params;
-          for (int i = 0; i < param_c; i++) {
-            ptypes[i] = typechecker_resolve_type_expr(tc, param->as.param.type);
-            param = param->next;
-          }
+        Type **ptypes = param_c > 0
+                            ? arena_alloc(tc->arena, sizeof(Type *) * param_c)
+                            : NULL;
+        p = decl->as.func_decl.params;
+        for (int i = 0; i < param_c; i++) {
+          ptypes[i] = typechecker_resolve_type_expr(tc, p->as.param.type);
+          p = p->next;
         }
         MemoryStrategy strat = realm_to_strategy(decl->as.func_decl.realm);
         sym->type =
@@ -337,107 +407,39 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
       }
     } else if (decl->kind == AST_VAR_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.var_decl.name);
-      if (!sym) {
-        Symbol new_sym = {0};
-        new_sym.name = decl->as.var_decl.name;
-        new_sym.kind = SYM_VAR;
-        new_sym.node = decl;
-        symbol_table_define(tc->st, new_sym);
-        sym = symbol_table_lookup_local(tc->st, decl->as.var_decl.name);
-      }
       if (sym && decl->as.var_decl.type) {
         sym->type = typechecker_resolve_type_expr(tc, decl->as.var_decl.type);
         decl->resolved_type = sym->type;
       }
-    } else if (decl->kind == AST_TYPE_DECL) {
-      Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.type_decl.name);
-      if (sym) {
-        // Collect field info
-        int field_count = 0;
-        AstNode *f = decl->as.type_decl.fields;
-        while (f) {
-          field_count++;
-          f = f->next;
-        }
-
-        const char **field_names =
-            arena_alloc(tc->arena, sizeof(char *) * field_count);
-        Type **field_types =
-            arena_alloc(tc->arena, sizeof(Type *) * field_count);
-
-        f = decl->as.type_decl.fields;
-        for (int i = 0; i < field_count; i++) {
-          field_names[i] = f->as.field_decl.name;
-          field_types[i] =
-              typechecker_resolve_type_expr(tc, f->as.field_decl.type);
-          f = f->next;
-        }
-
-        Method *existing_methods = NULL;
-        if (sym->type) {
-          if (sym->type->kind == TY_STRUCT)
-            existing_methods = sym->type->as.struct_t.methods;
-          else if (sym->type->kind == TY_VARIANT)
-            existing_methods = sym->type->as.variant.methods;
-        }
-
-        sym->type = type_new_struct(tc->tctx, decl->as.type_decl.name,
-                                    field_names, field_types, field_count);
-        sym->type->as.struct_t.methods = existing_methods;
-        decl->resolved_type = sym->type;
-      }
-    } else if (decl->kind == AST_VARIANT_DECL) {
+    } else if (decl->kind == AST_EXTERN_DECL) {
       Symbol *sym =
-          symbol_table_lookup_local(tc->st, decl->as.variant_decl.name);
+          symbol_table_lookup_local(tc->st, decl->as.extern_decl.name);
       if (sym) {
-        int arm_count = 0;
-        AstNode *a = decl->as.variant_decl.arms;
-        while (a) {
-          arm_count++;
-          a = a->next;
-        }
-
-        const char **arm_names =
-            arena_alloc(tc->arena, sizeof(char *) * arm_count);
-        Type **arm_types = arena_alloc(tc->arena, sizeof(Type *) * arm_count);
-
-        a = decl->as.variant_decl.arms;
-        for (int i = 0; i < arm_count; i++) {
-          arm_names[i] = a->as.variant_arm.name;
-          if (a->as.variant_arm.fields) {
-            // Resolve variant arm payload types
-            int field_count = 0;
-            AstNode *f = a->as.variant_arm.fields;
-            while (f) { field_count++; f = f->next; }
-
-            if (field_count == 1) {
-              arm_types[i] = typechecker_resolve_type_expr(tc, a->as.variant_arm.fields);
-            } else {
-              Type **field_ts = arena_alloc(tc->arena, sizeof(Type*) * field_count);
-              f = a->as.variant_arm.fields;
-              for (int j = 0; j < field_count; j++) {
-                field_ts[j] = typechecker_resolve_type_expr(tc, f);
-                f = f->next;
-              }
-              arm_types[i] = type_new_tuple(tc->tctx, field_ts, field_count);
-            }
-          } else {
-            arm_types[i] = NULL; // unit variant (no payload)
+        if (decl->as.extern_decl.is_func) {
+          Type *ret_t =
+              typechecker_resolve_type_expr(tc, decl->as.extern_decl.ret_type);
+          int param_count = 0;
+          AstNode *p = decl->as.extern_decl.params;
+          while (p) {
+            param_count++;
+            p = p->next;
           }
-          a = a->next;
+          Type **param_types =
+              param_count > 0
+                  ? arena_alloc(tc->arena, sizeof(Type *) * param_count)
+                  : NULL;
+          p = decl->as.extern_decl.params;
+          for (int i = 0; i < param_count; i++) {
+            param_types[i] =
+                typechecker_resolve_type_expr(tc, p->as.param.type);
+            p = p->next;
+          }
+          sym->type = type_new_function(tc->tctx, param_types, param_count,
+                                        ret_t, STRATEGY_STACK, false);
+        } else {
+          sym->type =
+              typechecker_resolve_type_expr(tc, decl->as.extern_decl.var_type);
         }
-
-        Method *existing_methods = NULL;
-        if (sym->type) {
-          if (sym->type->kind == TY_STRUCT)
-            existing_methods = sym->type->as.struct_t.methods;
-          else if (sym->type->kind == TY_VARIANT)
-            existing_methods = sym->type->as.variant.methods;
-        }
-
-        sym->type = type_new_variant(tc->tctx, decl->as.variant_decl.name,
-                                     arm_names, arm_types, arm_count);
-        sym->type->as.variant.methods = existing_methods;
         decl->resolved_type = sym->type;
       }
     } else if (decl->kind == AST_SCHEMA_DECL) {
@@ -509,7 +511,6 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
             Method *m = arena_alloc(tc->arena, sizeof(Method));
             m->name = method_node->as.func_decl.name;
             m->node = method_node;
-
             Type *ret_t = typechecker_resolve_type_expr(
                 tc, method_node->as.func_decl.ret_type);
             int param_c = 0;
@@ -518,27 +519,20 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
               param_c++;
               p = p->next;
             }
-
-            Type **ptypes = NULL;
-            if (param_c > 0) {
-              ptypes = arena_alloc(tc->arena, sizeof(Type *) * param_c);
-              p = method_node->as.func_decl.params;
-              for (int i = 0; i < param_c; i++) {
-                if (strcmp(p->as.param.name, "self") == 0 &&
-                    !p->as.param.type) {
-                  ptypes[i] = t;
-                } else {
-                  ptypes[i] =
-                      typechecker_resolve_type_expr(tc, p->as.param.type);
-                }
-                p = p->next;
-              }
+            Type **ptypes =
+                param_c > 0 ? arena_alloc(tc->arena, sizeof(Type *) * param_c)
+                            : NULL;
+            p = method_node->as.func_decl.params;
+            for (int i = 0; i < param_c; i++) {
+              if (strcmp(p->as.param.name, "self") == 0 && !p->as.param.type)
+                ptypes[i] = t;
+              else
+                ptypes[i] = typechecker_resolve_type_expr(tc, p->as.param.type);
+              p = p->next;
             }
-            MemoryStrategy strat =
-                realm_to_strategy(method_node->as.func_decl.realm);
-            m->type = type_new_function(tc->tctx, ptypes, param_c, ret_t, strat,
-                                        true);
-
+            m->type = type_new_function(
+                tc->tctx, ptypes, param_c, ret_t,
+                realm_to_strategy(method_node->as.func_decl.realm), true);
             if (t->kind == TY_STRUCT) {
               m->next = t->as.struct_t.methods;
               t->as.struct_t.methods = m;
@@ -563,6 +557,41 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
 // catch handlers and match-as-expression block bodies.
 static void typechecker_check_node(TypeChecker *tc, AstNode *node);
 
+static void validate_systems_attrs(TypeChecker *tc, AstNode *node,
+                                   Attr *attrs) {
+  Attr *a = attrs;
+  while (a) {
+    if (strcmp(a->name, "section") == 0 || strcmp(a->name, "link_name") == 0) {
+      if (!a->arg || a->arg->kind != AST_STRING_LITERAL) {
+        typechecker_error(tc, node->line, node->col,
+                          "#[%s] attribute requires a string argument",
+                          a->name);
+      }
+    } else if (strcmp(a->name, "interrupt") == 0) {
+      if (node->kind != AST_FUNC_DECL && node->kind != AST_EXTERN_DECL) {
+        typechecker_error(tc, node->line, node->col,
+                          "#[interrupt] can only be applied to functions");
+      } else {
+        bool has_params = false;
+        bool has_ret = false;
+        if (node->kind == AST_FUNC_DECL) {
+          has_params = node->as.func_decl.params != NULL;
+          has_ret = node->as.func_decl.ret_type != NULL;
+        } else if (node->kind == AST_EXTERN_DECL) {
+          has_params = node->as.extern_decl.params != NULL;
+          has_ret = node->as.extern_decl.ret_type != NULL;
+        }
+        if (has_params || has_ret) {
+          typechecker_error(
+              tc, node->line, node->col,
+              "#[interrupt] function must have no parameters and no returns");
+        }
+      }
+    }
+    a = a->next;
+  }
+}
+
 Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
   if (!expr)
     return tc->tctx->type_unknown;
@@ -581,26 +610,20 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
   case AST_STRING_LITERAL:
     inferred = tc->tctx->type_str;
     break;
-  case AST_ARRAY_LITERAL: {
-    // Basic array literal inference: if empty, unknown inner?
-    // In Runes, literals are often used in VAR_DECL which provides the type.
-    // For now, return a generic array type or unknown.
-    inferred = tc->tctx->type_unknown;
-    break;
-  }
   case AST_BOOL_LITERAL:
     inferred = tc->tctx->type_bool;
     break;
   case AST_CHAR_LITERAL:
     inferred = tc->tctx->type_char;
     break;
+  case AST_ARRAY_LITERAL:
+    inferred = tc->tctx->type_unknown;
+    break;
 
   case AST_IDENTIFIER: {
     Symbol *sym = symbol_table_lookup(tc->st, expr->as.identifier.name);
     if (sym && sym->type) {
       inferred = sym->type;
-    } else if (sym && !sym->type) {
-      inferred = tc->tctx->type_unknown;
     } else {
       typechecker_error(tc, expr->line, expr->col, "Undefined variable '%s'",
                         expr->as.identifier.name);
@@ -960,6 +983,26 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     break;
   }
 
+  case AST_CAST_EXPR: {
+    typechecker_infer_expr(tc, expr->as.cast.expr);
+    inferred = typechecker_resolve_type_expr(tc, expr->as.cast.target_type);
+    break;
+  }
+
+  case AST_SIZEOF_EXPR:
+    if (expr->as.sizeof_expr.type) {
+      typechecker_resolve_type_expr(tc, expr->as.sizeof_expr.type);
+    }
+    inferred = tc->tctx->type_usize;
+    break;
+
+  case AST_ALIGNOF_EXPR:
+    if (expr->as.alignof_expr.type) {
+      typechecker_resolve_type_expr(tc, expr->as.alignof_expr.type);
+    }
+    inferred = tc->tctx->type_usize;
+    break;
+
   case AST_UNARY_EXPR: {
     Type *inner_t = typechecker_infer_expr(tc, expr->as.unary.expr);
     if (type_is_resolved(inner_t)) {
@@ -1279,12 +1322,6 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     break;
   }
 
-  case AST_CAST_EXPR: {
-    Type *target_t = typechecker_resolve_type_expr(tc, expr->as.cast.target_type);
-    inferred = target_t;
-    break;
-  }
-
   default:
     break;
   }
@@ -1397,6 +1434,9 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   }
 
   case AST_VAR_DECL: {
+    if (node->as.var_decl.attrs) {
+      validate_systems_attrs(tc, node, node->as.var_decl.attrs);
+    }
     Type *decl_t = tc->tctx->type_unknown;
     if (node->as.var_decl.type) {
       decl_t = typechecker_resolve_type_expr(tc, node->as.var_decl.type);
