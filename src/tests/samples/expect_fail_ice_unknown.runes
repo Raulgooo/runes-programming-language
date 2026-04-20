@@ -1,0 +1,15 @@
+-- EXPECT FAIL: error
+-- Regression guard for the ICE walk (check_unresolved_types in typecheck.c).
+--
+-- The ICE walk catches TY_UNKNOWN surviving type checking on whitelisted
+-- expression kinds (currently: literal kinds only).  Literals always resolve
+-- to concrete types, so the ICE cannot currently fire from a .runes program.
+-- This test serves as a regression guard: if a future change causes a literal
+-- to lose its type, the ICE walk will catch it and emit "internal error".
+--
+-- Meanwhile this test validates that the compiler correctly rejects programs
+-- with type errors, ensuring the error pipeline is intact.
+
+f ice_guard() {
+  i32 x = "not an int"
+}

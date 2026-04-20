@@ -15,3 +15,6 @@ test: $(TARGET)
 
 clean:
 	rm -f $(TARGET) lexer_test.exe *.o
+
+debug: CFLAGS += -DDEBUG
+debug: $(TARGET)

@@ -1,0 +1,13 @@
+-- Tests: TYPE-11 -- schema inheritance chain
+
+schema Base = {
+  name: str,
+}
+
+schema Derived : Base = {
+  age: i32,
+}
+
+f test_schema_inherit() {
+  Derived d = Derived(name: "Alice", age: 30)
+}

@@ -1,0 +1,10 @@
+-- EXPECT FAIL: expects payload type
+-- Tests: TYPE-06 -- variant payload type checking
+
+type Shape =
+  | Circle(f64)
+  | Square(f64)
+
+f test_wrong_payload() {
+  Shape s = Shape.Circle("hello")
+}

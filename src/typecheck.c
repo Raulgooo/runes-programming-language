@@ -28,6 +28,29 @@ void typechecker_error(TypeChecker *tc, uint32_t line, uint32_t col,
   tc->had_error = true;
 }
 
+static inline bool type_is_resolved(Type *t) {
+  return t && t->kind != TY_UNKNOWN && t->kind != TY_INFER_ERROR;
+}
+
+static const char *type_display_name(Type *t) {
+  if (!t) return "<unknown>";
+  switch (t->kind) {
+    case TY_PRIMITIVE: return t->as.primitive.name;
+    case TY_POINTER:   return "pointer";
+    case TY_ARRAY:     return "array";
+    case TY_TUPLE:     return "tuple";
+    case TY_FUNCTION:  return "function";
+    case TY_FALLIBLE:  return "fallible";
+    case TY_STRUCT:    return t->as.struct_t.name ? t->as.struct_t.name : "struct";
+    case TY_VARIANT:   return t->as.variant.name ? t->as.variant.name : "variant";
+    case TY_INTERFACE: return t->as.interface_t.name ? t->as.interface_t.name : "interface";
+    case TY_ERROR:     return t->as.error_t.name ? t->as.error_t.name : "error";
+    case TY_UNKNOWN:   return "<unknown>";
+    case TY_INFER_ERROR: return "<error>";
+  }
+  return "<unknown>";
+}
+
 // ── Phase 3 helpers ──────────────────────────────────────────────────────────
 
 static bool is_realm_nesting_legal(MemoryRealm outer, MemoryRealm inner) {
@@ -89,21 +112,21 @@ static void typechecker_check_pattern(TypeChecker *tc, AstNode *pattern,
 
   switch (pattern->kind) {
   case AST_INT_LITERAL:
-    if (subject_type->kind != TY_UNKNOWN &&
+    if (type_is_resolved(subject_type) &&
         subject_type->kind != TY_PRIMITIVE) {
       typechecker_error(tc, pattern->line, pattern->col,
                         "Integer literal pattern requires integer subject");
     }
     break;
   case AST_FLOAT_LITERAL:
-    if (subject_type->kind != TY_UNKNOWN &&
+    if (type_is_resolved(subject_type) &&
         subject_type->kind != TY_PRIMITIVE) {
       typechecker_error(tc, pattern->line, pattern->col,
                         "Float literal pattern requires numeric subject");
     }
     break;
   case AST_STRING_LITERAL:
-    if (subject_type->kind != TY_UNKNOWN &&
+    if (type_is_resolved(subject_type) &&
         !(subject_type->kind == TY_PRIMITIVE &&
           strcmp(subject_type->as.primitive.name, "str") == 0)) {
       typechecker_error(tc, pattern->line, pattern->col,
@@ -111,7 +134,7 @@ static void typechecker_check_pattern(TypeChecker *tc, AstNode *pattern,
     }
     break;
   case AST_BOOL_LITERAL:
-    if (subject_type->kind != TY_UNKNOWN &&
+    if (type_is_resolved(subject_type) &&
         !(subject_type->kind == TY_PRIMITIVE &&
           strcmp(subject_type->as.primitive.name, "bool") == 0)) {
       typechecker_error(tc, pattern->line, pattern->col,
@@ -133,7 +156,7 @@ static void typechecker_check_pattern(TypeChecker *tc, AstNode *pattern,
   }
   case AST_STRUCT_PATTERN: {
     // Struct patterns are also used for variant destructuring and Ok/Err
-    if (subject_type->kind != TY_UNKNOWN && subject_type->kind != TY_STRUCT &&
+    if (type_is_resolved(subject_type) && subject_type->kind != TY_STRUCT &&
         subject_type->kind != TY_VARIANT && subject_type->kind != TY_FALLIBLE) {
       typechecker_error(tc, pattern->line, pattern->col,
                         "Destructure pattern requires struct, variant, or "
@@ -382,10 +405,24 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
         for (int i = 0; i < arm_count; i++) {
           arm_names[i] = a->as.variant_arm.name;
           if (a->as.variant_arm.fields) {
-            // ... (Simplified for v0.1)
-            arm_types[i] = tc->tctx->type_unknown;
+            // Resolve variant arm payload types
+            int field_count = 0;
+            AstNode *f = a->as.variant_arm.fields;
+            while (f) { field_count++; f = f->next; }
+
+            if (field_count == 1) {
+              arm_types[i] = typechecker_resolve_type_expr(tc, a->as.variant_arm.fields);
+            } else {
+              Type **field_ts = arena_alloc(tc->arena, sizeof(Type*) * field_count);
+              f = a->as.variant_arm.fields;
+              for (int j = 0; j < field_count; j++) {
+                field_ts[j] = typechecker_resolve_type_expr(tc, f);
+                f = f->next;
+              }
+              arm_types[i] = type_new_tuple(tc->tctx, field_ts, field_count);
+            }
           } else {
-            arm_types[i] = NULL;
+            arm_types[i] = NULL; // unit variant (no payload)
           }
           a = a->next;
         }
@@ -401,6 +438,64 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *decl) {
         sym->type = type_new_variant(tc->tctx, decl->as.variant_decl.name,
                                      arm_names, arm_types, arm_count);
         sym->type->as.variant.methods = existing_methods;
+        decl->resolved_type = sym->type;
+      }
+    } else if (decl->kind == AST_SCHEMA_DECL) {
+      Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.schema_decl.name);
+      if (sym) {
+        // Count own fields
+        int own_field_count = 0;
+        AstNode *f = decl->as.schema_decl.fields;
+        while (f) { own_field_count++; f = f->next; }
+
+        // Count parent fields (if parent exists)
+        int parent_field_count = 0;
+        Type *parent_type = NULL;
+        if (decl->as.schema_decl.parent) {
+          Symbol *parent_sym = symbol_table_lookup(tc->st, decl->as.schema_decl.parent);
+          if (parent_sym && parent_sym->type && parent_sym->type->kind == TY_STRUCT) {
+            parent_type = parent_sym->type;
+            parent_field_count = parent_type->as.struct_t.field_count;
+          } else if (parent_sym) {
+            typechecker_error(tc, decl->line, decl->col,
+                              "Schema parent '%s' is not a valid schema/struct type",
+                              decl->as.schema_decl.parent);
+          } else {
+            typechecker_error(tc, decl->line, decl->col,
+                              "Unknown schema parent '%s'",
+                              decl->as.schema_decl.parent);
+          }
+        }
+
+        int total_field_count = parent_field_count + own_field_count;
+        const char **field_names =
+            arena_alloc(tc->arena, sizeof(char *) * total_field_count);
+        Type **field_types =
+            arena_alloc(tc->arena, sizeof(Type *) * total_field_count);
+
+        // Copy parent fields first (inherited)
+        for (int i = 0; i < parent_field_count; i++) {
+          field_names[i] = parent_type->as.struct_t.field_names[i];
+          field_types[i] = parent_type->as.struct_t.field_types[i];
+        }
+
+        // Then own fields
+        f = decl->as.schema_decl.fields;
+        for (int i = 0; i < own_field_count; i++) {
+          field_names[parent_field_count + i] = f->as.field_decl.name;
+          field_types[parent_field_count + i] =
+              typechecker_resolve_type_expr(tc, f->as.field_decl.type);
+          f = f->next;
+        }
+
+        Method *existing_methods = NULL;
+        if (sym->type && sym->type->kind == TY_STRUCT) {
+          existing_methods = sym->type->as.struct_t.methods;
+        }
+
+        sym->type = type_new_struct(tc->tctx, decl->as.schema_decl.name,
+                                    field_names, field_types, total_field_count);
+        sym->type->as.struct_t.methods = existing_methods;
         decl->resolved_type = sym->type;
       }
     } else if (decl->kind == AST_METHOD_DECL) {
@@ -509,6 +604,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     } else {
       typechecker_error(tc, expr->line, expr->col, "Undefined variable '%s'",
                         expr->as.identifier.name);
+      inferred = tc->tctx->type_error;
     }
     break;
   }
@@ -523,18 +619,58 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     case TOKEN_STAR:
     case TOKEN_SLASH:
     case TOKEN_PERCENT:
-      if (lty->kind != TY_UNKNOWN && rty->kind != TY_UNKNOWN) {
-        bool ok = type_is_assignable(lty, rty) || type_is_assignable(rty, lty);
-        // Allow pointer arithmetic: pointer + integer or pointer - integer
-        if (!ok) {
-          if ((lty->kind == TY_POINTER && rty->kind == TY_PRIMITIVE) ||
-              (rty->kind == TY_POINTER && lty->kind == TY_PRIMITIVE)) {
-            ok = true;
+      if (type_is_resolved(lty) && type_is_resolved(rty)) {
+        // Allow pointer arithmetic: pointer +/- integer
+        if ((lty->kind == TY_POINTER && rty->kind == TY_PRIMITIVE) ||
+            (rty->kind == TY_POINTER && lty->kind == TY_PRIMITIVE)) {
+          // pointer arithmetic is ok
+        } else if (lty->kind == TY_PRIMITIVE && rty->kind == TY_PRIMITIVE) {
+          if (!type_equals(lty, rty)) {
+            // D-04: Strict type checking for binary expressions
+            // Allow literal coercion: if either operand is a literal,
+            // it can adapt to the other's type (e.g., u64 * 0x...)
+            bool has_literal =
+                (expr->as.binary.left->kind == AST_INT_LITERAL ||
+                 expr->as.binary.left->kind == AST_FLOAT_LITERAL ||
+                 expr->as.binary.right->kind == AST_INT_LITERAL ||
+                 expr->as.binary.right->kind == AST_FLOAT_LITERAL);
+            if (!has_literal) {
+              const NumericTypeInfo *linfo = get_numeric_info(lty->as.primitive.name);
+              const NumericTypeInfo *rinfo = get_numeric_info(rty->as.primitive.name);
+              if (linfo && rinfo && linfo->is_signed == rinfo->is_signed && linfo->is_float == rinfo->is_float) {
+                // Same family: suggest widening to the higher-rank type
+                const char *wider = linfo->rank >= rinfo->rank ? lty->as.primitive.name : rty->as.primitive.name;
+                typechecker_error(tc, expr->line, expr->col,
+                    "Type mismatch: %s and %s. Use explicit cast: (%s as %s)",
+                    lty->as.primitive.name, rty->as.primitive.name,
+                    linfo->rank < rinfo->rank ? "left" : "right", wider);
+              } else if (linfo && rinfo && linfo->is_signed != rinfo->is_signed) {
+                // Mixed sign
+                typechecker_error(tc, expr->line, expr->col,
+                    "Type mismatch: %s and %s (mixed signed/unsigned). Use explicit cast with 'as'",
+                    lty->as.primitive.name, rty->as.primitive.name);
+              } else if (linfo && rinfo && linfo->is_float != rinfo->is_float) {
+                // Cross-family
+                typechecker_error(tc, expr->line, expr->col,
+                    "Type mismatch: %s and %s (cannot mix integer and float). Use explicit cast with 'as'",
+                    lty->as.primitive.name, rty->as.primitive.name);
+              } else {
+                typechecker_error(tc, expr->line, expr->col,
+                    "Type mismatch in binary expression: '%s' and '%s'",
+                    lty->as.primitive.name, rty->as.primitive.name);
+              }
+              inferred = tc->tctx->type_error;
+              break;
+            }
           }
-        }
-        if (!ok) {
-          typechecker_error(tc, expr->line, expr->col,
-                            "Type mismatch in arithmetic operation");
+        } else {
+          bool ok = type_is_assignable(lty, rty) || type_is_assignable(rty, lty);
+          if (!ok) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Type mismatch in arithmetic operation");
+            inferred = tc->tctx->type_error;
+            break;
+          }
         }
       }
       inferred = lty;
@@ -545,7 +681,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     case TOKEN_GT:
     case TOKEN_LT_EQ:
     case TOKEN_GT_EQ:
-      if (lty->kind != TY_UNKNOWN && rty->kind != TY_UNKNOWN) {
+      if (type_is_resolved(lty) && type_is_resolved(rty)) {
         if (!type_is_comparable(lty, rty)) {
           typechecker_error(tc, expr->line, expr->col,
                             "Comparison type mismatch");
@@ -555,7 +691,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       break;
     case TOKEN_AND:
     case TOKEN_OR:
-      if (lty->kind != TY_UNKNOWN && rty->kind != TY_UNKNOWN) {
+      if (type_is_resolved(lty) && type_is_resolved(rty)) {
         if (lty->kind != TY_PRIMITIVE ||
             strcmp(lty->as.primitive.name, "bool") != 0 ||
             rty->kind != TY_PRIMITIVE ||
@@ -573,15 +709,28 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
   }
 
   case AST_ASSIGN: {
+    // Const reassignment check
+    if (expr->as.assign.target->kind == AST_IDENTIFIER) {
+      Symbol *sym = symbol_table_lookup(tc->st,
+          expr->as.assign.target->as.identifier.name);
+      if (sym && sym->node && sym->node->kind == AST_VAR_DECL &&
+          sym->node->as.var_decl.is_const) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Cannot reassign constant '%s'",
+                          expr->as.assign.target->as.identifier.name);
+      }
+    }
     Type *lty = typechecker_infer_expr(tc, expr->as.assign.target);
     Type *rty = typechecker_infer_expr(tc, expr->as.assign.value);
-    if (lty->kind != TY_UNKNOWN && rty->kind != TY_UNKNOWN) {
+    if (type_is_resolved(lty) && type_is_resolved(rty)) {
       if (!type_is_assignable(lty, rty)) {
+#ifdef DEBUG
         printf("DEBUG ASSERT: Cannot assign %d to %d\n", rty->kind, lty->kind);
         if (lty->kind == TY_PRIMITIVE)
           printf("DEBUG: lty name: %s\n", lty->as.primitive.name);
         if (rty->kind == TY_PRIMITIVE)
           printf("DEBUG: rty name: %s\n", rty->as.primitive.name);
+#endif
         typechecker_error(tc, expr->line, expr->col,
                           "Cannot assign value of mismatched type");
       }
@@ -596,7 +745,6 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       inferred = callee_t->as.function.ret;
 
       AstNode *arg = expr->as.call.args;
-      int arg_count = 0;
       int param_start = 0;
 
       // Handle method call self-injection
@@ -647,7 +795,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       while (arg && param_idx < callee_t->as.function.param_count) {
         Type *arg_ty = typechecker_infer_expr(tc, arg);
         Type *param_ty = callee_t->as.function.params[param_idx];
-        if (param_ty->kind != TY_UNKNOWN && arg_ty->kind != TY_UNKNOWN) {
+        if (type_is_resolved(param_ty) && type_is_resolved(arg_ty)) {
           if (!type_is_assignable(param_ty, arg_ty)) {
             typechecker_error(tc, arg->line, arg->col,
                               "Argument type mismatch in function call");
@@ -659,6 +807,13 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     } else if (callee_t->kind == TY_STRUCT) {
       // Constructor: Vec2(x: 1.0, y: 2.0)
       inferred = callee_t;
+
+      // Track which fields are provided for missing-field detection
+      bool *field_provided = arena_alloc(tc->arena,
+          sizeof(bool) * (callee_t->as.struct_t.field_count + 1));
+      memset(field_provided, 0,
+             sizeof(bool) * (callee_t->as.struct_t.field_count + 1));
+
       AstNode *arg = expr->as.call.args;
       while (arg) {
         if (arg->kind == AST_NAMED_ARG) {
@@ -668,6 +823,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
           for (int i = 0; i < callee_t->as.struct_t.field_count; i++) {
             if (strcmp(callee_t->as.struct_t.field_names[i], name) == 0) {
               found = true;
+              field_provided[i] = true;
               if (!type_is_assignable(callee_t->as.struct_t.field_types[i],
                                       val_t)) {
                 typechecker_error(tc, arg->line, arg->col,
@@ -690,20 +846,123 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         }
         arg = arg->next;
       }
+
+      // Check for missing required fields (those without defaults)
+      Symbol *type_sym = symbol_table_lookup(tc->st,
+                                             callee_t->as.struct_t.name);
+      AstNode *field_node = (type_sym && type_sym->node &&
+                             type_sym->node->kind == AST_TYPE_DECL)
+          ? type_sym->node->as.type_decl.fields : NULL;
+      for (int i = 0; i < callee_t->as.struct_t.field_count; i++) {
+        if (!field_provided[i]) {
+          bool has_default = (field_node &&
+                              field_node->as.field_decl.default_val != NULL);
+          if (!has_default) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Struct '%s' missing required field: '%s'",
+                              callee_t->as.struct_t.name,
+                              callee_t->as.struct_t.field_names[i]);
+          }
+        }
+        if (field_node) field_node = field_node->next;
+      }
     } else if (callee_t->kind == TY_VARIANT) {
       // Variant arm constructor: RGB(255, 0, 0)
       inferred = callee_t;
-      // TODO: Full variant arm resolution
-    } else if (callee_t->kind != TY_UNKNOWN) {
+
+      // Determine which variant arm is being constructed
+      const char *arm_name = NULL;
+      if (expr->as.call.callee->kind == AST_IDENTIFIER) {
+        arm_name = expr->as.call.callee->as.identifier.name;
+      } else if (expr->as.call.callee->kind == AST_FIELD_EXPR) {
+        arm_name = expr->as.call.callee->as.field.field;
+      }
+
+      if (arm_name) {
+        for (int i = 0; i < callee_t->as.variant.arm_count; i++) {
+          if (strcmp(callee_t->as.variant.arm_names[i], arm_name) == 0) {
+            Type *expected_payload = callee_t->as.variant.arm_types[i];
+            // Count actual args
+            int actual_count = 0;
+            AstNode *a = expr->as.call.args;
+            while (a) { actual_count++; a = a->next; }
+
+            if (!expected_payload && actual_count > 0) {
+              typechecker_error(tc, expr->line, expr->col,
+                                "Variant arm '%s' takes no payload, got %d "
+                                "argument(s)", arm_name, actual_count);
+            } else if (expected_payload &&
+                       expected_payload->kind == TY_TUPLE) {
+              // Multi-field payload
+              if (actual_count != expected_payload->as.tuple.count) {
+                typechecker_error(tc, expr->line, expr->col,
+                                  "Variant arm '%s' expects %d payload "
+                                  "value(s), got %d", arm_name,
+                                  expected_payload->as.tuple.count,
+                                  actual_count);
+              }
+              a = expr->as.call.args;
+              for (int j = 0;
+                   j < expected_payload->as.tuple.count && a; j++) {
+                Type *arg_t = typechecker_infer_expr(tc, a);
+                if (type_is_resolved(arg_t) &&
+                    !type_is_assignable(
+                        expected_payload->as.tuple.elems[j], arg_t)) {
+                  typechecker_error(tc, a->line, a->col,
+                      "Variant arm '%s' expects payload type %s, got %s",
+                      arm_name,
+                      expected_payload->as.tuple.elems[j]->kind ==
+                          TY_PRIMITIVE
+                        ? expected_payload->as.tuple.elems[j]
+                              ->as.primitive.name : "?",
+                      arg_t->kind == TY_PRIMITIVE
+                        ? arg_t->as.primitive.name : "?");
+                }
+                a = a->next;
+              }
+            } else if (expected_payload) {
+              // Single-field payload
+              if (actual_count != 1) {
+                typechecker_error(tc, expr->line, expr->col,
+                    "Variant arm '%s' expects 1 payload value, got %d",
+                    arm_name, actual_count);
+              }
+              if (actual_count >= 1) {
+                Type *arg_t = typechecker_infer_expr(tc,
+                                                     expr->as.call.args);
+                if (type_is_resolved(arg_t) &&
+                    type_is_resolved(expected_payload) &&
+                    !type_is_assignable(expected_payload, arg_t)) {
+                  typechecker_error(tc, expr->as.call.args->line,
+                      expr->as.call.args->col,
+                      "Variant arm '%s' expects payload type %s, got %s",
+                      arm_name,
+                      expected_payload->kind == TY_PRIMITIVE
+                        ? expected_payload->as.primitive.name : "?",
+                      arg_t->kind == TY_PRIMITIVE
+                        ? arg_t->as.primitive.name : "?");
+                }
+              }
+            }
+            break;
+          }
+        }
+      } else {
+        // Cannot determine arm name, infer args but skip validation
+        AstNode *a = expr->as.call.args;
+        while (a) { typechecker_infer_expr(tc, a); a = a->next; }
+      }
+    } else if (type_is_resolved(callee_t)) {
       typechecker_error(tc, expr->line, expr->col,
                         "Cannot call non-function type");
+      inferred = tc->tctx->type_error;
     }
     break;
   }
 
   case AST_UNARY_EXPR: {
     Type *inner_t = typechecker_infer_expr(tc, expr->as.unary.expr);
-    if (inner_t->kind != TY_UNKNOWN) {
+    if (type_is_resolved(inner_t)) {
       if (expr->as.unary.op == TOKEN_STAR) {
         // Dereference: *p
         if (inner_t->kind == TY_POINTER) {
@@ -711,6 +970,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         } else {
           typechecker_error(tc, expr->line, expr->col,
                             "Cannot dereference non-pointer type");
+          inferred = tc->tctx->type_error;
         }
       } else if (expr->as.unary.op == TOKEN_AMP) {
         // Address-of: &x
@@ -742,12 +1002,13 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
 
     if (target_t->kind == TY_ARRAY) {
       inferred = target_t->as.array.inner;
-    } else if (target_t->kind != TY_UNKNOWN) {
+    } else if (type_is_resolved(target_t)) {
       typechecker_error(tc, expr->line, expr->col,
                         "Cannot index non-array type");
+      inferred = tc->tctx->type_error;
     }
 
-    if (index_t->kind != TY_UNKNOWN) {
+    if (type_is_resolved(index_t)) {
       // Index must be an integer (simplification: just check if it's a
       // primitive starting with 'i' or 'u')
       if (index_t->kind != TY_PRIMITIVE ||
@@ -818,6 +1079,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         typechecker_error(tc, expr->line, expr->col,
                           "Field or method '%s' not found in struct '%s'",
                           fname, base_t->as.struct_t.name);
+        inferred = tc->tctx->type_error;
       }
     } else if (base_t->kind == TY_VARIANT) {
       bool found = false;
@@ -845,6 +1107,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         typechecker_error(tc, expr->line, expr->col,
                           "Arm or method '%s' not found in variant '%s'", fname,
                           base_t->as.variant.name);
+        inferred = tc->tctx->type_error;
       }
     } else if (base_t->kind == TY_PRIMITIVE &&
                strcmp(base_t->as.primitive.name, "str") == 0) {
@@ -855,6 +1118,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       } else {
         typechecker_error(tc, expr->line, expr->col,
                           "Unknown property '%s' on string", fname);
+        inferred = tc->tctx->type_error;
       }
     } else if (base_t->kind == TY_ARRAY) {
       if (strcmp(fname, "len") == 0) {
@@ -862,8 +1126,9 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       } else {
         typechecker_error(tc, expr->line, expr->col,
                           "Unknown property '%s' on array", fname);
+        inferred = tc->tctx->type_error;
       }
-    } else if (base_t->kind != TY_UNKNOWN) {
+    } else if (type_is_resolved(base_t)) {
       // Be lenient with unknown fields on non-struct types for now if they
       // might be methods/properties we haven't implemented yet.
       // But for v0.1 we only error if we are sure it's not a struct.
@@ -879,9 +1144,10 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     Type *inner_t = typechecker_infer_expr(tc, expr->as.try_expr.expr);
     if (inner_t->kind == TY_FALLIBLE) {
       inferred = inner_t->as.fallible.inner;
-    } else if (inner_t->kind != TY_UNKNOWN) {
+    } else if (type_is_resolved(inner_t)) {
       typechecker_error(tc, expr->line, expr->col,
                         "try requires a fallible (!T) expression");
+      inferred = tc->tctx->type_error;
     }
     break;
   }
@@ -910,8 +1176,8 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         } else if (handler_t->kind == TY_FALLIBLE) {
           // Chained catch: handler returns !T, propagate as the overall type
           inferred = handler_t;
-        } else if (handler_t->kind != TY_UNKNOWN &&
-                   success_t->kind != TY_UNKNOWN) {
+        } else if (type_is_resolved(handler_t) &&
+                   type_is_resolved(success_t)) {
           if (!type_is_assignable(success_t, handler_t)) {
             typechecker_error(
                 tc, expr->as.catch_expr.handler->line,
@@ -924,9 +1190,10 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       if (expr->as.catch_expr.err_name) {
         symbol_table_pop(tc->st);
       }
-    } else if (inner_t->kind != TY_UNKNOWN) {
+    } else if (type_is_resolved(inner_t)) {
       typechecker_error(tc, expr->line, expr->col,
                         "catch requires a fallible (!T) expression");
+      inferred = tc->tctx->type_error;
     }
     break;
   }
@@ -964,7 +1231,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
 
         if (arm->as.match_arm.guard) {
           Type *guard_t = typechecker_infer_expr(tc, arm->as.match_arm.guard);
-          if (guard_t->kind != TY_UNKNOWN &&
+          if (type_is_resolved(guard_t) &&
               (guard_t->kind != TY_PRIMITIVE ||
                strcmp(guard_t->as.primitive.name, "bool") != 0)) {
             typechecker_error(tc, arm->as.match_arm.guard->line,
@@ -979,9 +1246,9 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
           typechecker_check_node(tc, arm->as.match_arm.body);
         }
 
-        if (!first_arm_t && body_t->kind != TY_UNKNOWN) {
+        if (!first_arm_t && type_is_resolved(body_t)) {
           first_arm_t = body_t;
-        } else if (first_arm_t && body_t->kind != TY_UNKNOWN) {
+        } else if (first_arm_t && type_is_resolved(body_t)) {
           if (!type_is_assignable(first_arm_t, body_t)) {
             typechecker_error(
                 tc, arm->line, arm->col,
@@ -998,12 +1265,69 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     break;
   }
 
+  case AST_TUPLE_EXPR: {
+    int count = 0;
+    AstNode *elem = expr->as.tuple_expr.elems;
+    while (elem) { count++; elem = elem->next; }
+    Type **elem_types = arena_alloc(tc->arena, sizeof(Type *) * count);
+    elem = expr->as.tuple_expr.elems;
+    for (int i = 0; i < count; i++) {
+      elem_types[i] = typechecker_infer_expr(tc, elem);
+      elem = elem->next;
+    }
+    inferred = type_new_tuple(tc->tctx, elem_types, count);
+    break;
+  }
+
+  case AST_CAST_EXPR: {
+    Type *target_t = typechecker_resolve_type_expr(tc, expr->as.cast.target_type);
+    inferred = target_t;
+    break;
+  }
+
   default:
     break;
   }
 
   expr->resolved_type = inferred;
   return inferred;
+}
+
+// D-15: Check if every execution path through a node ends in a return statement.
+// Used only for functions that use explicit returns (no named return variable).
+static bool all_paths_return(AstNode *node) {
+  if (!node) return false;
+  switch (node->kind) {
+  case AST_RETURN_STMT:
+    return true;
+  case AST_BLOCK: {
+    // A block returns on all paths if its last statement does
+    AstNode *stmt = node->as.block.statements;
+    AstNode *last = NULL;
+    while (stmt) { last = stmt; stmt = stmt->next; }
+    return all_paths_return(last);
+  }
+  case AST_IF_STMT:
+    // Both branches must exist and both must return
+    return node->as.if_stmt.else_branch &&
+           all_paths_return(node->as.if_stmt.then_branch) &&
+           all_paths_return(node->as.if_stmt.else_branch);
+  case AST_MATCH_STMT: {
+    // Every arm must return (exhaustiveness is Phase 3)
+    AstNode *arm = node->as.match_stmt.arms;
+    if (!arm) return false;
+    while (arm) {
+      if (arm->kind == AST_MATCH_ARM) {
+        if (!all_paths_return(arm->as.match_arm.body))
+          return false;
+      }
+      arm = arm->next;
+    }
+    return true;
+  }
+  default:
+    return false;
+  }
 }
 
 static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
@@ -1053,6 +1377,19 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       typechecker_check_node(tc, node->as.func_decl.body);
     }
 
+    // D-15: All-paths return check for non-void functions without named returns
+    if (tc->expected_ret && type_is_resolved(tc->expected_ret) &&
+        !(tc->expected_ret->kind == TY_PRIMITIVE &&
+          strcmp(tc->expected_ret->as.primitive.name, "void") == 0) &&
+        !node->as.func_decl.ret_name &&
+        node->as.func_decl.body) {
+      if (!all_paths_return(node->as.func_decl.body)) {
+        typechecker_error(tc, node->line, node->col,
+                          "Function '%s' does not return a value on all paths",
+                          node->as.func_decl.name);
+      }
+    }
+
     tc->expected_ret = NULL;
     tc->current_realm = saved_realm;
     symbol_table_pop(tc->st);
@@ -1067,49 +1404,77 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
 
     if (node->as.var_decl.init) {
       Type *init_t = typechecker_infer_expr(tc, node->as.var_decl.init);
-      if (decl_t->kind != TY_UNKNOWN && init_t->kind != TY_UNKNOWN) {
+      if (type_is_resolved(decl_t) && type_is_resolved(init_t)) {
         if (!type_is_assignable(decl_t, init_t)) {
           typechecker_error(
               tc, node->line, node->col,
               "Variable initializer does not match declared type");
-        } else if (node->as.var_decl.init->kind == AST_INT_LITERAL &&
-                   decl_t->kind == TY_PRIMITIVE) {
-          // Basic Range Checking
-          unsigned long long val = node->as.var_decl.init->as.int_literal.value;
-          const char *tn = decl_t->as.primitive.name;
-          bool overflow = false;
-          if (strcmp(tn, "i8") == 0) {
-            if (val > 127)
-              overflow = true;
-          } else if (strcmp(tn, "u8") == 0) {
-            if (val > 255)
-              overflow = true;
-          } else if (strcmp(tn, "i16") == 0) {
-            if (val > 32767)
-              overflow = true;
-          } else if (strcmp(tn, "u16") == 0) {
-            if (val > 65535)
-              overflow = true;
-          } else if (strcmp(tn, "u32") == 0) {
-            if (val > 4294967295ULL)
-              overflow = true;
-          }
-          if (overflow) {
-            typechecker_error(tc, node->as.var_decl.init->line,
-                              node->as.var_decl.init->col,
-                              "Integer literal overflow for target type");
-          }
-        } else if (node->as.var_decl.init->kind == AST_FLOAT_LITERAL &&
-                   decl_t->kind == TY_PRIMITIVE) {
-          double val = node->as.var_decl.init->as.float_literal.value;
-          const char *tn = decl_t->as.primitive.name;
-          if (strcmp(tn, "f32") == 0) {
-            // Basic float range check:
-            // f32 is approx +/- 3.4e38
-            if (val > 3.40282347e38 || val < -3.40282347e38) {
-              typechecker_error(tc, node->as.var_decl.init->line,
-                                node->as.var_decl.init->col,
-                                "Float literal overflow for f32");
+        } else {
+          // Contextual literal typing with range checking (D-06, D-09)
+          AstNode *init = node->as.var_decl.init;
+          if (decl_t->kind == TY_PRIMITIVE) {
+            const NumericTypeInfo *info = get_numeric_info(decl_t->as.primitive.name);
+            if (info) {
+              bool is_negated_literal = false;
+              unsigned long long lit_val = 0;
+              bool is_int_literal = false;
+              bool is_float_literal = false;
+
+              if (init->kind == AST_INT_LITERAL) {
+                lit_val = init->as.int_literal.value;
+                is_int_literal = true;
+              } else if (init->kind == AST_UNARY_EXPR &&
+                         init->as.unary.op == TOKEN_MINUS &&
+                         init->as.unary.expr->kind == AST_INT_LITERAL) {
+                lit_val = init->as.unary.expr->as.int_literal.value;
+                is_negated_literal = true;
+                is_int_literal = true;
+              } else if (init->kind == AST_FLOAT_LITERAL) {
+                is_float_literal = true;
+              } else if (init->kind == AST_UNARY_EXPR &&
+                         init->as.unary.op == TOKEN_MINUS &&
+                         init->as.unary.expr->kind == AST_FLOAT_LITERAL) {
+                is_float_literal = true;
+              }
+
+              if (is_int_literal && !info->is_float) {
+                bool overflow = false;
+                if (is_negated_literal) {
+                  if (info->is_signed) {
+                    // For signed types: max negative magnitude is 2^(bits-1)
+                    unsigned long long max_neg = 1ULL << (info->bit_width - 1);
+                    overflow = (lit_val > max_neg);
+                  } else {
+                    // Negative value in unsigned type is always overflow
+                    overflow = true;
+                  }
+                } else {
+                  overflow = (lit_val > info->max_val);
+                  // Also check: unsigned literal assigned to signed type must fit in positive range
+                  if (!overflow && info->is_signed) {
+                    overflow = (lit_val > (unsigned long long)info->max_val);
+                  }
+                }
+                if (overflow) {
+                  typechecker_error(tc, init->line, init->col,
+                                    "Integer literal overflow for type '%s'",
+                                    info->name);
+                }
+              } else if (is_float_literal && info->is_float) {
+                // Float range check for f32
+                double val = 0.0;
+                if (init->kind == AST_FLOAT_LITERAL) {
+                  val = init->as.float_literal.value;
+                } else if (init->kind == AST_UNARY_EXPR) {
+                  val = init->as.unary.expr->as.float_literal.value;
+                }
+                if (strcmp(info->name, "f32") == 0) {
+                  if (val > 3.40282347e38 || val < -3.40282347e38) {
+                    typechecker_error(tc, init->line, init->col,
+                                      "Float literal overflow for f32");
+                  }
+                }
+              }
             }
           }
         }
@@ -1131,6 +1496,20 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   case AST_TUPLE_DESTRUCTURE: {
     Type *init_t = typechecker_infer_expr(tc, node->as.tuple_destructure.init);
 
+    // Count targets for mismatch check.
+    int target_count = 0;
+    for (AstNode *t = node->as.tuple_destructure.targets; t; t = t->next)
+      target_count++;
+
+    // Check count mismatch when init is a resolved tuple.
+    if (init_t->kind == TY_TUPLE &&
+        target_count != init_t->as.tuple.count) {
+      typechecker_error(tc, node->line, node->col,
+        "Tuple destructuring expects %d elements, got %d targets",
+        init_t->as.tuple.count, target_count);
+      break;
+    }
+
     // Walk the target VarDecls and bind each one, matching positional tuple
     // element types when the init resolves to a known tuple.
     AstNode *target = node->as.tuple_destructure.targets;
@@ -1142,6 +1521,18 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
         // If the target has an explicit type annotation, use it.
         if (target->as.var_decl.type) {
           elem_t = typechecker_resolve_type_expr(tc, target->as.var_decl.type);
+          // Validate annotation against actual tuple element type.
+          if (init_t->kind == TY_TUPLE &&
+              elem_idx < init_t->as.tuple.count) {
+            Type *actual_t = init_t->as.tuple.elems[elem_idx];
+            if (type_is_resolved(elem_t) && type_is_resolved(actual_t) &&
+                !type_is_assignable(elem_t, actual_t)) {
+              typechecker_error(tc, target->line, target->col,
+                "Tuple element %d has type '%s', cannot assign to '%s'",
+                elem_idx, type_display_name(actual_t),
+                type_display_name(elem_t));
+            }
+          }
         } else if (init_t->kind == TY_TUPLE) {
           // Index into the tuple's elems array by position.
           if (elem_idx < init_t->as.tuple.count)
@@ -1166,8 +1557,8 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   case AST_RETURN_STMT: {
     if (node->as.return_stmt.value) {
       Type *ret_v = typechecker_infer_expr(tc, node->as.return_stmt.value);
-      if (tc->expected_ret && tc->expected_ret->kind != TY_UNKNOWN &&
-          ret_v->kind != TY_UNKNOWN) {
+      if (tc->expected_ret && type_is_resolved(tc->expected_ret) &&
+          type_is_resolved(ret_v)) {
         if (!type_is_assignable(tc->expected_ret, ret_v)) {
           typechecker_error(tc, node->line, node->col, "Return type mismatch");
         }
@@ -1192,7 +1583,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   case AST_IF_STMT: {
     if (node->as.if_stmt.condition) {
       Type *cond_t = typechecker_infer_expr(tc, node->as.if_stmt.condition);
-      if (cond_t->kind != TY_UNKNOWN) {
+      if (type_is_resolved(cond_t)) {
         if (cond_t->kind != TY_PRIMITIVE ||
             strcmp(cond_t->as.primitive.name, "bool") != 0) {
           typechecker_error(tc, node->line, node->col,
@@ -1219,7 +1610,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
 
         if (arm->as.match_arm.guard) {
           Type *guard_t = typechecker_infer_expr(tc, arm->as.match_arm.guard);
-          if (guard_t->kind != TY_UNKNOWN &&
+          if (type_is_resolved(guard_t) &&
               (guard_t->kind != TY_PRIMITIVE ||
                strcmp(guard_t->as.primitive.name, "bool") != 0)) {
             typechecker_error(tc, arm->as.match_arm.guard->line,
@@ -1247,7 +1638,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   case AST_WHILE_STMT: {
     if (node->as.while_stmt.condition) {
       Type *cond_t = typechecker_infer_expr(tc, node->as.while_stmt.condition);
-      if (cond_t->kind != TY_UNKNOWN &&
+      if (type_is_resolved(cond_t) &&
           (cond_t->kind != TY_PRIMITIVE ||
            strcmp(cond_t->as.primitive.name, "bool") != 0)) {
         typechecker_error(tc, node->line, node->col,
@@ -1431,6 +1822,142 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   }
 }
 
+// D-03: Whitelist of expression kinds where TY_UNKNOWN is always a bug.
+// Literal kinds always resolve to a concrete primitive type — if they end up
+// TY_UNKNOWN something went wrong.  Other expression kinds (identifiers,
+// calls, binary, etc.) may legitimately return TY_UNKNOWN when their operands
+// have no type info (e.g., extern symbols without type annotations).  Those
+// will be promoted to the whitelist as the type checker coverage expands.
+static bool should_have_resolved_type(AstKind kind) {
+  switch (kind) {
+  case AST_INT_LITERAL:
+  case AST_FLOAT_LITERAL:
+  case AST_STRING_LITERAL:
+  case AST_BOOL_LITERAL:
+  case AST_CHAR_LITERAL:
+  case AST_TUPLE_EXPR:
+  case AST_CAST_EXPR:
+    return true;
+  default:
+    return false;
+  }
+}
+
+// D-03: Post-check walk to detect TY_UNKNOWN surviving type checking
+static void check_unresolved_types(TypeChecker *tc, AstNode *node) {
+  if (!node) return;
+
+  // Only report on nodes that went through type inference (have resolved_type set)
+  if (node->resolved_type && node->resolved_type->kind == TY_UNKNOWN
+      && should_have_resolved_type(node->kind)) {
+    fprintf(stderr, "internal error: unresolved type at line %u — please report this bug\n",
+            node->line);
+    tc->had_error = true;
+    tc->error_count++;
+  }
+
+  // Recurse into children based on node kind
+  switch (node->kind) {
+  case AST_PROGRAM:
+    check_unresolved_types(tc, node->as.program.declarations);
+    break;
+  case AST_FUNC_DECL:
+    check_unresolved_types(tc, node->as.func_decl.params);
+    check_unresolved_types(tc, node->as.func_decl.body);
+    break;
+  case AST_VAR_DECL:
+    check_unresolved_types(tc, node->as.var_decl.init);
+    break;
+  case AST_BLOCK:
+    check_unresolved_types(tc, node->as.block.statements);
+    break;
+  case AST_RETURN_STMT:
+    check_unresolved_types(tc, node->as.return_stmt.value);
+    break;
+  case AST_IF_STMT:
+    check_unresolved_types(tc, node->as.if_stmt.condition);
+    check_unresolved_types(tc, node->as.if_stmt.then_branch);
+    check_unresolved_types(tc, node->as.if_stmt.else_branch);
+    break;
+  case AST_WHILE_STMT:
+    check_unresolved_types(tc, node->as.while_stmt.condition);
+    check_unresolved_types(tc, node->as.while_stmt.body);
+    break;
+  case AST_FOR_STMT:
+    check_unresolved_types(tc, node->as.for_stmt.iter);
+    check_unresolved_types(tc, node->as.for_stmt.body);
+    break;
+  case AST_LOOP_STMT:
+    check_unresolved_types(tc, node->as.loop_stmt.body);
+    break;
+  case AST_MATCH_STMT:
+    check_unresolved_types(tc, node->as.match_stmt.subject);
+    check_unresolved_types(tc, node->as.match_stmt.arms);
+    break;
+  case AST_MATCH_ARM:
+    check_unresolved_types(tc, node->as.match_arm.pattern);
+    check_unresolved_types(tc, node->as.match_arm.guard);
+    check_unresolved_types(tc, node->as.match_arm.body);
+    break;
+  case AST_UNSAFE_BLOCK:
+    check_unresolved_types(tc, node->as.unsafe_block.body);
+    break;
+  case AST_BINARY_EXPR:
+    check_unresolved_types(tc, node->as.binary.left);
+    check_unresolved_types(tc, node->as.binary.right);
+    break;
+  case AST_UNARY_EXPR:
+    check_unresolved_types(tc, node->as.unary.expr);
+    break;
+  case AST_ASSIGN:
+    check_unresolved_types(tc, node->as.assign.target);
+    check_unresolved_types(tc, node->as.assign.value);
+    break;
+  case AST_CALL_EXPR:
+    check_unresolved_types(tc, node->as.call.callee);
+    check_unresolved_types(tc, node->as.call.args);
+    break;
+  case AST_INDEX_EXPR:
+    check_unresolved_types(tc, node->as.index.target);
+    check_unresolved_types(tc, node->as.index.index);
+    break;
+  case AST_FIELD_EXPR:
+    check_unresolved_types(tc, node->as.field.target);
+    break;
+  case AST_CAST_EXPR:
+    check_unresolved_types(tc, node->as.cast.expr);
+    break;
+  case AST_TRY_EXPR:
+    check_unresolved_types(tc, node->as.try_expr.expr);
+    break;
+  case AST_CATCH_EXPR:
+    check_unresolved_types(tc, node->as.catch_expr.expr);
+    check_unresolved_types(tc, node->as.catch_expr.handler);
+    break;
+  case AST_ARRAY_LITERAL:
+    check_unresolved_types(tc, node->as.array_literal.elems);
+    break;
+  case AST_TUPLE_EXPR:
+    check_unresolved_types(tc, node->as.tuple_expr.elems);
+    break;
+  case AST_RANGE_EXPR:
+    check_unresolved_types(tc, node->as.range_expr.start);
+    check_unresolved_types(tc, node->as.range_expr.end);
+    break;
+  case AST_METHOD_DECL:
+    check_unresolved_types(tc, node->as.method_decl.methods);
+    break;
+  case AST_MOD_DECL:
+    check_unresolved_types(tc, node->as.mod_decl.declarations);
+    break;
+  default:
+    break;
+  }
+
+  // Walk linked list siblings
+  check_unresolved_types(tc, node->next);
+}
+
 void typechecker_check(TypeChecker *tc, AstNode *program) {
   if (!program || program->kind != AST_PROGRAM)
     return;
@@ -1442,4 +1969,9 @@ void typechecker_check(TypeChecker *tc, AstNode *program) {
     typechecker_check_node(tc, decl);
     decl = decl->next;
   }
+
+  // D-03: Post-check validation — detect TY_UNKNOWN surviving type checking.
+  // Only ICEs on expression kinds that have handlers in typechecker_infer_expr;
+  // unhandled kinds legitimately remain TY_UNKNOWN until their handlers are added.
+  check_unresolved_types(tc, program);
 }

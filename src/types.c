@@ -22,6 +22,9 @@ void type_context_init(TypeContext *ctx, Arena *arena) {
 
   ctx->type_unknown = arena_alloc(arena, sizeof(Type));
   ctx->type_unknown->kind = TY_UNKNOWN;
+
+  ctx->type_error = arena_alloc(arena, sizeof(Type));
+  ctx->type_error->kind = TY_INFER_ERROR;
 }
 
 Type *type_new_primitive(TypeContext *ctx, const char *name) {
@@ -104,6 +107,8 @@ bool type_equals(Type *a, Type *b) {
     return true;
   if (!a || !b)
     return false;
+  if (a->kind == TY_INFER_ERROR || b->kind == TY_INFER_ERROR)
+    return true;  // poison: suppress cascading errors (per D-02)
   if (a->kind != b->kind)
     return false;
 
@@ -159,6 +164,9 @@ bool type_equals(Type *a, Type *b) {
 
   case TY_UNKNOWN:
     return true;
+
+  case TY_INFER_ERROR:
+    return true;  // poison: handled above, but satisfy switch exhaustiveness
   }
 
   return false;
@@ -170,8 +178,20 @@ bool type_is_assignable(Type *target, Type *source) {
   if (!target || !source)
     return false;
 
+  if (target->kind == TY_INFER_ERROR || source->kind == TY_INFER_ERROR)
+    return true;  // poison: suppress cascading errors (per D-02)
+
   if (target->kind == TY_UNKNOWN || source->kind == TY_UNKNOWN) {
     return true;
+  }
+
+  // Pointer assignability: if both are pointers and either inner is
+  // TY_UNKNOWN (unresolved recursive type), allow assignment.
+  if (target->kind == TY_POINTER && source->kind == TY_POINTER) {
+    if (target->as.pointer.inner->kind == TY_UNKNOWN ||
+        source->as.pointer.inner->kind == TY_UNKNOWN)
+      return true;
+    return type_equals(target->as.pointer.inner, source->as.pointer.inner);
   }
 
   // Permissive integer literal assignment: allow i32 (default literal type)
@@ -219,8 +239,20 @@ bool type_is_comparable(Type *a, Type *b) {
   if (!a || !b)
     return false;
 
+  if (a->kind == TY_INFER_ERROR || b->kind == TY_INFER_ERROR)
+    return true;  // poison: suppress cascading errors (per D-02)
+
   if (a->kind == TY_UNKNOWN || b->kind == TY_UNKNOWN) {
     return true;
+  }
+
+  // Pointer comparability: if both are pointers and either inner is
+  // TY_UNKNOWN (unresolved recursive type), allow comparison.
+  if (a->kind == TY_POINTER && b->kind == TY_POINTER) {
+    if (a->as.pointer.inner->kind == TY_UNKNOWN ||
+        b->as.pointer.inner->kind == TY_UNKNOWN)
+      return true;
+    return type_equals(a->as.pointer.inner, b->as.pointer.inner);
   }
 
   // Permissive literal comparison
@@ -253,4 +285,49 @@ bool type_is_comparable(Type *a, Type *b) {
   }
 
   return false;
+}
+
+static const NumericTypeInfo numeric_types[] = {
+  {"i8",    true,  false, 8,  -128LL,                   127ULL,                   1},
+  {"i16",   true,  false, 16, -32768LL,                 32767ULL,                 2},
+  {"i32",   true,  false, 32, -2147483648LL,            2147483647ULL,            3},
+  {"i64",   true,  false, 64, (-9223372036854775807LL - 1), 9223372036854775807ULL, 4},
+  {"u8",    false, false, 8,  0,                        255ULL,                   1},
+  {"u16",   false, false, 16, 0,                        65535ULL,                 2},
+  {"u32",   false, false, 32, 0,                        4294967295ULL,            3},
+  {"u64",   false, false, 64, 0,                        18446744073709551615ULL,  4},
+  {"f32",   true,  true,  32, 0,                        0,                        1},
+  {"f64",   true,  true,  64, 0,                        0,                        2},
+  {"usize", false, false, 64, 0,                        18446744073709551615ULL,  4},
+};
+
+const NumericTypeInfo *get_numeric_info(const char *name) {
+  for (int i = 0; i < (int)(sizeof(numeric_types)/sizeof(numeric_types[0])); i++) {
+    if (strcmp(numeric_types[i].name, name) == 0)
+      return &numeric_types[i];
+  }
+  return NULL;
+}
+
+bool type_is_integer(Type *t) {
+  if (!t || t->kind != TY_PRIMITIVE) return false;
+  const NumericTypeInfo *info = get_numeric_info(t->as.primitive.name);
+  return info && !info->is_float;
+}
+
+bool type_is_float(Type *t) {
+  if (!t || t->kind != TY_PRIMITIVE) return false;
+  const NumericTypeInfo *info = get_numeric_info(t->as.primitive.name);
+  return info && info->is_float;
+}
+
+bool type_is_numeric(Type *t) {
+  if (!t || t->kind != TY_PRIMITIVE) return false;
+  return get_numeric_info(t->as.primitive.name) != NULL;
+}
+
+bool type_is_signed_int(Type *t) {
+  if (!t || t->kind != TY_PRIMITIVE) return false;
+  const NumericTypeInfo *info = get_numeric_info(t->as.primitive.name);
+  return info && info->is_signed && !info->is_float;
 }

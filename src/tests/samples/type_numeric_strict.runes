@@ -1,0 +1,8 @@
+-- EXPECT FAIL: Type mismatch
+-- Tests: TYPE-01, TYPE-02 — strict numeric type checking rejects mixed-width ops
+
+f test_mixed_width() {
+  i8 a = 1
+  i32 b = 2
+  i32 c = a + b  -- error: i8 + i32 requires cast
+}

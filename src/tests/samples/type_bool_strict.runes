@@ -1,0 +1,9 @@
+-- EXPECT FAIL: must be a boolean
+-- Tests: TYPE-09 -- boolean strictness in conditions
+
+f test_non_bool_condition() {
+  i32 x = 42
+  if x {
+    i32 y = 1
+  }
+}

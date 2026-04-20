@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 -- This file should fail type checking with multiple errors
 
 -- Duplicate fields

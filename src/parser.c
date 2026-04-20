@@ -353,7 +353,7 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
     body = parse_block(p);
     if (!body)
       return NULL;
-  } else if (body_allowed && has_return && p->current.line == p->prev_line) {
+  } else if (body_allowed && has_return && (uint32_t)p->current.line == p->prev_line) {
     // one-liner — only valid when there IS a named return AND it's on the same
     // line
     AstNode *expr = parse_expr(p);
@@ -544,6 +544,7 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
 
 // Spec §7: type Color = | Red | Green | RGB(u8,u8,u8)
 static AstNode *parse_variant_decl(Parser *p, bool is_pub) {
+  (void)is_pub;
   // 'type Name =' already consumed; current == TOKEN_PIPE
   // we need the name — reconstruct from the token that parse_type_decl consumed
   // Actually parse_type_decl calls us and we don't have name_tok.
@@ -1951,7 +1952,7 @@ static AstNode *parse_postfix(Parser *p) {
     // ── call: foo(a, b) — Spec §4 ─────────────────────────────────────
     // Note: No line check for calls to allow multi-line function calls
     if (check(p, TOKEN_LPAREN)) {
-      if (p->current.line > p->prev_line)
+      if ((uint32_t)p->current.line > p->prev_line)
         break;
       Token open = advance(p);
       skip_newlines(p);
@@ -1966,7 +1967,7 @@ static AstNode *parse_postfix(Parser *p) {
 
       // ── index: arr[0] — Spec §3 ───────────────────────────────────────
     } else if (check(p, TOKEN_LBRACKET)) {
-      if (p->current.line > p->prev_line)
+      if ((uint32_t)p->current.line > p->prev_line)
         break;
       Token open = advance(p);
       AstNode *index = parse_expr(p);
@@ -2060,7 +2061,7 @@ static AstNode *parse_multiplicative(Parser *p) {
 
   while (check(p, TOKEN_STAR) || check(p, TOKEN_SLASH) ||
          check(p, TOKEN_PERCENT)) {
-    if (p->current.line > p->prev_line)
+    if ((uint32_t)p->current.line > p->prev_line)
       break;
     Token op = advance(p);
     AstNode *right = parse_unary(p);
@@ -2080,7 +2081,7 @@ static AstNode *parse_additive(Parser *p) {
     return NULL;
 
   while (check(p, TOKEN_PLUS) || check(p, TOKEN_MINUS)) {
-    if (p->current.line > p->prev_line)
+    if ((uint32_t)p->current.line > p->prev_line)
       break;
     Token op = advance(p);
     AstNode *right = parse_multiplicative(p);
@@ -2101,7 +2102,7 @@ static AstNode *parse_bitwise(Parser *p) {
 
   while (check(p, TOKEN_AMP) || check(p, TOKEN_CARET) || check(p, TOKEN_PIPE) ||
          check(p, TOKEN_SHL) || check(p, TOKEN_SHR)) {
-    if (p->current.line > p->prev_line)
+    if ((uint32_t)p->current.line > p->prev_line)
       break;
     Token op = advance(p);
     AstNode *right = parse_additive(p);
@@ -2122,7 +2123,7 @@ static AstNode *parse_comparison(Parser *p) {
 
   while (check(p, TOKEN_LT) || check(p, TOKEN_LT_EQ) || check(p, TOKEN_GT) ||
          check(p, TOKEN_GT_EQ)) {
-    if (p->current.line > p->prev_line)
+    if ((uint32_t)p->current.line > p->prev_line)
       break;
     Token op = advance(p);
     AstNode *right = parse_bitwise(p);

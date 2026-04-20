@@ -1,3 +1,4 @@
+-- EXPECT FAIL: overflow
 -- Float Range Checking Test
 
 f main() {

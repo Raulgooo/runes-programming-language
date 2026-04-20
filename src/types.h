@@ -24,7 +24,8 @@ typedef enum {
   TY_VARIANT,   // type Color = | Red | Green | RGB(u8,u8,u8)
   TY_INTERFACE, // interface Drawable { ... }
   TY_ERROR,     // error MathError = { | DivByZero | Overflow }
-  TY_UNKNOWN,   // pending
+  TY_UNKNOWN,     // pending inference -- not yet resolved
+  TY_INFER_ERROR, // inference failed, error already reported (poison type)
 } SemTypeKind;
 
 typedef struct Type Type;
@@ -136,6 +137,7 @@ typedef struct {
 
   // Singletons especiales
   Type *type_unknown;
+  Type *type_error;   // singleton for TY_INFER_ERROR (poison)
 } TypeContext;
 
 void type_context_init(TypeContext *ctx, Arena *arena);
@@ -155,5 +157,22 @@ Type *type_new_variant(TypeContext *ctx, const char *name,
 bool type_equals(Type *a, Type *b);
 bool type_is_assignable(Type *target, Type *source);
 bool type_is_comparable(Type *a, Type *b);
+
+// Numeric type metadata for range checking and cast suggestions
+typedef struct {
+  const char *name;
+  bool is_signed;
+  bool is_float;
+  int bit_width;
+  long long min_val;
+  unsigned long long max_val;
+  int rank; // for widening direction: higher rank = wider type
+} NumericTypeInfo;
+
+const NumericTypeInfo *get_numeric_info(const char *name);
+bool type_is_integer(Type *t);
+bool type_is_float(Type *t);
+bool type_is_numeric(Type *t);
+bool type_is_signed_int(Type *t);
 
 #endif // RUNES_TYPES_H

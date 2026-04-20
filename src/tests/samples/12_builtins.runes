@@ -108,7 +108,7 @@ regional f promote_to_dynamic() = r: *u8 {
 
 -- Promote from stack/regional to GC (GC owns)
 regional f promote_to_gc() = r: *Node {
-    Node n = Node(val: 42)
+    Node n = Node(val: 42, next: 0 as *Node)
     *Node promoted = promote(&n) as gc
     r = promoted
 }
