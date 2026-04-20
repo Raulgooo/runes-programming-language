@@ -1,4 +1,4 @@
-# Runes Language Specification — v1.0 (Draft)
+# Runes Language Specification — v0.1 (Draft)
 
 > Systems-level language with high-level ergonomics.
 > Designed for writing operating systems, compilers, and tooling without sacrificing expressiveness. Stdlib aims to deliver a comprehensive set of tools for systems programming and high-level basic programming.
@@ -1041,7 +1041,7 @@ use kernel.arch.x86.read_cr3
 
 ---
 
-## 14. Comments
+## 15. Comments
 
 ```runes
 -- Single line comment
@@ -1060,9 +1060,11 @@ f add(x: i32, y: i32) = result: i32 {
 
 ---
 
-## 15. Pipes
+## 16. Pipes
 
-pipes are some of the differential features of the language
+> **Not yet implemented.** The `pipe` keyword and pipeline function syntax are planned for v0.1 but are not yet in the lexer or parser. The syntax below is the intended design.
+
+Pipes are one of the differential features of the language. A `pipe` function declares a sequential data transformation — each stage receives the output of the previous.
 
 ```runes
 pipe compile(input: str) = output: *Node {
@@ -1070,7 +1072,7 @@ pipe compile(input: str) = output: *Node {
 }
 ```
 
-## 16. Full OS Example
+## 17. Full OS Example
 
 ```runes
 use kernel.arch.x86
@@ -1125,7 +1127,7 @@ pub f kernel_main() {
 
 ---
 
-## 17. Keyword Reference
+## 18. Keyword Reference
 
 | Keyword      | Meaning                                                |
 | ------------ | ------------------------------------------------------ | --- |
@@ -1161,7 +1163,7 @@ pub f kernel_main() {
 
 ---
 
-## 18. Feature Roadmap
+## 19. Feature Roadmap
 
 | Feature                        | Version |
 | ------------------------------ | ------- |
@@ -1169,7 +1171,7 @@ pub f kernel_main() {
 | Functions (f, dynamic, etc.)   | v0.1    |
 | Structs, variants, interfaces  | v0.1    |
 | Pattern matching               | v0.1    |
-| Generics                       | v0.1    |
+| Generics                       | v0.2    |
 | flex f (stack only, v0.1)      | v0.1    |
 | flex f (full monomorphization) | v0.2    |
 | Error handling (!T, try/catch) | v0.1    |
@@ -1181,6 +1183,8 @@ pub f kernel_main() {
 | #[section] / #[link_name]      | v0.1    |
 | #[callconv] / #[interrupt]     | v0.1    |
 | JSON (`as J`, `schema`)        | v0.1    |
+| Code generation (C backend)    | v0.1    |
+| LLVM IR backend                | v0.2    |
 | HTTP / web stdlib              | v0.2    |
 | Async / await                  | v0.2    |
 | Macros                         | v0.3    |
@@ -1188,4 +1192,4 @@ pub f kernel_main() {
 
 ---
 
-_Runes — v1.0 draft. Backend: LLVM IR. Compiler: C bootstrap → self-hosted._
+_Runes — v0.1 draft. Bootstrap compiler: C. Codegen target: C backend (v0.1) → LLVM IR (v0.2) → self-hosted._
