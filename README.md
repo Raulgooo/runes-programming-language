@@ -1,6 +1,10 @@
-# Runes
+<p align="center">
+  <img src="assets/runes_true.svg" alt="Runes" width="200"/>
+</p>
 
-A systems-level programming language designed for writing operating systems, compilers, and tooling without sacrificing expressiveness.
+<h1 align="center">Runes</h1>
+
+<p align="center">A systems-level programming language designed for writing operating systems, compilers, and tooling without sacrificing expressiveness.</p>
 
 ```runes
 -- The memory strategy lives on the function, not globally.
