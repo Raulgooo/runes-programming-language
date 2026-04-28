@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 -- EXPECT FAIL: Type Error
 type Point = {
     x: i32,

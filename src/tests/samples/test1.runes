@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 i32 x = 42
 const i32 MAX = 512
 

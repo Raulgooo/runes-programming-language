@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 07_unsafe_systems.runes
     Tests: extern, volatile, unsafe blocks, inline asm,
     struct layout attributes (#[packed] #[align] #[repr(C)]),

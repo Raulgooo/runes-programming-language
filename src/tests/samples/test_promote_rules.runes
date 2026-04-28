@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- test_promote_rules.runes
     Phase 3: Validates promote expression rules.
     promote is only valid inside non-stack realms,

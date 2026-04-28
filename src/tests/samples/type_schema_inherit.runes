@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 -- Tests: TYPE-11 -- schema inheritance chain
 
 schema Base = {

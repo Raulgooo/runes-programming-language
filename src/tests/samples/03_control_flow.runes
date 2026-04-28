@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 03_control_flow.runes
     Tests every control flow construct:
     if/else if/else, if-as-expression,

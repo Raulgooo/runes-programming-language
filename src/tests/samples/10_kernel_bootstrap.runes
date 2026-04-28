@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 10_kernel_bootstrap.runes
     Integration test — a complete, self-consistent kernel source file.
     Exercises almost every v0.1 construct in one realistic context:

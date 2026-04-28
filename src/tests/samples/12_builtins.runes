@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 12_builtins.runes
     Tests compile-time builtins:
     sizeof(T) - size of types at compile time

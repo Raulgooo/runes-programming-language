@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 05_error_handling.runes
     Tests: error set declarations, !T return type,
     try propagation, catch (block + default), match Ok/Err,

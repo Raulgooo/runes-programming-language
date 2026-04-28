@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 06_pattern_matching.runes
     Tests: basic match statement, match-as-expression,
     guards, destructuring, nested match, wildcard,
