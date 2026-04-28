@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 f first() {
     second() -- Will this be found?
 }

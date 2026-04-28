@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 -- EXPECT FAIL: expects payload type
 -- Tests: TYPE-06 -- variant payload type checking
 

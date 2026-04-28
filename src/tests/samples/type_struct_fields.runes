@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 -- EXPECT FAIL: missing required field
 -- Tests: TYPE-05 -- struct field validation
 

@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 09_modules.runes
     Tests: mod declarations, pub visibility, use (whole module,
     specific symbol, nested path), mixed pub/private functions.

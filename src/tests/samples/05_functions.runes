@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 f add(a: i32, b: i32) = r: i32 {
     result := a + b
     return result

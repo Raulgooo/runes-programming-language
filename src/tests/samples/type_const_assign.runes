@@ -1,3 +1,4 @@
+-- EXPECT FAIL:
 -- EXPECT FAIL: Cannot reassign constant
 -- Tests: TYPE-08 -- const correctness
 

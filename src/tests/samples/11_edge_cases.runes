@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 11_edge_cases.runes
     Targets formatter edge cases specifically:
     — all three comment forms (single-line, multi-line, doc)

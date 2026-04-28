@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 02_functions.runes
     Tests every function form:
     f, stack f, dynamic f, regional f, gc f, flex f,

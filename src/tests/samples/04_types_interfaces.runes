@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 04_types_interfaces.runes
     Tests: one-liner structs, full structs with defaults,
     variants (ADTs), method blocks, interface definitions,

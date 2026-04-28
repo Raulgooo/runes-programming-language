@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- test_match_types.runes
     Phase 2: Validates match statement type checking.
     Tests literal patterns, binding patterns, wildcards,

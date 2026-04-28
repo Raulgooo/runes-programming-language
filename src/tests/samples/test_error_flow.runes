@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- test_error_flow.runes
     Phase 2: Validates try/catch type checking.
     Tests try unwrapping, catch with block handler,

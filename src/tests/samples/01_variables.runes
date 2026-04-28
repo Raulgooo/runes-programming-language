@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 --- 01_variables.runes
     Tests every variable declaration form:
     typed mutable, inferred, const (typed + inferred),

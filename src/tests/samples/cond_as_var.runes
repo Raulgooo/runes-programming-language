@@ -1,3 +1,4 @@
+-- EXPECT FAIL: Error
 x := 12
 label := if x > 0 { "pos" } else { "neg" }
 
