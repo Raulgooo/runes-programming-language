@@ -1,0 +1,10 @@
+-- Regression test for BUG-001: extern declarations in prelude caused segfault
+-- in typechecker_collect_decls when accessing node->as.program.declarations
+-- on a raw declarations list instead of the node itself.
+
+extern f log(msg: str)
+extern i32 MAX_BUFFER_SIZE
+
+f main() {
+    log("extern decl typecheck regression test passed")
+}

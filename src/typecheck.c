@@ -300,7 +300,7 @@ Type *typechecker_resolve_type_expr(TypeChecker *tc, AstNode *node) {
 
 static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
   // Pass 1: Types (Structs, Variants)
-  AstNode *decl = node->as.program.declarations;
+  AstNode *decl = node;
   while (decl) {
     if (decl->kind == AST_TYPE_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.type_decl.name);
@@ -322,7 +322,7 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
   }
 
   // Pass 1.5: Populate Type fields (now that all type objects exist)
-  decl = node->as.program.declarations;
+  decl = node;
   while (decl) {
     if (decl->kind == AST_TYPE_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.type_decl.name);
@@ -379,7 +379,7 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
   }
 
   // Pass 2: Functions, Externs, Variables, Methods
-  decl = node->as.program.declarations;
+  decl = node;
   while (decl) {
     if (decl->kind == AST_FUNC_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.func_decl.name);
