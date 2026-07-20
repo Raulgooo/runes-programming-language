@@ -50,6 +50,8 @@ make clean    # removes binary
 No external dependencies. Pure C, zero third-party libraries.
 
 For a short walkthrough, see [Writing and Running Runes Programs](docs/getting-started.md).
+For the full implemented-language reference, see
+[Runes v0.1 Language Usage Guide](docs/language-guide.md).
 
 ---
 
@@ -321,9 +323,9 @@ Syntax highlighting for `.runes` files. TextMate grammar, no build step needed.
 make install-zed
 ```
 
-Then run **zed: install dev extension** in Zed and select the directory printed
-by the installer. The extension includes Tree-sitter syntax highlighting,
-bracket matching, and `--` comment toggling. See
+The installer registers the extension directly. Restart Zed if it was already
+running. The extension includes Tree-sitter syntax highlighting, bracket
+matching, and `--` comment toggling. See
 [editors/zed/README.md](editors/zed/README.md).
 
 ---

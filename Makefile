@@ -8,7 +8,7 @@ TARGET = runes
 all: $(TARGET)
 
 guide:
-	@printf '%s\n' 'See docs/getting-started.md'
+	@printf '%s\n' 'See docs/language-guide.md'
 
 install-zed:
 	bash editors/zed/install.bash
@@ -112,6 +112,9 @@ test-tooling: $(TARGET)
 	./runec check src/examples/hello_codegen.runes
 	./runec build src/examples/hello_codegen.runes -o /tmp/runes_tooling_test
 	@test "$$(/tmp/runes_tooling_test)" = "hello world"
+	./runec check src/examples/language_tour.runes
+	./runec build src/examples/language_tour.runes -o /tmp/runes_language_tour
+	@test "$$(/tmp/runes_language_tour)" = "42 42 42 0"
 
 test-zed:
 	bash editors/zed/test.bash

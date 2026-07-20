@@ -1,0 +1,56 @@
+type Counter = { value: i32 }
+
+method Counter {
+    f add(self: *Counter, amount: i32) {
+        self.value = self.value + amount
+    }
+
+}
+
+interface Readable {
+    f read_value(self) = result: i32
+}
+
+method Readable for Counter {
+    f read_value(self) = result: i32 {
+        result = self.value
+    }
+}
+
+type Status = | Ready | Failed(i32)
+
+error MathError = { | DivisionByZero }
+
+f divide(left: i32, right: i32) = result: !i32 {
+    if right == 0 {
+        result = error.MathError.DivisionByZero
+    } else {
+        result = left / right
+    }
+}
+
+f read(value: Readable) = result: i32 {
+    result = value.read_value()
+}
+
+f status_code(status: Status) = result: i32 {
+    result = match status {
+        Ready -> 0,
+        Failed(code) -> code,
+    }
+}
+
+f main() {
+    Counter counter = Counter(value: 40)
+    counter.add(2)
+
+    [3]i32 values = [10, 20, 12]
+    i32 total = 0
+    for (values) |value| {
+        total = total + value
+    }
+
+    i32 quotient = divide(84, 2) catch -1
+    Status status = Status.Ready
+    print(read(counter), total, quotient, status_code(status))
+}

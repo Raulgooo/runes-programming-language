@@ -1,5 +1,9 @@
 # Writing and Running Runes Programs
 
+This is the short setup path. See [language-guide.md](language-guide.md) for the
+complete implemented syntax, builtins, FFI workflow, memory realms, systems
+features, and current backend limitations.
+
 ## 1. Build the compiler
 
 Runes needs GCC and Make.
@@ -114,12 +118,12 @@ make test-sanitize
 
 ## 7. Editor highlighting
 
-VS Code support is in `runes-lang/`. For Zed, prepare the local Tree-sitter
+VS Code support is in `runes-lang/`. For Zed, install the local Tree-sitter
 extension with:
 
 ```bash
 make install-zed
 ```
 
-In Zed, run **zed: install dev extension** and select the printed directory.
-Use `make test-zed` to validate the grammar and extension files locally.
+Restart Zed if it was already running. Use `make test-zed` to validate the
+grammar and extension files locally.
