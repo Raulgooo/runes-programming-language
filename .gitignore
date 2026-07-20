@@ -2,3 +2,5 @@ lexer.md
 lexertask.md
 err.txt
 out.txt
+/build/
+/runes_asan

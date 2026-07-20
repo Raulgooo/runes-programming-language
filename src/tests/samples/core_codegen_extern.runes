@@ -1,0 +1,5 @@
+extern f abs(value: i32) = result: i32
+
+f main() {
+    print(abs(-42))
+}

@@ -1,0 +1,4 @@
+-- EXPECT FAIL: expected an expression
+f broken() {
+    i32 value =
+}

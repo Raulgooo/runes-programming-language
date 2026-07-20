@@ -1,0 +1,7 @@
+f main() {
+    later(20)
+}
+
+f later(value: i32) = result: i32 {
+    result = value + 22
+}

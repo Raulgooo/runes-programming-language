@@ -1,0 +1,24 @@
+interface Value {
+    f get(self) = r: i32
+}
+
+type First = { value: i32 }
+type Second = { value: i32 }
+
+method Value for First {
+    f get(self) = r: i32 { r = self.value }
+}
+
+method Value for Second {
+    f get(self) = r: i32 { r = self.value + 1 }
+}
+
+f read(value: Value) = r: i32 {
+    r = value.get()
+}
+
+f main() {
+    First first = First(value: 7)
+    Value second = Second(value: 8)
+    print(read(first), read(second))
+}

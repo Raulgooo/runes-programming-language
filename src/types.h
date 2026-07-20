@@ -73,6 +73,8 @@ typedef struct {
   Type **field_types;
   int field_count;
   Method *methods;
+  const char **interface_names;
+  int interface_count;
 } StructType;
 
 typedef struct {
@@ -153,6 +155,11 @@ Type *type_new_struct(TypeContext *ctx, const char *name,
                       int field_count);
 Type *type_new_variant(TypeContext *ctx, const char *name,
                        const char **arm_names, Type **arm_types, int arm_count);
+Type *type_new_interface(TypeContext *ctx, const char *name,
+                         const char **method_names, Type **method_types,
+                         int method_count);
+Type *type_new_error(TypeContext *ctx, const char *name,
+                     const char **variants, int variant_count);
 
 bool type_equals(Type *a, Type *b);
 bool type_is_assignable(Type *target, Type *source);

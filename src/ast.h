@@ -36,7 +36,6 @@ typedef enum {
 typedef struct Attr {
   const char *name;    // "packed" | "align" | "repr" | "section"
                        // "link_name" | "callconv" | "interrupt"
-                       // "json" | "json_skip"
   struct AstNode *arg; // NULL if attribute takes no argument
   struct Attr *next;
 } Attr;
@@ -51,11 +50,8 @@ typedef enum {
   TYPE_QUALIFIED, // module.Type — qualified type name
   TYPE_PTR,       // *T
   TYPE_ARRAY,     // [N]T
-  TYPE_SL,        // sl — singly linked list (element type erased in v0.1)
-  TYPE_DL,        // dl — doubly linked list (element type erased in v0.1)
   TYPE_FALLIBLE,  // !T — can fail; inner == NULL means !void
   TYPE_TUPLE,     // (T, U, ...) — multiple returns
-  TYPE_J,         // J — built-in JSON type
 } TypeKind;
 
 // for-loop capture forms
@@ -63,13 +59,12 @@ typedef enum {
   CAPTURE_VALUE,   // |n|
   CAPTURE_PTR,     // |*n|   — mutate in place
   CAPTURE_INDEXED, // |n, i| — value + index
+  CAPTURE_PTR_INDEXED, // |*n, i| — pointer + index
 } CaptureKind;
 
 // as-expression disambiguation — resolved at parse time
 typedef enum {
-  CAST_RAW,    // 0xFF as *u32     — raw bitcast / pointer cast
-  CAST_TO_J,   // val as J         — serialize to JSON
-  CAST_FROM_J, // j as Point       — deserialize from JSON
+  CAST_RAW, // 0xFF as *u32 — numeric, raw bit, or pointer cast
 } CastKind;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,7 +81,6 @@ typedef enum {
   AST_TYPE_DECL,
   AST_VARIANT_DECL,
   AST_VARIANT_ARM,
-  AST_SCHEMA_DECL,
   AST_FIELD_DECL,
   AST_METHOD_DECL,
   AST_INTERFACE_DECL,
@@ -144,9 +138,6 @@ typedef enum {
   AST_ASM_EXPR,
   AST_VOLATILE_EXPR,
 
-  // expressions — JSON (v0.1 placeholder; methods resolved as AST_CALL_EXPR)
-  AST_JSON_EXPR,
-
   AST_NAMED_ARG,
   AST_TUPLE_DESTRUCTURE, // x, y, z = tuple_expr
   AST_STRUCT_PATTERN,    // Vec2(x: 0.0, y) - struct destructuring pattern
@@ -161,7 +152,7 @@ typedef enum {
 //   - statements inside a block
 //   - parameters in a function signature
 //   - arms in match / variant / error
-//   - fields in a type / schema
+//   - fields in a type
 //   - arguments in a call
 //   - segments in a use path
 //
@@ -176,6 +167,7 @@ typedef struct AstNode {
   struct AstNode
       *next; // intrusive list — next sibling in whatever list owns this node
   struct Type *resolved_type; // The type inferred by the type checker
+  struct AstNode *resolved_decl; // Declaration selected during resolution
 
   union {
 
@@ -233,22 +225,14 @@ typedef struct AstNode {
           *fields; // linked list of AST_TYPE_EXPR; NULL if unit variant
     } variant_arm;
 
-    // schema RedShoe : Shoe = { color: str = "red", ... }
-    struct {
-      bool is_pub;
-      const char *name;
-      const char *parent;     // NULL if no inheritance
-      struct AstNode *fields; // linked list of AST_FIELD_DECL
-    } schema_decl;
-
-    // name: T = default  (inside type / schema)
+    // name: T = default  (inside type)
     // volatile data: u8  (inside type with volatile qualifier)
     struct {
       bool is_volatile;
       const char *name;
       struct AstNode *type;        // AST_TYPE_EXPR
       struct AstNode *default_val; // NULL if no default
-      Attr *attrs;                 // #[json("key")], #[json_skip]
+      Attr *attrs;
     } field_decl;
 
     // method Vec2 { }   /   method Drawable for Vec2 { }
@@ -443,7 +427,7 @@ typedef struct AstNode {
       const char *field;
     } field;
 
-    // val as *u32  /  val as J  /  j as Point
+    // val as *u32 / val as i64
     // promote has its own node — see below
     struct {
       CastKind kind;
@@ -521,7 +505,7 @@ typedef struct AstNode {
       struct AstNode *expr;
     } volatile_expr;
 
-    // *u64 | i32 | [N]T | !T | !void | (T, U) | sl | dl | J | module.Type
+    // *u64 | i32 | [N]T | !T | !void | (T, U) | module.Type
     struct {
       TypeKind kind;
       const char
@@ -535,12 +519,6 @@ typedef struct AstNode {
                             // AST_IDENTIFIER)
       struct AstNode *elems; // TYPE_TUPLE  → linked list of AST_TYPE_EXPR
     } type_expr;
-
-    // AST_JSON_EXPR — placeholder for v0.1.
-    // j.string() / j.pretty() / j.get() / j.set() / j.has()
-    // are parsed as AST_CALL_EXPR(AST_FIELD_EXPR(...)) — no special node
-    // needed. This kind is reserved for future compiler-generated JSON
-    // intrinsics.
 
   } as;
 } AstNode;
@@ -567,8 +545,6 @@ AstNode *ast_new_type_decl(Arena *arena, bool is_pub, const char *name,
 AstNode *ast_new_variant_decl(Arena *arena, bool is_pub, const char *name,
                               AstNode *arms);
 AstNode *ast_new_variant_arm(Arena *arena, const char *name, AstNode *fields);
-AstNode *ast_new_schema_decl(Arena *arena, bool is_pub, const char *name,
-                             const char *parent, AstNode *fields);
 AstNode *ast_new_field_decl(Arena *arena, bool is_volatile, const char *name,
                             AstNode *type, AstNode *default_val, Attr *attrs);
 AstNode *ast_new_method_decl(Arena *arena, bool is_pub, const char *type_name,
@@ -650,9 +626,6 @@ AstNode *ast_new_type_array(Arena *arena, AstNode *size, AstNode *elem_type);
 AstNode *ast_new_type_fallible(Arena *arena,
                                AstNode *inner); // inner == NULL → !void
 AstNode *ast_new_type_tuple(Arena *arena, AstNode *elems);
-AstNode *ast_new_type_sl(Arena *arena);
-AstNode *ast_new_type_dl(Arena *arena);
-AstNode *ast_new_type_j(Arena *arena);
 
 // attributes
 Attr *attr_new(Arena *arena, const char *name, AstNode *arg);

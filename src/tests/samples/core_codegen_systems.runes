@@ -1,0 +1,16 @@
+f main() {
+    [4]i32 values = [1, 2, 3, 4]
+    i32 changed = 0
+    unsafe {
+        *i32 ptr = &values[2]
+        *ptr = 9
+        changed = *ptr
+    }
+
+    u64 from_asm = 0
+    unsafe {
+        asm { "mov $42, %rax" } -> from_asm
+    }
+
+    print(sizeof([4]i32), alignof(i64), changed, from_asm)
+}

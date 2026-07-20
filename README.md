@@ -21,7 +21,9 @@ gc f run_userspace() {
 }
 ```
 
-**Status:** Bootstrap compiler (C) is complete through type checking. Code generation is the next milestone. Not yet production-ready.
+**Status:** Experimental C bootstrap compiler. The v0.1 core is implemented and
+all positive integration programs emit C that compiles, but the runtime and
+standard library are still minimal. Not production-ready or self-hosted.
 
 ---
 
@@ -29,7 +31,7 @@ gc f run_userspace() {
 
 Runes sits between C and Rust. You get algebraic types, pattern matching, and a proper error model. You also get explicit memory strategies per function — no borrow checker, no GC tax unless you ask for it.
 
-The core bet: **memory strategy belongs to the function, not the data**. You pick stack, arena, heap, or GC at the callsite. The compiler enforces the nesting rules. You can go as low as inline asm and interrupt handlers, or as high as GC-tracked objects and JSON schemas — in the same program.
+The core bet: **memory strategy belongs to the function, not the data**. You pick stack, arena, heap, or GC at the callsite. The compiler checks the implemented nesting rules and supports low-level constructs such as raw pointers and inline assembly in the frontend.
 
 ---
 
@@ -38,10 +40,16 @@ The core bet: **memory strategy belongs to the function, not the data**. You pic
 ```bash
 # Requires: gcc, make
 make          # builds ./runes
+make test     # focused unit, core semantics, and C bootstrap tests
+make test-samples # full integration inventory, including known failures
+make test-codegen # emit and compile C for every positive integration sample
+make test-sanitize # ASan/UBSan over every integration sample
 make clean    # removes binary
 ```
 
 No external dependencies. Pure C, zero third-party libraries.
+
+For a short walkthrough, see [Writing and Running Runes Programs](docs/getting-started.md).
 
 ---
 
@@ -49,16 +57,26 @@ No external dependencies. Pure C, zero third-party libraries.
 
 ```bash
 ./runes file.runes                      # full pipeline: lex → parse → resolve → typecheck
-./runes src/std/prelude.runes file.runes # with standard prelude (needed for print, alloc, etc.)
+./runes src/std/prelude.runes file.runes # with minimal allocation/runtime contracts
 ./runes --lex-only  file.runes          # dump token stream
 ./runes --parse-only file.runes         # syntax check only
 ./runes --dump-ast  file.runes          # print the AST
+./runes file.runes --emit-c out.c        # emit C for the supported subset
 ```
 
 Multiple files are merged before analysis:
 
 ```bash
 ./runes src/std/prelude.runes src/tests/samples/10_kernel_bootstrap.runes
+```
+
+For normal development, use the `runec` driver:
+
+```bash
+./runec check program.runes
+./runec run program.runes
+./runec build program.runes -o build/program
+./runec emit-c program.runes -o build/program.c
 ```
 
 Exit code 0 = clean. Exit code 1 = errors (printed to stderr with `file:line:col`).
@@ -71,14 +89,26 @@ Exit code 0 = clean. Exit code 1 = errors (printed to stderr with `file:line:col
 
 ```runes
 i32 x = 5
-z    = 3.14       -- type inferred: f64
-name = "hello"    -- type inferred: str
+z    := 3.14      -- type inferred: f64
+name := "hello"   -- type inferred: str
 
 const i32 MAX = 512
 u64 addr = 0xFFFF800000000000
 ```
 
 Types: `i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`, `str`, `char`, `*T`, `[N]T`.
+
+Fixed arrays require a positive integer literal size and exactly `N` elements, except `[]`, which zero-initializes the declared array. Array literals must be homogeneous and same-typed arrays copy by value. Both arrays and pointers support integer indexing; literal array indexes are checked at compile time. Pointer arithmetic is limited to `pointer + integer`, `integer + pointer`, and `pointer - integer`. Address-of requires an assignable expression. Pointer loop captures are valid only for fixed arrays.
+
+On the current 64-bit bootstrap target, `usize` is an alias of `u64`. `*void` is the untyped FFI/allocation pointer and converts to or from any pointer type; other pointer element types remain invariant.
+
+`print(value, ...)` is a compiler builtin. It requires at least one argument and accepts primitive values and raw pointers; structs, arrays, tuples, and other composite values must be formatted explicitly.
+
+Variant arms may carry zero, one, or multiple ordered payload values. Construction checks both payload arity and each value's declared type.
+
+Module members are accessed with qualified paths such as `math.Value` and `math.double()`. Module bodies have their own scope; qualified functions and types retain their checked signatures. `use math.answer` imports the final public member name into the current scope.
+
+Arithmetic operators require numeric operands, except `str + str` concatenation. `%` is integer-only. Bitwise operators require integer operands; `and` and `or` require booleans.
 
 ### Functions — named return required
 
@@ -205,9 +235,15 @@ extern u64 KERNEL_START
 - **Named returns are mandatory.** `f foo() = result: i32 { ... }` not `f foo() = i32 { ... }`. Void functions have no return clause at all.
 - **Comments use `--`.** Single line: `-- comment`. Block: `--- ... ---`.
 - **No generics yet** (v0.1). The syntax is in the spec; the compiler doesn't support it yet.
-- **No code generation yet.** The full pipeline through type checking works. Emitting LLVM IR is Phase 4, not yet implemented.
+- **C generation is the v0.1 bootstrap backend.** It lowers functions, modules,
+  methods and interfaces, structs and variants, fixed arrays and pointers,
+  matches, fallible values, strings, globals, externs, unsafe blocks, and inline
+  assembly. Unsupported constructs fail with a code-generation diagnostic.
+- **JSON and pipeline language features are not part of Runes.** The `|` token remains for variants, captures, catch bindings, and bitwise OR.
 - **`flex f` is stack-only in v0.1.** Full monomorphization over memory strategies is v0.2.
-- **Prelude is a separate file.** Pass `src/std/prelude.runes` as the first argument if your code uses `print`, `raw_alloc`, or other built-ins.
+- **Prelude is a separate file.** Pass `src/std/prelude.runes` for the minimal
+  allocator/memory/math contracts. `print` is a compiler builtin. Broad sample
+  mocks live only in `src/tests/fixtures/sample_prelude.runes`.
 
 ---
 
@@ -224,15 +260,16 @@ runes/
 │   ├── symbol_table.c/h # Scoped hash-map (FNV-1a, arena-backed)
 │   ├── typecheck.c/h    # Phase 3: type inference, realm enforcement
 │   ├── types.c/h        # Semantic type representation
-│   ├── codegen.c/h      # Phase 4: LLVM IR emitter (stub, not yet implemented)
+│   ├── codegen.c/h      # Bootstrap C emitter for the supported core subset
 │   ├── utils/
 │   │   ├── arena.c/h    # Bump-pointer arena allocator (64 KiB blocks)
 │   │   └── strtab.c/h   # String interning (FNV-1a, open addressing)
 │   ├── std/
 │   │   └── prelude.runes  # extern declarations for runtime primitives
 │   └── tests/
-│       ├── tester.bash    # shell test runner
-│       └── samples/       # 35+ .runes integration tests
+│       ├── tester.bash    # semantic integration runner
+│       ├── codegen_inventory.bash # generated-C compile inventory
+│       └── samples/       # positive and expected-negative programs
 ├── docs/
 │   └── specv0_1.md        # Language specification
 ├── runes-lang/            # VS Code extension (.vsix included)
@@ -247,11 +284,17 @@ See `.planning/codebase/ARCHITECTURE.md` for the full pipeline design and `.plan
 
 | Phase | Status |
 |-------|--------|
-| Lexer (Phase 1) | Complete |
-| Parser (Phase 1) | Complete |
-| Name resolution (Phase 2) | Complete |
-| Type checker (Phase 3) | Complete — memory realm enforcement, fallible types, pattern matching, ASM/systems constructs |
-| Code generation (Phase 4) | Stub — not yet implemented |
+| Lexer (Phase 1) | Broad, covered by focused unit tests |
+| Parser (Phase 1) | v0.1 syntax covered by unit and integration tests |
+| Name resolution (Phase 2) | Modules, imports, methods, and nested scopes implemented |
+| Type checker (Phase 3) | Tested v0.1 core; diagnostics remain an active hardening area |
+| Code generation (Phase 4) | All positive integration samples emit compilable C |
+
+Current verified integration result: `57` positive passes, `42`
+expected-negative passes, `0` unexpected failures across `99` programs. All 57
+positive programs emit C accepted by GCC; focused tests execute generated code
+for control flow, arrays/pointers, fixed-array returns, structs, variants,
+interfaces, modules, methods, errors, strings, and systems primitives.
 
 The type checker enforces:
 - Memory realm nesting matrix (which strategy can nest inside which)
@@ -272,6 +315,17 @@ code --install-extension runes-lang/runes-lang-0.0.1.vsix
 
 Syntax highlighting for `.runes` files. TextMate grammar, no build step needed.
 
+## Zed extension
+
+```bash
+make install-zed
+```
+
+Then run **zed: install dev extension** in Zed and select the directory printed
+by the installer. The extension includes Tree-sitter syntax highlighting,
+bracket matching, and `--` comment toggling. See
+[editors/zed/README.md](editors/zed/README.md).
+
 ---
 
 ## Contributing
@@ -281,10 +335,10 @@ The compiler is written in C with no external dependencies. If you want to contr
 1. **Read the spec:** `docs/specv0_1.md` is the language reference.
 2. **Read the architecture:** `.planning/codebase/ARCHITECTURE.md` explains the pipeline and how phases connect.
 3. **Run the tests:** `src/tests/tester.bash` runs all sample files through the full pipeline.
-4. **The next big thing is codegen.** `src/codegen.c` is an empty stub waiting for Phase 4. The type checker annotates every `AstNode` with its `resolved_type` — that's the input codegen will consume to emit LLVM IR.
+4. **Check the known gaps:** `CODEBASE_AUDIT_AND_FIX_PLAN.md` records the latest verified failures and priorities.
 
 The compiler is a single-binary build (`make`), no linking step, no package manager. Start hacking.
 
 ---
 
-_Bootstrap compiler written in C. Backend target: LLVM IR. Self-hosted compiler in Runes is the long-term goal._
+_Bootstrap compiler written in C. The current backend emits C; self-hosting remains a long-term goal._

@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Bitwise operators require integer operands
+f bad_bitwise() {
+    bool value = true | false
+}

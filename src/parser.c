@@ -30,7 +30,6 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile,
 static bool is_var_decl_lookahead(Parser *p);
 static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs);
 static AstNode *parse_variant_decl(Parser *p, bool is_pub);
-static AstNode *parse_schema_decl(Parser *p, bool is_pub);
 static AstNode *parse_method_decl(Parser *p, bool is_pub);
 static AstNode *parse_interface_decl(Parser *p, bool is_pub);
 static AstNode *parse_error_decl(Parser *p, bool is_pub);
@@ -113,7 +112,6 @@ static void synchronize(Parser *p) {
     // declaration keywords — safe to resume here
     case TOKEN_F:
     case TOKEN_TYPE:
-    case TOKEN_SCHEMA:
     case TOKEN_METHOD:
     case TOKEN_INTERFACE:
     case TOKEN_ERROR:
@@ -287,15 +285,6 @@ static AstNode *parse_type_expr(Parser *p) {
     return n;
   }
 
-  // J type
-  if (check(p, TOKEN_J)) {
-    Token j_tok = advance(p);
-    AstNode *n = ast_new_type_j(p->arena);
-    n->line = j_tok.line;
-    n->col = j_tok.column;
-    return n;
-  }
-
   parser_error(p, "expected a type expression");
   return NULL;
 }
@@ -353,7 +342,8 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
     body = parse_block(p);
     if (!body)
       return NULL;
-  } else if (body_allowed && has_return && (uint32_t)p->current.line == p->prev_line) {
+  } else if (body_allowed && has_return &&
+             (uint32_t)p->current.line == p->prev_line) {
     // one-liner — only valid when there IS a named return AND it's on the same
     // line
     AstNode *expr = parse_expr(p);
@@ -590,71 +580,6 @@ static AstNode *parse_variant_decl(Parser *p, bool is_pub) {
   // name is passed from parse_type_decl via a trick — we'll return arms
   // and let parse_type_decl wrap it. This is a design compromise.
   return arms; // caller wraps in ast_new_variant_decl
-}
-
-// Spec §13: schema Shoe = { brand: str, size: f32 }
-//           schema RedShoe : Shoe = { color: str = "red" }
-static AstNode *parse_schema_decl(Parser *p, bool is_pub) {
-  Token s = advance(p); // consume 'schema'
-  Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected schema name");
-  if (p->panic_mode)
-    return NULL;
-
-  // optional parent: schema RedShoe : Shoe
-  const char *parent = NULL;
-  if (match(p, TOKEN_COLON)) {
-    Token parent_tok = expect(p, TOKEN_IDENTIFIER, "expected parent schema");
-    if (p->panic_mode)
-      return NULL;
-    parent = parent_tok.str_val.ptr;
-  }
-
-  expect(p, TOKEN_EQUAL, "expected '=' after schema name");
-  if (p->panic_mode)
-    return NULL;
-  expect(p, TOKEN_LBRACE, "expected '{' for schema body");
-  if (p->panic_mode)
-    return NULL;
-
-  AstNode *fields = NULL, *ftail = NULL;
-  while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
-    Attr *attrs = parse_attrs(p);
-    Token fname = expect(p, TOKEN_IDENTIFIER, "expected field name");
-    if (p->panic_mode)
-      return NULL;
-    expect(p, TOKEN_COLON, "expected ':'");
-    if (p->panic_mode)
-      return NULL;
-    AstNode *ftype = parse_type_expr(p);
-    if (!ftype)
-      return NULL;
-    AstNode *fdef = NULL;
-    if (match(p, TOKEN_EQUAL)) {
-      fdef = parse_expr(p);
-      if (!fdef)
-        return NULL;
-    }
-    AstNode *fd = ast_new_field_decl(p->arena, false, fname.str_val.ptr, ftype,
-                                     fdef, attrs);
-    fd->line = fname.line;
-    fd->col = fname.column;
-    if (!fields) {
-      fields = ftail = fd;
-    } else {
-      ftail->next = fd;
-      ftail = fd;
-    }
-    match(p, TOKEN_COMMA);
-  }
-  expect(p, TOKEN_RBRACE, "expected '}'");
-  if (p->panic_mode)
-    return NULL;
-
-  AstNode *n = ast_new_schema_decl(p->arena, is_pub, name_tok.str_val.ptr,
-                                   parent, fields);
-  n->line = s.line;
-  n->col = s.column;
-  return n;
 }
 
 // Spec §7: method Vec2 { f length(self) = r: f32 { ... } }
@@ -945,8 +870,6 @@ static AstNode *parse_decl(Parser *p) {
   if (check(p, TOKEN_TYPE)) {
     return parse_type_decl(p, is_pub, attrs);
   }
-  if (check(p, TOKEN_SCHEMA))
-    return parse_schema_decl(p, is_pub);
   if (check(p, TOKEN_METHOD))
     return parse_method_decl(p, is_pub);
   if (check(p, TOKEN_INTERFACE))
@@ -1160,7 +1083,8 @@ static AstNode *parse_for_stmt(Parser *p) {
   cap_value = val_tok.str_val.ptr;
 
   if (match(p, TOKEN_COMMA)) {
-    cap_kind = CAPTURE_INDEXED; // |n, i|
+    cap_kind = cap_kind == CAPTURE_PTR ? CAPTURE_PTR_INDEXED
+                                       : CAPTURE_INDEXED;
     Token idx_tok = expect(p, TOKEN_IDENTIFIER, "expected index name");
     if (p->panic_mode)
       return NULL;
@@ -1509,7 +1433,7 @@ static AstNode *parse_stmt(Parser *p) {
     return parse_block(p);
   // declarations or expression statements
   if (check(p, TOKEN_PUB) || check(p, TOKEN_F) || check(p, TOKEN_TYPE) ||
-      check(p, TOKEN_SCHEMA) || check(p, TOKEN_ERROR) || check(p, TOKEN_MOD) ||
+      check(p, TOKEN_ERROR) || check(p, TOKEN_MOD) ||
       check(p, TOKEN_USE) || check(p, TOKEN_EXTERN) || check(p, TOKEN_HASH) ||
       check(p, TOKEN_REGIONAL) || check(p, TOKEN_DYNAMIC) ||
       check(p, TOKEN_GC) || check(p, TOKEN_FLEX) || check(p, TOKEN_STACK) ||
@@ -1592,9 +1516,13 @@ static AstNode *parse_catch(Parser *p) {
 static AstNode *parse_param(Parser *p) {
   if (check(p, TOKEN_SELF)) {
     Token self_tok = advance(p);
-    // self has implicit type in methods.
-    // We pass NULL for type; typechecker will fill it.
-    AstNode *n = ast_new_param(p->arena, "self", NULL);
+    AstNode *type = NULL;
+    if (match(p, TOKEN_COLON)) {
+      type = parse_type_expr(p);
+      if (!type)
+        return NULL;
+    }
+    AstNode *n = ast_new_param(p->arena, "self", type);
     n->line = self_tok.line;
     n->col = self_tok.column;
     return n;

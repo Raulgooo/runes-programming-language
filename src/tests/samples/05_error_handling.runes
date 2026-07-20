@@ -4,6 +4,9 @@
     chained try, errors from method calls.
 ---
 
+type PageTable = { entries: [512]u64 }
+extern f parse(source: str) = result: !*Node
+
 -- ─────────────────────────────────────────────
 -- Error set declarations
 -- ─────────────────────────────────────────────
@@ -175,6 +178,10 @@ f parse_file(path: str) = r: !*Node {
 -- ─────────────────────────────────────────────
 
 method PageTable {
+    regional f new() = result: PageTable {
+        result = PageTable(entries: [])
+    }
+
     f map(self, vaddr: u64, paddr: u64, flags: u64) = r: !void {
         u64 idx = (vaddr >> 12) & 0x1FF
         if self.entries[idx] != 0 {

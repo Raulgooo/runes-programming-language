@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Assignment target is not assignable
+f bad_assignment() {
+    42 = 1
+}

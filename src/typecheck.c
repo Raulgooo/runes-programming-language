@@ -13,6 +13,7 @@ void typechecker_init(TypeChecker *tc, Arena *arena, TypeContext *tctx,
   tc->expected_ret = NULL;
   tc->current_realm = REALM_MAIN;
   tc->loop_depth = 0;
+  tc->function_depth = 0;
 }
 
 void typechecker_error(TypeChecker *tc, uint32_t line, uint32_t col,
@@ -32,6 +33,26 @@ static inline bool type_is_resolved(Type *t) {
   return t && t->kind != TY_UNKNOWN && t->kind != TY_INFER_ERROR;
 }
 
+static Scope *scope_containing_symbol(SymbolTable *st, Symbol *symbol) {
+  for (Scope *scope = st->current; scope; scope = scope->parent) {
+    for (uint32_t i = 0; i < scope->capacity; i++) {
+      for (ScopeEntry *entry = scope->buckets[i]; entry; entry = entry->next)
+        if (&entry->symbol == symbol)
+          return scope;
+    }
+  }
+  return NULL;
+}
+
+static bool scope_is_between(Scope *candidate, Scope *start,
+                             Scope *exclusive_stop) {
+  for (Scope *scope = start; scope && scope != exclusive_stop;
+       scope = scope->parent)
+    if (scope == candidate)
+      return true;
+  return false;
+}
+
 static const char *type_display_name(Type *t) {
   if (!t) return "<unknown>";
   switch (t->kind) {
@@ -49,6 +70,72 @@ static const char *type_display_name(Type *t) {
     case TY_INFER_ERROR: return "<error>";
   }
   return "<unknown>";
+}
+
+static const char *declaration_name(AstNode *node) {
+  if (!node)
+    return NULL;
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return node->as.func_decl.name;
+  case AST_VAR_DECL:
+    return node->as.var_decl.name;
+  case AST_TYPE_DECL:
+    return node->as.type_decl.name;
+  case AST_VARIANT_DECL:
+    return node->as.variant_decl.name;
+  case AST_INTERFACE_DECL:
+    return node->as.interface_decl.name;
+  case AST_ERROR_DECL:
+    return node->as.error_decl.name;
+  case AST_MOD_DECL:
+    return node->as.mod_decl.name;
+  case AST_EXTERN_DECL:
+    return node->as.extern_decl.name;
+  default:
+    return NULL;
+  }
+}
+
+static AstNode *find_declaration(AstNode *declarations, const char *name) {
+  for (AstNode *decl = declarations; decl; decl = decl->next) {
+    const char *candidate = declaration_name(decl);
+    if (candidate && strcmp(candidate, name) == 0)
+      return decl;
+  }
+  return NULL;
+}
+
+static AstNode *qualified_declaration(TypeChecker *tc, AstNode *expr) {
+  if (!expr)
+    return NULL;
+  if (expr->kind == AST_IDENTIFIER) {
+    Symbol *symbol =
+        symbol_table_lookup(tc->st, expr->as.identifier.name);
+    return symbol ? symbol->node : NULL;
+  }
+  if (expr->kind != AST_FIELD_EXPR)
+    return NULL;
+  AstNode *container = qualified_declaration(tc, expr->as.field.target);
+  if (!container || container->kind != AST_MOD_DECL)
+    return NULL;
+  return find_declaration(container->as.mod_decl.declarations,
+                          expr->as.field.field);
+}
+
+static AstNode *use_target_declaration(TypeChecker *tc, AstNode *path) {
+  if (!path || path->kind != AST_IDENTIFIER)
+    return NULL;
+  Symbol *root = symbol_table_lookup(tc->st, path->as.identifier.name);
+  AstNode *current = root ? root->node : NULL;
+  for (AstNode *segment = path->next; segment; segment = segment->next) {
+    if (!current || current->kind != AST_MOD_DECL ||
+        segment->kind != AST_IDENTIFIER)
+      return NULL;
+    current = find_declaration(current->as.mod_decl.declarations,
+                               segment->as.identifier.name);
+  }
+  return current;
 }
 
 // ── Phase 3 helpers ──────────────────────────────────────────────────────────
@@ -105,6 +192,110 @@ static const char *realm_name(MemoryRealm r) {
 
 // ── Phase 2 helpers ──────────────────────────────────────────────────────────
 
+static int variant_arm_index(Type *variant, const char *name) {
+  if (!variant || variant->kind != TY_VARIANT || !name)
+    return -1;
+  for (int i = 0; i < variant->as.variant.arm_count; i++) {
+    if (strcmp(variant->as.variant.arm_names[i], name) == 0)
+      return i;
+  }
+  return -1;
+}
+
+static void bind_pattern_name(TypeChecker *tc, AstNode *node,
+                              const char *name, Type *type) {
+  if (!name || strcmp(name, "_") == 0)
+    return;
+  Symbol sym = {0};
+  sym.name = name;
+  sym.kind = SYM_VAR;
+  sym.node = node;
+  sym.type = type;
+  symbol_table_define(tc->st, sym);
+  node->resolved_type = type;
+}
+
+static const char *qualified_pattern_name(AstNode *pattern) {
+  if (!pattern)
+    return NULL;
+  if (pattern->kind == AST_IDENTIFIER)
+    return pattern->as.identifier.name;
+  if (pattern->kind == AST_FIELD_EXPR)
+    return pattern->as.field.field;
+  if (pattern->kind == AST_STRUCT_PATTERN)
+    return pattern->as.struct_pattern.name;
+  if (pattern->kind == AST_CALL_EXPR) {
+    AstNode *callee = pattern->as.call.callee;
+    if (callee && callee->kind == AST_IDENTIFIER)
+      return callee->as.identifier.name;
+    if (callee && callee->kind == AST_FIELD_EXPR)
+      return callee->as.field.field;
+  }
+  return NULL;
+}
+
+static void typechecker_check_match_coverage(TypeChecker *tc, AstNode *match,
+                                             Type *subject_type) {
+  if (!subject_type || (subject_type->kind != TY_VARIANT &&
+                        subject_type->kind != TY_FALLIBLE))
+    return;
+
+  if (subject_type->kind == TY_FALLIBLE) {
+    bool ok = false, err = false, catch_all = false;
+    for (AstNode *arm = match->as.match_stmt.arms; arm; arm = arm->next) {
+      if (arm->kind != AST_MATCH_ARM || arm->as.match_arm.guard)
+        continue;
+      AstNode *pattern = arm->as.match_arm.pattern;
+      const char *name = qualified_pattern_name(pattern);
+      if (name && strcmp(name, "Ok") == 0)
+        ok = true;
+      else if (name && strcmp(name, "Err") == 0)
+        err = true;
+      else if (pattern && pattern->kind == AST_IDENTIFIER)
+        catch_all = true;
+    }
+    if (!catch_all && (!ok || !err)) {
+      typechecker_error(tc, match->line, match->col,
+                        "Non-exhaustive fallible match; missing arm '%s'",
+                        ok ? "Err" : "Ok");
+    }
+    return;
+  }
+
+  int arm_count = subject_type->as.variant.arm_count;
+  bool *covered = arena_alloc(tc->arena, sizeof(bool) * (size_t)arm_count);
+  memset(covered, 0, sizeof(bool) * (size_t)arm_count);
+  bool catch_all = false;
+
+  for (AstNode *arm = match->as.match_stmt.arms; arm; arm = arm->next) {
+    if (arm->kind != AST_MATCH_ARM || arm->as.match_arm.guard)
+      continue;
+    AstNode *pattern = arm->as.match_arm.pattern;
+    const char *name = qualified_pattern_name(pattern);
+    int index = variant_arm_index(subject_type, name);
+    if (index >= 0) {
+      if (covered[index]) {
+        typechecker_error(tc, pattern->line, pattern->col,
+                          "Duplicate match arm '%s'", name);
+      }
+      covered[index] = true;
+    } else if (pattern && pattern->kind == AST_IDENTIFIER) {
+      catch_all = true;
+    }
+  }
+
+  if (!catch_all) {
+    for (int i = 0; i < arm_count; i++) {
+      if (!covered[i]) {
+        typechecker_error(tc, match->line, match->col,
+                          "Non-exhaustive match; missing arm '%s'",
+                          subject_type->as.variant.arm_names[i]);
+        break;
+      }
+    }
+  }
+}
+
 static void typechecker_check_pattern(TypeChecker *tc, AstNode *pattern,
                                       Type *subject_type) {
   if (!pattern)
@@ -143,66 +334,217 @@ static void typechecker_check_pattern(TypeChecker *tc, AstNode *pattern,
     break;
   case AST_IDENTIFIER: {
     const char *name = pattern->as.identifier.name;
-    if (strcmp(name, "_") != 0) {
-      // Binding pattern: bind the name to the subject type in current scope
-      Symbol sym = {0};
-      sym.name = name;
-      sym.kind = SYM_VAR;
-      sym.node = pattern;
-      sym.type = subject_type;
-      symbol_table_define(tc->st, sym);
+    if (subject_type && subject_type->kind == TY_VARIANT) {
+      int arm = variant_arm_index(subject_type, name);
+      if (arm >= 0) {
+        if (subject_type->as.variant.arm_types[arm]) {
+          typechecker_error(tc, pattern->line, pattern->col,
+                            "Variant arm '%s' has a payload and must be destructured",
+                            name);
+        }
+        pattern->resolved_type = subject_type;
+        break;
+      }
     }
+    bind_pattern_name(tc, pattern, name, subject_type);
     break;
   }
   case AST_STRUCT_PATTERN: {
-    // Struct patterns are also used for variant destructuring and Ok/Err
     if (type_is_resolved(subject_type) && subject_type->kind != TY_STRUCT &&
         subject_type->kind != TY_VARIANT && subject_type->kind != TY_FALLIBLE) {
       typechecker_error(tc, pattern->line, pattern->col,
                         "Destructure pattern requires struct, variant, or "
                         "fallible subject");
     }
-    // Bind fields as unknown for now (full struct field lookup is TODO)
+    if (subject_type && subject_type->kind == TY_FALLIBLE) {
+      const char *arm_name = pattern->as.struct_pattern.name;
+      bool is_ok = strcmp(arm_name, "Ok") == 0;
+      bool is_err = strcmp(arm_name, "Err") == 0;
+      if (!is_ok && !is_err) {
+        typechecker_error(tc, pattern->line, pattern->col,
+                          "Fallible pattern must be Ok or Err");
+        break;
+      }
+      Type *inner = subject_type->as.fallible.inner;
+      bool inner_void = inner->kind == TY_PRIMITIVE &&
+                        strcmp(inner->as.primitive.name, "void") == 0;
+      int expected = 1;
+      int actual = 0;
+      for (AstNode *fp = pattern->as.struct_pattern.fields; fp; fp = fp->next)
+        actual++;
+      bool ignored_void = is_ok && inner_void && actual == 1 &&
+                          pattern->as.struct_pattern.fields &&
+                          pattern->as.struct_pattern.fields
+                                  ->as.field_pattern.pattern->kind ==
+                              AST_IDENTIFIER &&
+                          strcmp(pattern->as.struct_pattern.fields
+                                     ->as.field_pattern.pattern
+                                     ->as.identifier.name,
+                                 "_") == 0;
+      if (is_ok && inner_void && actual == 1 && !ignored_void) {
+        typechecker_error(tc, pattern->line, pattern->col,
+                          "Ok payload for !void may only be ignored with '_'");
+      }
+      if (is_ok && inner_void && actual == 0)
+        expected = 0;
+      if (actual != expected && !ignored_void) {
+        typechecker_error(tc, pattern->line, pattern->col,
+                          "Fallible pattern '%s' expects %d value(s), got %d",
+                          arm_name, expected, actual);
+      }
+      if (expected == 1 && pattern->as.struct_pattern.fields) {
+        AstNode *fp = pattern->as.struct_pattern.fields;
+        Type *binding_type = is_ok
+                                 ? inner
+                                 : type_new_error(tc->tctx, "RunesError", NULL,
+                                                  0);
+        fp->resolved_type = binding_type;
+        typechecker_check_pattern(tc, fp->as.field_pattern.pattern,
+                                  binding_type);
+      }
+      pattern->resolved_type = subject_type;
+      break;
+    }
+
+    if (subject_type && subject_type->kind == TY_VARIANT) {
+      const char *arm_name = pattern->as.struct_pattern.name;
+      int arm = variant_arm_index(subject_type, arm_name);
+      if (arm < 0) {
+        typechecker_error(tc, pattern->line, pattern->col,
+                          "Unknown arm '%s' for variant pattern", arm_name);
+        break;
+      }
+      Type *payload = subject_type->as.variant.arm_types[arm];
+      int expected = payload && payload->kind == TY_TUPLE
+                         ? payload->as.tuple.count
+                         : payload ? 1 : 0;
+      int actual = 0;
+      for (AstNode *fp = pattern->as.struct_pattern.fields; fp; fp = fp->next)
+        actual++;
+      if (actual != expected) {
+        typechecker_error(tc, pattern->line, pattern->col,
+                          "Variant pattern '%s' expects %d payload value(s), got %d",
+                          arm_name, expected, actual);
+      }
+      AstNode *fp = pattern->as.struct_pattern.fields;
+      for (int i = 0; fp && i < expected; i++, fp = fp->next) {
+        if (fp->as.field_pattern.name) {
+          typechecker_error(tc, fp->line, fp->col,
+                            "Variant payload patterns are positional");
+        }
+        Type *field_type = payload->kind == TY_TUPLE
+                               ? payload->as.tuple.elems[i]
+                               : payload;
+        fp->resolved_type = field_type;
+        typechecker_check_pattern(tc, fp->as.field_pattern.pattern,
+                                  field_type);
+      }
+      pattern->resolved_type = subject_type;
+      break;
+    }
+
+    if (subject_type && subject_type->kind == TY_STRUCT) {
+      if (strcmp(pattern->as.struct_pattern.name,
+                 subject_type->as.struct_t.name) != 0) {
+        typechecker_error(tc, pattern->line, pattern->col,
+                          "Pattern type '%s' does not match struct subject",
+                          pattern->as.struct_pattern.name);
+        break;
+      }
+      int position = 0;
+      for (AstNode *fp = pattern->as.struct_pattern.fields; fp;
+           fp = fp->next, position++) {
+        int field_index = -1;
+        if (fp->as.field_pattern.name) {
+          for (int i = 0; i < subject_type->as.struct_t.field_count; i++) {
+            if (strcmp(fp->as.field_pattern.name,
+                       subject_type->as.struct_t.field_names[i]) == 0) {
+              field_index = i;
+              break;
+            }
+          }
+        } else if (position < subject_type->as.struct_t.field_count) {
+          field_index = position;
+        }
+        if (field_index < 0) {
+          typechecker_error(tc, fp->line, fp->col,
+                            "Unknown or excess field in struct pattern");
+          continue;
+        }
+        Type *field_type = subject_type->as.struct_t.field_types[field_index];
+        fp->resolved_type = field_type;
+        typechecker_check_pattern(tc, fp->as.field_pattern.pattern,
+                                  field_type);
+      }
+      pattern->resolved_type = subject_type;
+      break;
+    }
+
     AstNode *fp = pattern->as.struct_pattern.fields;
     while (fp) {
       if (fp->kind == AST_FIELD_PATTERN) {
         if (fp->as.field_pattern.name && !fp->as.field_pattern.pattern) {
-          // Shorthand: bind field name (e.g., Vec2(x, y) — x and y)
-          Symbol sym = {0};
-          sym.name = fp->as.field_pattern.name;
-          sym.kind = SYM_VAR;
-          sym.node = fp;
-          sym.type = tc->tctx->type_unknown;
-          symbol_table_define(tc->st, sym);
+          bind_pattern_name(tc, fp, fp->as.field_pattern.name,
+                            tc->tctx->type_unknown);
         } else if (fp->as.field_pattern.pattern &&
                    fp->as.field_pattern.pattern->kind == AST_IDENTIFIER) {
           const char *bname = fp->as.field_pattern.pattern->as.identifier.name;
-          if (strcmp(bname, "_") != 0) {
-            Symbol sym = {0};
-            sym.name = bname;
-            sym.kind = SYM_VAR;
-            sym.node = fp;
-            sym.type = tc->tctx->type_unknown;
-            symbol_table_define(tc->st, sym);
-          }
+          bind_pattern_name(tc, fp->as.field_pattern.pattern, bname,
+                            tc->tctx->type_unknown);
         } else if (!fp->as.field_pattern.name && fp->as.field_pattern.pattern) {
-          // Positional field: Ok(v), Err(e), Circle(radius)
           if (fp->as.field_pattern.pattern->kind == AST_IDENTIFIER) {
             const char *bname =
                 fp->as.field_pattern.pattern->as.identifier.name;
-            if (strcmp(bname, "_") != 0) {
-              Symbol sym = {0};
-              sym.name = bname;
-              sym.kind = SYM_VAR;
-              sym.node = fp;
-              sym.type = tc->tctx->type_unknown;
-              symbol_table_define(tc->st, sym);
-            }
+            bind_pattern_name(tc, fp->as.field_pattern.pattern, bname,
+                              tc->tctx->type_unknown);
           }
         }
-        // Literal field patterns don't bind anything
       }
       fp = fp->next;
+    }
+    break;
+  }
+  case AST_FIELD_EXPR: {
+    if (!type_is_resolved(subject_type)) {
+      pattern->resolved_type = subject_type;
+      break;
+    }
+    if (subject_type->kind == TY_ERROR) {
+      bool found = false;
+      const char *name = qualified_pattern_name(pattern);
+      if (subject_type->as.error_t.variant_count == 0) {
+        pattern->resolved_type = subject_type;
+        break;
+      }
+      for (int i = 0; i < subject_type->as.error_t.variant_count; i++) {
+        if (strcmp(subject_type->as.error_t.variants[i], name) == 0) {
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        typechecker_error(tc, pattern->line, pattern->col,
+                          "Unknown error pattern '%s'", name);
+      }
+      pattern->resolved_type = subject_type;
+      break;
+    }
+    if (subject_type->kind == TY_FALLIBLE) {
+      pattern->resolved_type = subject_type;
+      break;
+    }
+    if (subject_type->kind != TY_VARIANT ||
+        variant_arm_index(subject_type, qualified_pattern_name(pattern)) < 0) {
+      typechecker_error(tc, pattern->line, pattern->col,
+                        "Qualified pattern is not an arm of the subject variant");
+    } else {
+      int arm = variant_arm_index(subject_type, qualified_pattern_name(pattern));
+      if (subject_type->as.variant.arm_types[arm]) {
+        typechecker_error(tc, pattern->line, pattern->col,
+                          "Variant arm '%s' has a payload and must be destructured",
+                          qualified_pattern_name(pattern));
+      }
+      pattern->resolved_type = subject_type;
     }
     break;
   }
@@ -236,6 +578,16 @@ Type *typechecker_resolve_type_expr(TypeChecker *tc, AstNode *node) {
 
   if (node->kind == AST_TYPE_EXPR) {
     switch (node->as.type_expr.kind) {
+    case TYPE_QUALIFIED: {
+      Symbol *module = symbol_table_lookup(tc->st, node->as.type_expr.module);
+      if (!module || module->kind != SYM_MOD || !module->node ||
+          module->node->kind != AST_MOD_DECL)
+        return tc->tctx->type_unknown;
+      AstNode *decl = find_declaration(
+          module->node->as.mod_decl.declarations, node->as.type_expr.name);
+      return decl && decl->resolved_type ? decl->resolved_type
+                                         : tc->tctx->type_unknown;
+    }
     case TYPE_NAMED: {
       const char *name = node->as.type_expr.name;
       if (strcmp(name, "i8") == 0)
@@ -279,31 +631,63 @@ Type *typechecker_resolve_type_expr(TypeChecker *tc, AstNode *node) {
       return type_new_pointer(tc->tctx, typechecker_resolve_type_expr(
                                             tc, node->as.type_expr.inner));
     case TYPE_ARRAY: {
-      size_t size = 0;
-      if (node->as.type_expr.size &&
-          node->as.type_expr.size->kind == AST_INT_LITERAL) {
-        size = node->as.type_expr.size->as.int_literal.value;
+      if (!node->as.type_expr.size ||
+          node->as.type_expr.size->kind != AST_INT_LITERAL) {
+        typechecker_error(tc, node->line, node->col,
+                          "Array size must be a constant integer");
+        return tc->tctx->type_error;
       }
-      return type_new_array(
-          tc->tctx, typechecker_resolve_type_expr(tc, node->as.type_expr.inner),
-          size);
+      size_t size = node->as.type_expr.size->as.int_literal.value;
+      if (size == 0) {
+        typechecker_error(tc, node->line, node->col,
+                          "Array size must be greater than zero");
+        return tc->tctx->type_error;
+      }
+      return type_new_array(tc->tctx,
+                            typechecker_resolve_type_expr(
+                                tc, node->as.type_expr.inner),
+                            size);
     }
     case TYPE_FALLIBLE:
       return type_new_fallible(tc->tctx, typechecker_resolve_type_expr(
                                              tc, node->as.type_expr.inner));
-    default:
-      break;
+    case TYPE_TUPLE: {
+      int count = 0;
+      for (AstNode *elem = node->as.type_expr.elems; elem; elem = elem->next)
+        count++;
+      Type **elements =
+          count > 0 ? arena_alloc(tc->arena, sizeof(Type *) * (size_t)count)
+                    : NULL;
+      AstNode *elem = node->as.type_expr.elems;
+      for (int i = 0; i < count; i++, elem = elem->next)
+        elements[i] = typechecker_resolve_type_expr(tc, elem);
+      return type_new_tuple(tc->tctx, elements, count);
+    }
     }
   }
   return tc->tctx->type_unknown;
 }
 
 static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
-  // Pass 1: Types (Structs, Variants)
-  AstNode *decl = node->as.program.declarations;
+  if (!node)
+    return;
+
+  AstNode *decl_head =
+      node->kind == AST_PROGRAM ? node->as.program.declarations : node;
+
+  // Pass 1: nominal types
+  AstNode *decl = decl_head;
   while (decl) {
     if (decl->kind == AST_TYPE_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.type_decl.name);
+      if (!sym) {
+        Symbol local = {.name = decl->as.type_decl.name,
+                        .kind = SYM_TYPE,
+                        .node = decl,
+                        .is_pub = decl->as.type_decl.is_pub};
+        symbol_table_define(tc->st, local);
+        sym = symbol_table_lookup_local(tc->st, decl->as.type_decl.name);
+      }
       if (sym) {
         sym->type =
             type_new_struct(tc->tctx, decl->as.type_decl.name, NULL, NULL, 0);
@@ -312,9 +696,51 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
     } else if (decl->kind == AST_VARIANT_DECL) {
       Symbol *sym =
           symbol_table_lookup_local(tc->st, decl->as.variant_decl.name);
+      if (!sym) {
+        Symbol local = {.name = decl->as.variant_decl.name,
+                        .kind = SYM_TYPE,
+                        .node = decl,
+                        .is_pub = decl->as.variant_decl.is_pub};
+        symbol_table_define(tc->st, local);
+        sym = symbol_table_lookup_local(tc->st,
+                                        decl->as.variant_decl.name);
+      }
       if (sym) {
         sym->type = type_new_variant(tc->tctx, decl->as.variant_decl.name, NULL,
                                      NULL, 0);
+        decl->resolved_type = sym->type;
+      }
+    } else if (decl->kind == AST_INTERFACE_DECL) {
+      Symbol *sym = symbol_table_lookup_local(
+          tc->st, decl->as.interface_decl.name);
+      if (!sym) {
+        Symbol local = {.name = decl->as.interface_decl.name,
+                        .kind = SYM_TYPE,
+                        .node = decl,
+                        .is_pub = decl->as.interface_decl.is_pub};
+        symbol_table_define(tc->st, local);
+        sym = symbol_table_lookup_local(tc->st,
+                                        decl->as.interface_decl.name);
+      }
+      if (sym) {
+        sym->type = type_new_interface(tc->tctx,
+                                       decl->as.interface_decl.name,
+                                       NULL, NULL, 0);
+        decl->resolved_type = sym->type;
+      }
+    } else if (decl->kind == AST_ERROR_DECL) {
+      Symbol *sym =
+          symbol_table_lookup_local(tc->st, decl->as.error_decl.name);
+      if (!sym) {
+        Symbol local = {.name = decl->as.error_decl.name,
+                        .kind = SYM_TYPE,
+                        .node = decl,
+                        .is_pub = decl->as.error_decl.is_pub};
+        symbol_table_define(tc->st, local);
+        sym = symbol_table_lookup_local(tc->st, decl->as.error_decl.name);
+      }
+      if (sym) {
+        sym->type = type_new_error(tc->tctx, decl->as.error_decl.name, NULL, 0);
         decl->resolved_type = sym->type;
       }
     }
@@ -322,7 +748,7 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
   }
 
   // Pass 1.5: Populate Type fields (now that all type objects exist)
-  decl = node->as.program.declarations;
+  decl = decl_head;
   while (decl) {
     if (decl->kind == AST_TYPE_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.type_decl.name);
@@ -364,25 +790,105 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
         a = decl->as.variant_decl.arms;
         for (int i = 0; i < arm_count; i++) {
           arm_names[i] = a->as.variant_arm.name;
-          arm_types[i] =
-              a->as.variant_arm.fields
-                  ? typechecker_resolve_type_expr(tc, a->as.variant_arm.fields)
-                  : NULL;
+          AstNode *field = a->as.variant_arm.fields;
+          if (!field) {
+            arm_types[i] = NULL;
+          } else if (!field->next) {
+            arm_types[i] = typechecker_resolve_type_expr(tc, field);
+          } else {
+            int field_count = 0;
+            for (AstNode *it = field; it; it = it->next)
+              field_count++;
+            Type **field_types =
+                arena_alloc(tc->arena, sizeof(Type *) * field_count);
+            int field_index = 0;
+            for (AstNode *it = field; it; it = it->next)
+              field_types[field_index++] =
+                  typechecker_resolve_type_expr(tc, it);
+            arm_types[i] =
+                type_new_tuple(tc->tctx, field_types, field_count);
+          }
           a = a->next;
         }
         sym->type->as.variant.arm_names = arm_names;
         sym->type->as.variant.arm_types = arm_types;
         sym->type->as.variant.arm_count = arm_count;
       }
+    } else if (decl->kind == AST_INTERFACE_DECL) {
+      Symbol *sym = symbol_table_lookup_local(
+          tc->st, decl->as.interface_decl.name);
+      if (sym && sym->type) {
+        int count = 0;
+        for (AstNode *m = decl->as.interface_decl.methods; m; m = m->next)
+          count++;
+        const char **names = count
+                                 ? arena_alloc(tc->arena,
+                                               sizeof(char *) * (size_t)count)
+                                 : NULL;
+        Type **methods = count
+                             ? arena_alloc(tc->arena,
+                                           sizeof(Type *) * (size_t)count)
+                             : NULL;
+        AstNode *m = decl->as.interface_decl.methods;
+        for (int i = 0; i < count; i++, m = m->next) {
+          names[i] = m->as.func_decl.name;
+          int param_count = 0;
+          for (AstNode *p = m->as.func_decl.params; p; p = p->next)
+            param_count++;
+          Type **params = param_count
+                              ? arena_alloc(tc->arena,
+                                            sizeof(Type *) *
+                                                (size_t)param_count)
+                              : NULL;
+          AstNode *p = m->as.func_decl.params;
+          for (int j = 0; j < param_count; j++, p = p->next)
+            params[j] = strcmp(p->as.param.name, "self") == 0 &&
+                                !p->as.param.type
+                            ? sym->type
+                            : typechecker_resolve_type_expr(tc,
+                                                            p->as.param.type);
+          Type *ret = typechecker_resolve_type_expr(
+              tc, m->as.func_decl.ret_type);
+          methods[i] = type_new_function(tc->tctx, params, param_count, ret,
+                                         STRATEGY_STACK, true);
+          m->resolved_type = methods[i];
+        }
+        sym->type->as.interface_t.method_names = names;
+        sym->type->as.interface_t.method_types = methods;
+        sym->type->as.interface_t.method_count = count;
+      }
+    } else if (decl->kind == AST_ERROR_DECL) {
+      Symbol *sym =
+          symbol_table_lookup_local(tc->st, decl->as.error_decl.name);
+      if (sym && sym->type) {
+        int variant_count = 0;
+        for (AstNode *v = decl->as.error_decl.variants; v; v = v->next)
+          variant_count++;
+        const char **variants =
+            arena_alloc(tc->arena, sizeof(char *) * (size_t)variant_count);
+        AstNode *v = decl->as.error_decl.variants;
+        for (int i = 0; i < variant_count; i++, v = v->next)
+          variants[i] = v->as.identifier.name;
+        sym->type->as.error_t.variants = variants;
+        sym->type->as.error_t.variant_count = variant_count;
+      }
     }
     decl = decl->next;
   }
 
   // Pass 2: Functions, Externs, Variables, Methods
-  decl = node->as.program.declarations;
+  decl = decl_head;
   while (decl) {
     if (decl->kind == AST_FUNC_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.func_decl.name);
+      if (!sym) {
+        Symbol local = {0};
+        local.name = decl->as.func_decl.name;
+        local.kind = SYM_FUNC;
+        local.node = decl;
+        symbol_table_define(tc->st, local);
+        sym = symbol_table_lookup_local(tc->st, decl->as.func_decl.name);
+      }
       if (sym) {
         Type *ret_t =
             typechecker_resolve_type_expr(tc, decl->as.func_decl.ret_type);
@@ -407,6 +913,14 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
       }
     } else if (decl->kind == AST_VAR_DECL) {
       Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.var_decl.name);
+      if (!sym && decl->as.var_decl.type) {
+        Symbol local = {0};
+        local.name = decl->as.var_decl.name;
+        local.kind = SYM_VAR;
+        local.node = decl;
+        symbol_table_define(tc->st, local);
+        sym = symbol_table_lookup_local(tc->st, decl->as.var_decl.name);
+      }
       if (sym && decl->as.var_decl.type) {
         sym->type = typechecker_resolve_type_expr(tc, decl->as.var_decl.type);
         decl->resolved_type = sym->type;
@@ -442,64 +956,6 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
         }
         decl->resolved_type = sym->type;
       }
-    } else if (decl->kind == AST_SCHEMA_DECL) {
-      Symbol *sym = symbol_table_lookup_local(tc->st, decl->as.schema_decl.name);
-      if (sym) {
-        // Count own fields
-        int own_field_count = 0;
-        AstNode *f = decl->as.schema_decl.fields;
-        while (f) { own_field_count++; f = f->next; }
-
-        // Count parent fields (if parent exists)
-        int parent_field_count = 0;
-        Type *parent_type = NULL;
-        if (decl->as.schema_decl.parent) {
-          Symbol *parent_sym = symbol_table_lookup(tc->st, decl->as.schema_decl.parent);
-          if (parent_sym && parent_sym->type && parent_sym->type->kind == TY_STRUCT) {
-            parent_type = parent_sym->type;
-            parent_field_count = parent_type->as.struct_t.field_count;
-          } else if (parent_sym) {
-            typechecker_error(tc, decl->line, decl->col,
-                              "Schema parent '%s' is not a valid schema/struct type",
-                              decl->as.schema_decl.parent);
-          } else {
-            typechecker_error(tc, decl->line, decl->col,
-                              "Unknown schema parent '%s'",
-                              decl->as.schema_decl.parent);
-          }
-        }
-
-        int total_field_count = parent_field_count + own_field_count;
-        const char **field_names =
-            arena_alloc(tc->arena, sizeof(char *) * total_field_count);
-        Type **field_types =
-            arena_alloc(tc->arena, sizeof(Type *) * total_field_count);
-
-        // Copy parent fields first (inherited)
-        for (int i = 0; i < parent_field_count; i++) {
-          field_names[i] = parent_type->as.struct_t.field_names[i];
-          field_types[i] = parent_type->as.struct_t.field_types[i];
-        }
-
-        // Then own fields
-        f = decl->as.schema_decl.fields;
-        for (int i = 0; i < own_field_count; i++) {
-          field_names[parent_field_count + i] = f->as.field_decl.name;
-          field_types[parent_field_count + i] =
-              typechecker_resolve_type_expr(tc, f->as.field_decl.type);
-          f = f->next;
-        }
-
-        Method *existing_methods = NULL;
-        if (sym->type && sym->type->kind == TY_STRUCT) {
-          existing_methods = sym->type->as.struct_t.methods;
-        }
-
-        sym->type = type_new_struct(tc->tctx, decl->as.schema_decl.name,
-                                    field_names, field_types, total_field_count);
-        sym->type->as.struct_t.methods = existing_methods;
-        decl->resolved_type = sym->type;
-      }
     } else if (decl->kind == AST_METHOD_DECL) {
       Symbol *type_sym =
           symbol_table_lookup(tc->st, decl->as.method_decl.type_name);
@@ -533,6 +989,7 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
             m->type = type_new_function(
                 tc->tctx, ptypes, param_c, ret_t,
                 realm_to_strategy(method_node->as.func_decl.realm), true);
+            method_node->resolved_type = m->type;
             if (t->kind == TY_STRUCT) {
               m->next = t->as.struct_t.methods;
               t->as.struct_t.methods = m;
@@ -542,6 +999,59 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
             }
           }
           method_node = method_node->next;
+        }
+        if (decl->as.method_decl.iface_name && t->kind == TY_STRUCT) {
+          Symbol *iface_sym = symbol_table_lookup(
+              tc->st, decl->as.method_decl.iface_name);
+          bool valid = iface_sym && iface_sym->type &&
+                       iface_sym->type->kind == TY_INTERFACE;
+          if (!valid) {
+            typechecker_error(tc, decl->line, decl->col,
+                              "Unknown interface '%s' in method declaration",
+                              decl->as.method_decl.iface_name);
+          } else {
+            Type *iface = iface_sym->type;
+            for (int i = 0; i < iface->as.interface_t.method_count; i++) {
+              Method *method = t->as.struct_t.methods;
+              while (method &&
+                     strcmp(method->name,
+                            iface->as.interface_t.method_names[i]) != 0)
+                method = method->next;
+              Type *required = iface->as.interface_t.method_types[i];
+              if (!method || method->type->as.function.param_count !=
+                                 required->as.function.param_count ||
+                  !type_equals(method->type->as.function.ret,
+                               required->as.function.ret)) {
+                typechecker_error(tc, decl->line, decl->col,
+                                  "Interface implementation has a missing or "
+                                  "incompatible method");
+                valid = false;
+                break;
+              }
+              for (int p = 1; p < required->as.function.param_count; p++) {
+                if (!type_equals(method->type->as.function.params[p],
+                                 required->as.function.params[p])) {
+                  typechecker_error(
+                      tc, decl->line, decl->col,
+                      "Interface implementation has an incompatible method");
+                  valid = false;
+                  break;
+                }
+              }
+              if (!valid)
+                break;
+            }
+          }
+          if (valid) {
+            int count = t->as.struct_t.interface_count;
+            const char **names = arena_alloc(
+                tc->arena, sizeof(char *) * (size_t)(count + 1));
+            for (int i = 0; i < count; i++)
+              names[i] = t->as.struct_t.interface_names[i];
+            names[count] = decl->as.method_decl.iface_name;
+            t->as.struct_t.interface_names = names;
+            t->as.struct_t.interface_count = count + 1;
+          }
         }
       } else {
         typechecker_error(tc, decl->line, decl->col,
@@ -592,6 +1102,45 @@ static void validate_systems_attrs(TypeChecker *tc, AstNode *node,
   }
 }
 
+static bool is_assignable_expr(AstNode *expr) {
+  if (!expr)
+    return false;
+  return expr->kind == AST_IDENTIFIER || expr->kind == AST_INDEX_EXPR ||
+         expr->kind == AST_FIELD_EXPR ||
+         (expr->kind == AST_UNARY_EXPR && expr->as.unary.op == TOKEN_STAR);
+}
+
+static bool is_integer_literal_expr(AstNode *expr) {
+  return expr &&
+         (expr->kind == AST_INT_LITERAL ||
+          (expr->kind == AST_UNARY_EXPR && expr->as.unary.op == TOKEN_MINUS &&
+           expr->as.unary.expr &&
+           expr->as.unary.expr->kind == AST_INT_LITERAL));
+}
+
+static Type *typechecker_infer_value_branch(TypeChecker *tc, AstNode *branch) {
+  if (!branch)
+    return tc->tctx->type_unknown;
+  if (branch->kind != AST_BLOCK)
+    return typechecker_infer_expr(tc, branch);
+
+  symbol_table_push(tc->st);
+  typechecker_collect_decls(tc, branch->as.block.statements);
+  AstNode *last = branch->as.block.statements;
+  if (!last) {
+    symbol_table_pop(tc->st);
+    return tc->tctx->type_void;
+  }
+  while (last->next)
+    last = last->next;
+  for (AstNode *stmt = branch->as.block.statements; stmt != last;
+       stmt = stmt->next)
+    typechecker_check_node(tc, stmt);
+  Type *result = typechecker_infer_expr(tc, last);
+  symbol_table_pop(tc->st);
+  return result;
+}
+
 Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
   if (!expr)
     return tc->tctx->type_unknown;
@@ -617,13 +1166,53 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     inferred = tc->tctx->type_char;
     break;
   case AST_ARRAY_LITERAL:
-    inferred = tc->tctx->type_unknown;
+    if (!expr->as.array_literal.elems) {
+      inferred = type_new_array(tc->tctx, tc->tctx->type_unknown, 0);
+      break;
+    }
+
+    {
+      AstNode *elem = expr->as.array_literal.elems;
+      Type *elem_t = typechecker_infer_expr(tc, elem);
+      size_t count = 1;
+      for (elem = elem->next; elem; elem = elem->next) {
+        Type *next_t = typechecker_infer_expr(tc, elem);
+        count++;
+        if (type_is_resolved(elem_t) && type_is_resolved(next_t) &&
+            !type_is_assignable(elem_t, next_t) &&
+            !type_is_assignable(next_t, elem_t)) {
+          typechecker_error(tc, elem->line, elem->col,
+                            "Array literal elements must have one type");
+          elem_t = tc->tctx->type_error;
+        }
+      }
+      inferred = type_new_array(tc->tctx, elem_t, count);
+    }
     break;
 
   case AST_IDENTIFIER: {
     Symbol *sym = symbol_table_lookup(tc->st, expr->as.identifier.name);
     if (sym && sym->type) {
+      if (tc->function_depth > 1 && sym->kind == SYM_VAR) {
+        Scope *symbol_scope = scope_containing_symbol(tc->st, sym);
+        Scope *current_parent =
+            tc->function_parent_scopes[tc->function_depth - 1];
+        Scope *outermost_parent = tc->function_parent_scopes[0];
+        if (scope_is_between(symbol_scope, current_parent,
+                             outermost_parent)) {
+          typechecker_error(
+              tc, expr->line, expr->col,
+              "Nested functions cannot capture enclosing variable '%s'",
+              expr->as.identifier.name);
+          inferred = tc->tctx->type_error;
+          break;
+        }
+      }
+      expr->resolved_decl = sym->node;
       inferred = sym->type;
+    } else if (sym && sym->kind == SYM_MOD) {
+      expr->resolved_decl = sym->node;
+      inferred = tc->tctx->type_unknown;
     } else {
       typechecker_error(tc, expr->line, expr->col, "Undefined variable '%s'",
                         expr->as.identifier.name);
@@ -643,11 +1232,45 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     case TOKEN_SLASH:
     case TOKEN_PERCENT:
       if (type_is_resolved(lty) && type_is_resolved(rty)) {
-        // Allow pointer arithmetic: pointer +/- integer
-        if ((lty->kind == TY_POINTER && rty->kind == TY_PRIMITIVE) ||
-            (rty->kind == TY_POINTER && lty->kind == TY_PRIMITIVE)) {
-          // pointer arithmetic is ok
+        bool left_ptr = lty->kind == TY_POINTER;
+        bool right_ptr = rty->kind == TY_POINTER;
+        if (left_ptr || right_ptr) {
+          bool valid_pointer_arithmetic =
+              (expr->as.binary.op == TOKEN_PLUS &&
+               ((left_ptr && type_is_integer(rty)) ||
+                (right_ptr && type_is_integer(lty)))) ||
+              (expr->as.binary.op == TOKEN_MINUS && left_ptr &&
+               type_is_integer(rty));
+          if (!valid_pointer_arithmetic) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Pointers only support addition or subtraction "
+                              "with an integer");
+            inferred = tc->tctx->type_error;
+            break;
+          }
+          inferred = left_ptr ? lty : rty;
+          break;
         } else if (lty->kind == TY_PRIMITIVE && rty->kind == TY_PRIMITIVE) {
+          bool string_concat = expr->as.binary.op == TOKEN_PLUS &&
+                               strcmp(lty->as.primitive.name, "str") == 0 &&
+                               strcmp(rty->as.primitive.name, "str") == 0;
+          if (string_concat) {
+            inferred = tc->tctx->type_str;
+            break;
+          }
+          if (!type_is_numeric(lty) || !type_is_numeric(rty)) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Arithmetic operators require numeric operands");
+            inferred = tc->tctx->type_error;
+            break;
+          }
+          if (expr->as.binary.op == TOKEN_PERCENT &&
+              (type_is_float(lty) || type_is_float(rty))) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Remainder requires integer operands");
+            inferred = tc->tctx->type_error;
+            break;
+          }
           if (!type_equals(lty, rty)) {
             // D-04: Strict type checking for binary expressions
             // Allow literal coercion: if either operand is a literal,
@@ -698,6 +1321,20 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       }
       inferred = lty;
       break;
+    case TOKEN_AMP:
+    case TOKEN_PIPE:
+    case TOKEN_CARET:
+    case TOKEN_SHL:
+    case TOKEN_SHR:
+      if (type_is_resolved(lty) && type_is_resolved(rty) &&
+          (!type_is_integer(lty) || !type_is_integer(rty))) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Bitwise operators require integer operands");
+        inferred = tc->tctx->type_error;
+      } else {
+        inferred = lty;
+      }
+      break;
     case TOKEN_EQ_EQ:
     case TOKEN_BANG_EQ:
     case TOKEN_LT:
@@ -708,6 +1345,14 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         if (!type_is_comparable(lty, rty)) {
           typechecker_error(tc, expr->line, expr->col,
                             "Comparison type mismatch");
+        } else if (lty->kind == TY_PRIMITIVE &&
+                   rty->kind == TY_PRIMITIVE &&
+                   strcmp(lty->as.primitive.name, "str") == 0 &&
+                   strcmp(rty->as.primitive.name, "str") == 0 &&
+                   expr->as.binary.op != TOKEN_EQ_EQ &&
+                   expr->as.binary.op != TOKEN_BANG_EQ) {
+          typechecker_error(tc, expr->line, expr->col,
+                            "String comparison supports only == and !=");
         }
       }
       inferred = tc->tctx->type_bool;
@@ -732,6 +1377,10 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
   }
 
   case AST_ASSIGN: {
+    if (!is_assignable_expr(expr->as.assign.target)) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Assignment target is not assignable");
+    }
     // Const reassignment check
     if (expr->as.assign.target->kind == AST_IDENTIFIER) {
       Symbol *sym = symbol_table_lookup(tc->st,
@@ -746,7 +1395,38 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     Type *lty = typechecker_infer_expr(tc, expr->as.assign.target);
     Type *rty = typechecker_infer_expr(tc, expr->as.assign.value);
     if (type_is_resolved(lty) && type_is_resolved(rty)) {
-      if (!type_is_assignable(lty, rty)) {
+      bool assignable = type_is_assignable(lty, rty);
+      if (!assignable && expr->as.assign.value->kind == AST_ERROR_EXPR &&
+          expr->as.assign.target->kind == AST_IDENTIFIER) {
+        Symbol *target = symbol_table_lookup(
+            tc->st, expr->as.assign.target->as.identifier.name);
+        if (target && target->node && target->node->kind == AST_FUNC_DECL &&
+            target->node->resolved_type &&
+            target->node->resolved_type->kind == TY_FUNCTION &&
+            target->node->resolved_type->as.function.ret->kind == TY_FALLIBLE)
+          assignable = true;
+      }
+      if (!assignable && rty->kind == TY_ERROR &&
+          expr->as.assign.target->kind == AST_IDENTIFIER) {
+        Symbol *target = symbol_table_lookup(
+            tc->st, expr->as.assign.target->as.identifier.name);
+        if (target && target->node && target->node->kind == AST_FUNC_DECL &&
+            target->node->resolved_type &&
+            target->node->resolved_type->kind == TY_FUNCTION &&
+            target->node->resolved_type->as.function.ret->kind == TY_FALLIBLE)
+          assignable = true;
+      }
+      if (!assignable && expr->as.assign.target->kind == AST_IDENTIFIER) {
+        Symbol *target = symbol_table_lookup(
+            tc->st, expr->as.assign.target->as.identifier.name);
+        if (target && target->node && target->node->kind == AST_FUNC_DECL &&
+            target->node->resolved_type &&
+            target->node->resolved_type->kind == TY_FUNCTION) {
+          assignable = type_is_assignable(
+              target->node->resolved_type->as.function.ret, rty);
+        }
+      }
+      if (!assignable) {
 #ifdef DEBUG
         printf("DEBUG ASSERT: Cannot assign %d to %d\n", rty->kind, lty->kind);
         if (lty->kind == TY_PRIMITIVE)
@@ -763,7 +1443,37 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
   }
 
   case AST_CALL_EXPR: {
-    Type *callee_t = typechecker_infer_expr(tc, expr->as.call.callee);
+    if (expr->as.call.callee->kind == AST_IDENTIFIER &&
+        strcmp(expr->as.call.callee->as.identifier.name, "print") == 0) {
+      AstNode *arg = expr->as.call.args;
+      if (!arg) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "print requires at least one argument");
+      }
+      while (arg) {
+        Type *arg_t = typechecker_infer_expr(tc, arg);
+        if (type_is_resolved(arg_t) && arg_t->kind != TY_PRIMITIVE &&
+            arg_t->kind != TY_POINTER && arg_t->kind != TY_ERROR) {
+          typechecker_error(tc, arg->line, arg->col,
+                            "print accepts only primitive values and pointers");
+        }
+        arg = arg->next;
+      }
+      inferred = tc->tctx->type_void;
+      break;
+    }
+
+    Type *callee_t = NULL;
+    if (expr->as.call.callee->kind == AST_FIELD_EXPR) {
+      AstNode *target = expr->as.call.callee->as.field.target;
+      Type *target_t = typechecker_infer_expr(tc, target);
+      if (target_t && target_t->kind == TY_VARIANT) {
+        callee_t = target_t;
+        expr->as.call.callee->resolved_type = target_t;
+      }
+    }
+    if (!callee_t)
+      callee_t = typechecker_infer_expr(tc, expr->as.call.callee);
     if (callee_t->kind == TY_FUNCTION) {
       inferred = callee_t->as.function.ret;
 
@@ -1017,6 +1727,12 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         }
       } else if (expr->as.unary.op == TOKEN_AMP) {
         // Address-of: &x
+        if (!is_assignable_expr(expr->as.unary.expr)) {
+          typechecker_error(tc, expr->line, expr->col,
+                            "Address-of requires an assignable expression");
+          inferred = tc->tctx->type_error;
+          break;
+        }
         // Array-to-pointer decay: &([N]T) → *T, not *[N]T
         if (inner_t->kind == TY_ARRAY) {
           inferred = type_new_pointer(tc->tctx, inner_t->as.array.inner);
@@ -1024,8 +1740,21 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
           inferred = type_new_pointer(tc->tctx, inner_t);
         }
       } else if (expr->as.unary.op == TOKEN_MINUS) {
-        // Negation requires numeric type
-        inferred = inner_t;
+        if (!type_is_numeric(inner_t)) {
+          typechecker_error(tc, expr->line, expr->col,
+                            "Negation requires a numeric operand");
+          inferred = tc->tctx->type_error;
+        } else {
+          inferred = inner_t;
+        }
+      } else if (expr->as.unary.op == TOKEN_TILDE) {
+        if (!type_is_integer(inner_t)) {
+          typechecker_error(tc, expr->line, expr->col,
+                            "Bitwise NOT requires an integer operand");
+          inferred = tc->tctx->type_error;
+        } else {
+          inferred = inner_t;
+        }
       } else if (expr->as.unary.op == TOKEN_BANG) {
         // Logical NOT requires boolean
         if (inner_t->kind != TY_PRIMITIVE ||
@@ -1045,6 +1774,15 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
 
     if (target_t->kind == TY_ARRAY) {
       inferred = target_t->as.array.inner;
+      if (expr->as.index.index->kind == AST_INT_LITERAL &&
+          expr->as.index.index->as.int_literal.value >=
+              target_t->as.array.size) {
+        typechecker_error(tc, expr->as.index.index->line,
+                          expr->as.index.index->col,
+                          "Array index is out of bounds");
+      }
+    } else if (target_t->kind == TY_POINTER) {
+      inferred = target_t->as.pointer.inner;
     } else if (type_is_resolved(target_t)) {
       typechecker_error(tc, expr->line, expr->col,
                         "Cannot index non-array type");
@@ -1065,7 +1803,42 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     break;
   }
 
+  case AST_RANGE_EXPR: {
+    Type *start_t = typechecker_infer_expr(tc, expr->as.range_expr.start);
+    Type *end_t = typechecker_infer_expr(tc, expr->as.range_expr.end);
+    if (type_is_resolved(start_t) && type_is_resolved(end_t)) {
+      if (!type_is_integer(start_t) || !type_is_integer(end_t)) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Range bounds must be integers");
+        inferred = tc->tctx->type_error;
+      } else if (!type_is_assignable(start_t, end_t) &&
+                 !type_is_assignable(end_t, start_t)) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Range bounds must have compatible types");
+        inferred = tc->tctx->type_error;
+      } else {
+        bool start_literal = is_integer_literal_expr(expr->as.range_expr.start);
+        bool end_literal = is_integer_literal_expr(expr->as.range_expr.end);
+        inferred = start_literal && !end_literal ? end_t : start_t;
+      }
+    }
+    break;
+  }
+
   case AST_FIELD_EXPR: {
+    AstNode *qualified = qualified_declaration(tc, expr);
+    if (qualified) {
+      expr->resolved_decl = qualified;
+      if (qualified->kind == AST_MOD_DECL) {
+        inferred = tc->tctx->type_unknown;
+        break;
+      }
+      if (qualified->resolved_type) {
+        inferred = qualified->resolved_type;
+        break;
+      }
+    }
+
     Type *target_t = typechecker_infer_expr(tc, expr->as.field.target);
     const char *fname = expr->as.field.field;
 
@@ -1129,7 +1902,14 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       for (int i = 0; i < base_t->as.variant.arm_count; i++) {
         if (strcmp(base_t->as.variant.arm_names[i], fname) == 0) {
           // Variant arm access (e.g. Color.Red)
-          inferred = base_t;
+          if (base_t->as.variant.arm_types[i]) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Variant arm '%s' requires constructor arguments",
+                              fname);
+            inferred = tc->tctx->type_error;
+          } else {
+            inferred = base_t;
+          }
           found = true;
           break;
         }
@@ -1150,6 +1930,21 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         typechecker_error(tc, expr->line, expr->col,
                           "Arm or method '%s' not found in variant '%s'", fname,
                           base_t->as.variant.name);
+        inferred = tc->tctx->type_error;
+      }
+    } else if (base_t->kind == TY_INTERFACE) {
+      bool found = false;
+      for (int i = 0; i < base_t->as.interface_t.method_count; i++) {
+        if (strcmp(base_t->as.interface_t.method_names[i], fname) == 0) {
+          inferred = base_t->as.interface_t.method_types[i];
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Method '%s' not found in interface '%s'", fname,
+                          base_t->as.interface_t.name);
         inferred = tc->tctx->type_error;
       }
     } else if (base_t->kind == TY_PRIMITIVE &&
@@ -1187,10 +1982,50 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     Type *inner_t = typechecker_infer_expr(tc, expr->as.try_expr.expr);
     if (inner_t->kind == TY_FALLIBLE) {
       inferred = inner_t->as.fallible.inner;
+      if (!tc->expected_ret || tc->expected_ret->kind != TY_FALLIBLE) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "try may only be used in a fallible function");
+      }
     } else if (type_is_resolved(inner_t)) {
       typechecker_error(tc, expr->line, expr->col,
                         "try requires a fallible (!T) expression");
       inferred = tc->tctx->type_error;
+    }
+    break;
+  }
+
+  case AST_ERROR_EXPR: {
+    AstNode *set = expr->as.error_expr.path;
+    AstNode *member = set ? set->next : NULL;
+    if (!set || !member || member->next) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Error value must be error.Set.Member");
+      inferred = tc->tctx->type_error;
+      break;
+    }
+    Symbol *sym = symbol_table_lookup(tc->st, set->as.identifier.name);
+    if (!sym || !sym->type || sym->type->kind != TY_ERROR) {
+      typechecker_error(tc, set->line, set->col,
+                        "Unknown error set '%s'", set->as.identifier.name);
+      inferred = tc->tctx->type_error;
+      break;
+    }
+    expr->resolved_decl = sym->node;
+    bool found = false;
+    for (int i = 0; i < sym->type->as.error_t.variant_count; i++) {
+      if (strcmp(sym->type->as.error_t.variants[i],
+                 member->as.identifier.name) == 0) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      typechecker_error(tc, member->line, member->col,
+                        "Unknown member '%s' in error set",
+                        member->as.identifier.name);
+      inferred = tc->tctx->type_error;
+    } else {
+      inferred = sym->type;
     }
     break;
   }
@@ -1207,7 +2042,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         sym.name = expr->as.catch_expr.err_name;
         sym.kind = SYM_VAR;
         sym.node = expr;
-        sym.type = tc->tctx->type_unknown; // error type
+        sym.type = type_new_error(tc->tctx, "RunesError", NULL, 0);
         symbol_table_define(tc->st, sym);
       }
 
@@ -1247,6 +2082,12 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     Type *inner_t = typechecker_infer_expr(tc, expr->as.promote.expr);
     inferred = inner_t;
 
+    if (type_is_resolved(inner_t) && inner_t->kind != TY_POINTER) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "promote requires a pointer to the value being copied");
+      inferred = tc->tctx->type_error;
+    }
+
     if (tc->current_realm == REALM_STACK) {
       typechecker_error(tc, expr->line, expr->col,
                         "Cannot promote from a pure stack function");
@@ -1256,6 +2097,36 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     if (target != REALM_HEAP && target != REALM_GC) {
       typechecker_error(tc, expr->line, expr->col,
                         "Promote target must be dynamic or gc");
+    }
+    break;
+  }
+
+  case AST_IF_STMT: {
+    Type *condition = typechecker_infer_expr(tc, expr->as.if_stmt.condition);
+    if (type_is_resolved(condition) &&
+        (condition->kind != TY_PRIMITIVE ||
+         strcmp(condition->as.primitive.name, "bool") != 0)) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "If condition must be a boolean expression");
+    }
+    Type *then_type =
+        typechecker_infer_value_branch(tc, expr->as.if_stmt.then_branch);
+    if (!expr->as.if_stmt.else_branch) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Value-producing if requires an else branch");
+      inferred = tc->tctx->type_error;
+      break;
+    }
+    Type *else_type =
+        typechecker_infer_value_branch(tc, expr->as.if_stmt.else_branch);
+    if (type_is_resolved(then_type) && type_is_resolved(else_type) &&
+        !type_is_assignable(then_type, else_type) &&
+        !type_is_assignable(else_type, then_type)) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "If branches produce incompatible types");
+      inferred = tc->tctx->type_error;
+    } else {
+      inferred = type_is_resolved(then_type) ? then_type : else_type;
     }
     break;
   }
@@ -1283,10 +2154,16 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
           }
         }
 
-        Type *body_t = typechecker_infer_expr(tc, arm->as.match_arm.body);
+        Type *body_t = NULL;
         if (arm->as.match_arm.body &&
             arm->as.match_arm.body->kind == AST_BLOCK) {
           typechecker_check_node(tc, arm->as.match_arm.body);
+          AstNode *last = arm->as.match_arm.body->as.block.statements;
+          while (last && last->next)
+            last = last->next;
+          body_t = last ? last->resolved_type : tc->tctx->type_void;
+        } else {
+          body_t = typechecker_infer_expr(tc, arm->as.match_arm.body);
         }
 
         if (!first_arm_t && type_is_resolved(body_t)) {
@@ -1303,6 +2180,8 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       }
       arm = arm->next;
     }
+
+    typechecker_check_match_coverage(tc, expr, subject_t);
 
     inferred = first_arm_t ? first_arm_t : tc->tctx->type_unknown;
     break;
@@ -1371,6 +2250,32 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   if (!node)
     return;
   switch (node->kind) {
+  case AST_USE_DECL: {
+    AstNode *target = use_target_declaration(tc, node->as.use_decl.path);
+    AstNode *last = node->as.use_decl.path;
+    while (last && last->next)
+      last = last->next;
+    if (target && last) {
+      Symbol *alias =
+          symbol_table_lookup_local(tc->st, last->as.identifier.name);
+      if (alias) {
+        alias->node = target;
+        alias->type = target->resolved_type;
+      }
+    }
+    break;
+  }
+
+  case AST_MOD_DECL: {
+    symbol_table_push(tc->st);
+    typechecker_collect_decls(tc, node->as.mod_decl.declarations);
+    for (AstNode *decl = node->as.mod_decl.declarations; decl;
+         decl = decl->next)
+      typechecker_check_node(tc, decl);
+    symbol_table_pop(tc->st);
+    break;
+  }
+
   case AST_FUNC_DECL: {
     // Phase 3: realm nesting enforcement
     MemoryRealm saved_realm = tc->current_realm;
@@ -1385,7 +2290,14 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
     }
     tc->current_realm = node->as.func_decl.is_main ? REALM_MAIN : func_realm;
 
+    if (tc->function_depth >= 32) {
+      typechecker_error(tc, node->line, node->col,
+                        "Function nesting exceeds compiler limit of 32");
+      break;
+    }
+    Scope *function_parent = tc->st->current;
     symbol_table_push(tc->st);
+    tc->function_parent_scopes[tc->function_depth++] = function_parent;
 
     AstNode *p = node->as.func_decl.params;
     while (p) {
@@ -1404,9 +2316,12 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       sym.kind = SYM_VAR;
       sym.node = node;
       sym.type = typechecker_resolve_type_expr(tc, node->as.func_decl.ret_type);
+      if (sym.type && sym.type->kind == TY_FALLIBLE)
+        sym.type = sym.type->as.fallible.inner;
       symbol_table_define(tc->st, sym);
     }
 
+    Type *saved_expected_ret = tc->expected_ret;
     tc->expected_ret =
         typechecker_resolve_type_expr(tc, node->as.func_decl.ret_type);
 
@@ -1427,8 +2342,9 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       }
     }
 
-    tc->expected_ret = NULL;
+    tc->expected_ret = saved_expected_ret;
     tc->current_realm = saved_realm;
+    tc->function_depth--;
     symbol_table_pop(tc->st);
     break;
   }
@@ -1443,7 +2359,33 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
     }
 
     if (node->as.var_decl.init) {
-      Type *init_t = typechecker_infer_expr(tc, node->as.var_decl.init);
+      Type *init_t = NULL;
+
+      if (decl_t->kind == TY_ARRAY &&
+          node->as.var_decl.init->kind == AST_ARRAY_LITERAL) {
+        AstNode *elem = node->as.var_decl.init->as.array_literal.elems;
+        size_t count = 0;
+        for (; elem; elem = elem->next) {
+          Type *elem_t = typechecker_infer_expr(tc, elem);
+          count++;
+          if (type_is_resolved(elem_t) &&
+              !type_is_assignable(decl_t->as.array.inner, elem_t)) {
+            typechecker_error(tc, elem->line, elem->col,
+                              "Array element does not match declared type");
+          }
+        }
+        if (count != 0 && count != decl_t->as.array.size) {
+          typechecker_error(tc, node->line, node->col,
+                            "Array literal has %zu elements; declared array "
+                            "requires %zu",
+                            count, decl_t->as.array.size);
+        }
+        node->as.var_decl.init->resolved_type = decl_t;
+        init_t = decl_t;
+      } else {
+        init_t = typechecker_infer_expr(tc, node->as.var_decl.init);
+      }
+
       if (type_is_resolved(decl_t) && type_is_resolved(init_t)) {
         if (!type_is_assignable(decl_t, init_t)) {
           typechecker_error(
@@ -1518,7 +2460,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
             }
           }
         }
-      } else {
+      } else if (!type_is_resolved(decl_t)) {
         decl_t = init_t; // inference
       }
     }
@@ -1528,7 +2470,14 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
     sym.kind = SYM_VAR;
     sym.node = node;
     sym.type = decl_t;
-    symbol_table_define(tc->st, sym);
+    Symbol *existing =
+        symbol_table_lookup_local(tc->st, node->as.var_decl.name);
+    if (existing) {
+      existing->node = node;
+      existing->type = decl_t;
+    } else {
+      symbol_table_define(tc->st, sym);
+    }
     node->resolved_type = decl_t;
     break;
   }
@@ -1671,6 +2620,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       }
       arm = arm->next;
     }
+    typechecker_check_match_coverage(tc, node, subject_t);
     break;
   }
 
@@ -1693,14 +2643,33 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
 
   case AST_FOR_STMT: {
     symbol_table_push(tc->st);
-    typechecker_infer_expr(tc, node->as.for_stmt.iter);
+    Type *iter_t = typechecker_infer_expr(tc, node->as.for_stmt.iter);
+    Type *capture_t = tc->tctx->type_unknown;
+    if (node->as.for_stmt.iter->kind == AST_RANGE_EXPR &&
+        type_is_integer(iter_t)) {
+      capture_t = iter_t;
+      if (node->as.for_stmt.cap_kind == CAPTURE_PTR ||
+          node->as.for_stmt.cap_kind == CAPTURE_PTR_INDEXED) {
+        typechecker_error(tc, node->line, node->col,
+                          "Pointer capture requires a fixed array");
+        capture_t = tc->tctx->type_error;
+      }
+    } else if (iter_t->kind == TY_ARRAY) {
+      capture_t = iter_t->as.array.inner;
+      if (node->as.for_stmt.cap_kind == CAPTURE_PTR ||
+          node->as.for_stmt.cap_kind == CAPTURE_PTR_INDEXED)
+        capture_t = type_new_pointer(tc->tctx, capture_t);
+    } else if (type_is_resolved(iter_t)) {
+      typechecker_error(tc, node->line, node->col,
+                        "For loop requires a range or fixed array");
+    }
     // Bind capture variable
     if (node->as.for_stmt.cap_value) {
       Symbol sym = {0};
       sym.name = node->as.for_stmt.cap_value;
       sym.kind = SYM_VAR;
       sym.node = node;
-      sym.type = tc->tctx->type_unknown;
+      sym.type = capture_t;
       symbol_table_define(tc->st, sym);
     }
     if (node->as.for_stmt.cap_index) {
@@ -1727,6 +2696,40 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
 
   case AST_UNSAFE_BLOCK: {
     typechecker_check_node(tc, node->as.unsafe_block.body);
+    break;
+  }
+
+  case AST_ASM_EXPR: {
+    if (node->as.asm_expr.output) {
+      Symbol *output = symbol_table_lookup(tc->st, node->as.asm_expr.output);
+      if (!output) {
+        typechecker_error(tc, node->line, node->col,
+                          "Unknown asm output binding '%s'",
+                          node->as.asm_expr.output);
+      } else {
+        bool valid_type = type_is_integer(output->type);
+        if (output->type && output->type->kind == TY_TUPLE &&
+            output->type->as.tuple.count >= 2 &&
+            output->type->as.tuple.count <= 4) {
+          valid_type = true;
+          for (int i = 0; i < output->type->as.tuple.count; i++)
+            valid_type = valid_type &&
+                         type_is_integer(output->type->as.tuple.elems[i]);
+        }
+        if (!valid_type) {
+          typechecker_error(
+              tc, node->line, node->col,
+              "Asm output binding must be an integer or a 2-4 integer tuple");
+        } else if (output->node && output->node->kind == AST_VAR_DECL &&
+                   output->node->as.var_decl.is_const) {
+          typechecker_error(tc, node->line, node->col,
+                            "Asm output binding cannot be const");
+        }
+        node->resolved_type = output->type;
+      }
+    }
+    if (!node->resolved_type)
+      node->resolved_type = tc->tctx->type_void;
     break;
   }
 
@@ -1812,7 +2815,16 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
           MemoryRealm func_realm = m_node->as.func_decl.realm;
           tc->current_realm = func_realm;
 
+          if (tc->function_depth >= 32) {
+            typechecker_error(tc, m_node->line, m_node->col,
+                              "Function nesting exceeds compiler limit of 32");
+            tc->current_realm = saved_realm;
+            m_node = m_node->next;
+            continue;
+          }
+          Scope *function_parent = tc->st->current;
           symbol_table_push(tc->st);
+          tc->function_parent_scopes[tc->function_depth++] = function_parent;
           // Bind parameters including 'self'
           AstNode *p = m_node->as.func_decl.params;
           while (p) {
@@ -1838,16 +2850,20 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
             r_sym.node = m_node;
             r_sym.type = typechecker_resolve_type_expr(
                 tc, m_node->as.func_decl.ret_type);
+            if (r_sym.type && r_sym.type->kind == TY_FALLIBLE)
+              r_sym.type = r_sym.type->as.fallible.inner;
             symbol_table_define(tc->st, r_sym);
           }
 
+          Type *saved_expected_ret = tc->expected_ret;
           tc->expected_ret =
               typechecker_resolve_type_expr(tc, m_node->as.func_decl.ret_type);
           if (m_node->as.func_decl.body) {
             typechecker_check_node(tc, m_node->as.func_decl.body);
           }
-          tc->expected_ret = NULL;
+          tc->expected_ret = saved_expected_ret;
           tc->current_realm = saved_realm;
+          tc->function_depth--;
           symbol_table_pop(tc->st);
         }
         m_node = m_node->next;
@@ -2002,7 +3018,7 @@ void typechecker_check(TypeChecker *tc, AstNode *program) {
   if (!program || program->kind != AST_PROGRAM)
     return;
 
-  typechecker_collect_decls(tc, program->as.program.declarations);
+  typechecker_collect_decls(tc, program);
 
   AstNode *decl = program->as.program.declarations;
   while (decl) {

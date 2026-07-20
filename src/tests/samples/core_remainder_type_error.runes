@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Remainder requires integer operands
+f bad_remainder() {
+    f64 value = 3.5 % 2.0
+}

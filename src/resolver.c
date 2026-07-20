@@ -100,8 +100,6 @@ static const char *get_node_name(AstNode *node) {
     return node->as.type_decl.name;
   case AST_VARIANT_DECL:
     return node->as.variant_decl.name;
-  case AST_SCHEMA_DECL:
-    return node->as.schema_decl.name;
   case AST_INTERFACE_DECL:
     return node->as.interface_decl.name;
   case AST_ERROR_DECL:
@@ -123,7 +121,6 @@ static SymbolKind get_node_sym_kind(AstNode *node) {
     return SYM_VAR;
   case AST_TYPE_DECL:
   case AST_VARIANT_DECL:
-  case AST_SCHEMA_DECL:
   case AST_INTERFACE_DECL:
   case AST_ERROR_DECL:
     return SYM_TYPE;
@@ -190,10 +187,6 @@ static void collect_decls(Resolver *r, AstNode *node) {
       define_symbol(r, node, node->as.variant_decl.name, SYM_TYPE,
                     node->as.variant_decl.is_pub);
       break;
-    case AST_SCHEMA_DECL:
-      define_symbol(r, node, node->as.schema_decl.name, SYM_TYPE,
-                    node->as.schema_decl.is_pub);
-      break;
     case AST_INTERFACE_DECL:
       define_symbol(r, node, node->as.interface_decl.name, SYM_TYPE,
                     node->as.interface_decl.is_pub);
@@ -233,7 +226,11 @@ static void collect_decls(Resolver *r, AstNode *node) {
         // Only define if not already present in this local scope
         // (to avoid conflicts with local mod definitions in the same file)
         if (!symbol_table_lookup_local(r->st, alias)) {
-          define_symbol(r, node, alias, target->kind, false);
+          Symbol imported = {.name = alias,
+                             .kind = target->kind,
+                             .node = target->node,
+                             .is_pub = false};
+          symbol_table_define(r->st, imported);
         }
       } else {
         error(r, node->line, node->col, "could not resolve module path", NULL);
@@ -295,9 +292,13 @@ static void resolve_node(Resolver *r, AstNode *node) {
     break;
 
   case AST_IDENTIFIER:
-    if (symbol_table_lookup(r->st, node->as.identifier.name) == NULL) {
-      error(r, node->line, node->col, "undefined identifier '%s'",
-            node->as.identifier.name);
+    if (strcmp(node->as.identifier.name, "print") != 0) {
+      Symbol *symbol = symbol_table_lookup(r->st, node->as.identifier.name);
+      if (symbol)
+        node->resolved_decl = symbol->node;
+      else
+        error(r, node->line, node->col, "undefined identifier '%s'",
+              node->as.identifier.name);
     }
     break;
 
@@ -432,7 +433,14 @@ static void resolve_node(Resolver *r, AstNode *node) {
     break;
 
   case AST_ASM_EXPR:
-    // No-op as requested
+    if (node->as.asm_expr.output) {
+      Symbol *symbol = symbol_table_lookup(r->st, node->as.asm_expr.output);
+      if (symbol)
+        node->resolved_decl = symbol->node;
+      else
+        error(r, node->line, node->col,
+              "undefined asm output binding '%s'", node->as.asm_expr.output);
+    }
     break;
 
   case AST_TYPE_DECL:
@@ -445,10 +453,6 @@ static void resolve_node(Resolver *r, AstNode *node) {
 
   case AST_VARIANT_ARM:
     resolve_list(r, node->as.variant_arm.fields);
-    break;
-
-  case AST_SCHEMA_DECL:
-    resolve_list(r, node->as.schema_decl.fields);
     break;
 
   case AST_FIELD_DECL:

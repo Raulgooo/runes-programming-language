@@ -86,6 +86,8 @@ Type *type_new_struct(TypeContext *ctx, const char *name,
   t->as.struct_t.field_types = field_types;
   t->as.struct_t.field_count = field_count;
   t->as.struct_t.methods = NULL;
+  t->as.struct_t.interface_names = NULL;
+  t->as.struct_t.interface_count = 0;
   return t;
 }
 
@@ -102,6 +104,28 @@ Type *type_new_variant(TypeContext *ctx, const char *name,
   return t;
 }
 
+Type *type_new_interface(TypeContext *ctx, const char *name,
+                         const char **method_names, Type **method_types,
+                         int method_count) {
+  Type *t = arena_alloc(ctx->arena, sizeof(Type));
+  t->kind = TY_INTERFACE;
+  t->as.interface_t.name = name;
+  t->as.interface_t.method_names = method_names;
+  t->as.interface_t.method_types = method_types;
+  t->as.interface_t.method_count = method_count;
+  return t;
+}
+
+Type *type_new_error(TypeContext *ctx, const char *name,
+                     const char **variants, int variant_count) {
+  Type *t = arena_alloc(ctx->arena, sizeof(Type));
+  t->kind = TY_ERROR;
+  t->as.error_t.name = name;
+  t->as.error_t.variants = variants;
+  t->as.error_t.variant_count = variant_count;
+  return t;
+}
+
 bool type_equals(Type *a, Type *b) {
   if (a == b)
     return true;
@@ -114,6 +138,11 @@ bool type_equals(Type *a, Type *b) {
 
   switch (a->kind) {
   case TY_PRIMITIVE:
+    if ((strcmp(a->as.primitive.name, "usize") == 0 &&
+         strcmp(b->as.primitive.name, "u64") == 0) ||
+        (strcmp(a->as.primitive.name, "u64") == 0 &&
+         strcmp(b->as.primitive.name, "usize") == 0))
+      return true;
     return strcmp(a->as.primitive.name, b->as.primitive.name) == 0;
 
   case TY_POINTER:
@@ -178,6 +207,13 @@ bool type_is_assignable(Type *target, Type *source) {
   if (!target || !source)
     return false;
 
+  if (target->kind == TY_PRIMITIVE && source->kind == TY_ERROR &&
+      strcmp(target->as.primitive.name, "u32") == 0)
+    return true;
+  if (target->kind == TY_ERROR && source->kind == TY_PRIMITIVE &&
+      strcmp(source->as.primitive.name, "u32") == 0)
+    return true;
+
   if (target->kind == TY_INFER_ERROR || source->kind == TY_INFER_ERROR)
     return true;  // poison: suppress cascading errors (per D-02)
 
@@ -185,9 +221,56 @@ bool type_is_assignable(Type *target, Type *source) {
     return true;
   }
 
+  if (target->kind == TY_INTERFACE && source->kind == TY_STRUCT) {
+    bool declared = false;
+    for (int i = 0; i < source->as.struct_t.interface_count; i++)
+      if (strcmp(source->as.struct_t.interface_names[i],
+                 target->as.interface_t.name) == 0) {
+        declared = true;
+        break;
+      }
+    if (!declared)
+      return false;
+    for (int i = 0; i < target->as.interface_t.method_count; i++) {
+      Method *method = source->as.struct_t.methods;
+      while (method && strcmp(method->name,
+                              target->as.interface_t.method_names[i]) != 0)
+        method = method->next;
+      Type *required = target->as.interface_t.method_types[i];
+      if (!method || !required || method->type->kind != TY_FUNCTION ||
+          required->kind != TY_FUNCTION ||
+          method->type->as.function.param_count !=
+              required->as.function.param_count ||
+          !type_equals(method->type->as.function.ret,
+                       required->as.function.ret))
+        return false;
+      for (int p = 1; p < required->as.function.param_count; p++)
+        if (!type_equals(method->type->as.function.params[p],
+                         required->as.function.params[p]))
+          return false;
+    }
+    return true;
+  }
+
+  if (target->kind == TY_ARRAY && source->kind == TY_ARRAY) {
+    if (source->as.array.size == 0 &&
+        source->as.array.inner->kind == TY_UNKNOWN)
+      return true;
+    return target->as.array.size == source->as.array.size &&
+           type_is_assignable(target->as.array.inner, source->as.array.inner);
+  }
+
   // Pointer assignability: if both are pointers and either inner is
   // TY_UNKNOWN (unresolved recursive type), allow assignment.
   if (target->kind == TY_POINTER && source->kind == TY_POINTER) {
+    bool target_void = target->as.pointer.inner->kind == TY_PRIMITIVE &&
+                       strcmp(target->as.pointer.inner->as.primitive.name,
+                              "void") == 0;
+    bool source_void = source->as.pointer.inner->kind == TY_PRIMITIVE &&
+                       strcmp(source->as.pointer.inner->as.primitive.name,
+                              "void") == 0;
+    if (target_void || source_void)
+      return true;
     if (target->as.pointer.inner->kind == TY_UNKNOWN ||
         source->as.pointer.inner->kind == TY_UNKNOWN)
       return true;
@@ -249,6 +332,12 @@ bool type_is_comparable(Type *a, Type *b) {
   // Pointer comparability: if both are pointers and either inner is
   // TY_UNKNOWN (unresolved recursive type), allow comparison.
   if (a->kind == TY_POINTER && b->kind == TY_POINTER) {
+    bool a_void = a->as.pointer.inner->kind == TY_PRIMITIVE &&
+                  strcmp(a->as.pointer.inner->as.primitive.name, "void") == 0;
+    bool b_void = b->as.pointer.inner->kind == TY_PRIMITIVE &&
+                  strcmp(b->as.pointer.inner->as.primitive.name, "void") == 0;
+    if (a_void || b_void)
+      return true;
     if (a->as.pointer.inner->kind == TY_UNKNOWN ||
         b->as.pointer.inner->kind == TY_UNKNOWN)
       return true;

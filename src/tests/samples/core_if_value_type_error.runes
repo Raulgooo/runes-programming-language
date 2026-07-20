@@ -1,0 +1,4 @@
+-- EXPECT FAIL: If branches produce incompatible types
+f main() {
+    i32 value = if true { 1 } else { false }
+}

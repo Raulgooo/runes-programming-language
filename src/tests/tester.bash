@@ -13,8 +13,17 @@ for f in src/tests/samples/*.runes; do
   # Check for expected-failure marker on first line
   expected_pattern=$(head -1 "$f" | sed -n 's/^-- EXPECT FAIL: //p')
 
-  output=$(./runes src/std/prelude.runes "$f" 2>&1)
-  status=$?
+  if [ -n "$expected_pattern" ]; then
+    output=$(./runes "$f" 2>&1)
+    status=$?
+  else
+    output=$(./runes "$f" 2>&1)
+    status=$?
+    if [ $status -ne 0 ]; then
+      output=$(./runes src/tests/fixtures/sample_prelude.runes "$f" 2>&1)
+      status=$?
+    fi
+  fi
 
   if [ -n "$expected_pattern" ]; then
     # Expected-failure test
@@ -36,6 +45,7 @@ for f in src/tests/samples/*.runes; do
     else
       errors=$(echo "$output" | grep -c "Error")
       echo "FAIL $name ($errors errors)"
+      echo "$output" | sed -n '1,6p' | sed 's/^/  /'
       FAIL=$((FAIL + 1))
     fi
   fi

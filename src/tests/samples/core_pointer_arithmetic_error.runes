@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Pointers only support addition or subtraction with an integer
+f bad_pointer_math(ptr: *u8) {
+    *u8 invalid = ptr * 2
+}

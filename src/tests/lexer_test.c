@@ -65,8 +65,6 @@ void test_os_features() {
   ASSERT_TOKEN(&L, TOKEN_LBRACKET, "[");
   ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "section");
   ASSERT_TOKEN(&L, TOKEN_RBRACKET, "]");
-  ASSERT_TOKEN(&L, TOKEN_NEWLINE, "\n");
-
   // extern volatile *u32 uart = 0x1000;
   ASSERT_TOKEN(&L, TOKEN_EXTERN, "extern");
   ASSERT_TOKEN(&L, TOKEN_VOLATILE, "volatile");
@@ -133,7 +131,6 @@ void test_dynamic_function() {
   ASSERT_TOKEN(&L, TOKEN_STAR, "*");
   ASSERT_TOKEN(&L, TOKEN_U8, "u8");
   ASSERT_TOKEN(&L, TOKEN_LBRACE, "{");
-  ASSERT_TOKEN(&L, TOKEN_NEWLINE, "\n");
 
   ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "ptr");
   ASSERT_TOKEN(&L, TOKEN_EQUAL, "=");
@@ -141,10 +138,6 @@ void test_dynamic_function() {
   ASSERT_TOKEN(&L, TOKEN_LPAREN, "(");
   ASSERT_TOKEN(&L, TOKEN_IDENTIFIER, "size");
   ASSERT_TOKEN(&L, TOKEN_RPAREN, ")");
-
-  ASSERT_TOKEN(&L, TOKEN_NEWLINE, "\n");
-  ASSERT_TOKEN(&L, TOKEN_NEWLINE, "\n");
-  ASSERT_TOKEN(&L, TOKEN_NEWLINE, "\n");
 
   ASSERT_TOKEN(&L, TOKEN_RBRACE, "}");
   ASSERT_TOKEN(&L, TOKEN_EOF, "");

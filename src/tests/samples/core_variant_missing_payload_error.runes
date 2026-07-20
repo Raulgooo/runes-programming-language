@@ -1,0 +1,7 @@
+-- EXPECT FAIL: Variant arm 'Gray' requires constructor arguments
+type Pixel =
+    | Gray(u8)
+
+f bad() {
+    Pixel pixel = Pixel.Gray
+}

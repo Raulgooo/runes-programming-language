@@ -1,0 +1,13 @@
+name = "Runes"
+grammar = "runes"
+path_suffixes = ["runes"]
+line_comments = ["-- "]
+tab_size = 4
+hard_tabs = false
+
+brackets = [
+  { start = "{", end = "}", close = true, newline = true },
+  { start = "[", end = "]", close = true, newline = false },
+  { start = "(", end = ")", close = true, newline = false },
+  { start = "\"", end = "\"", close = true, newline = false },
+]

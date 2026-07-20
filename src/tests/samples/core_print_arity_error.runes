@@ -1,0 +1,4 @@
+-- EXPECT FAIL: print requires at least one argument
+f bad_print() {
+    print()
+}

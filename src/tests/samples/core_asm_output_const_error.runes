@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Asm output binding cannot be const
+f main() {
+    const u64 result = 0
+    asm { "mov $1, %rax" } -> result
+}

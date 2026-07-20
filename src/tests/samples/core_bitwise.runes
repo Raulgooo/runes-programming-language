@@ -1,0 +1,3 @@
+f bitwise(value: u32) = result: u32 {
+    result = (value & 0xFF) | ((value ^ 3) << 1)
+}

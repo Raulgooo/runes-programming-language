@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Value-producing if requires an else branch
+f main() {
+    i32 value = if true { 1 }
+}

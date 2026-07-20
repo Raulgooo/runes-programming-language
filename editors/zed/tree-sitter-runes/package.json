@@ -1,0 +1,14 @@
+{
+  "name": "tree-sitter-runes",
+  "version": "0.1.0",
+  "description": "Tree-sitter grammar for Runes syntax highlighting",
+  "main": "bindings/node",
+  "keywords": ["tree-sitter", "runes"],
+  "license": "MIT",
+  "tree-sitter": [
+    {
+      "scope": "source.runes",
+      "file-types": ["runes"]
+    }
+  ]
+}

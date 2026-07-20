@@ -75,7 +75,7 @@ f color_name(c: Color) = r: str {
 
 f shape_area(s: Shape) = r: f32 {
     r = match s {
-        Circle(radius)        -> 3.14159 * radius * radius,
+        Circle(radius)        -> (3.14159 as f32) * radius * radius,
         Rect(w, h)            -> w * h,
         Triangle(a, b, c)     -> {
             -- Heron's formula

@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Address-of requires an assignable expression
+f bad_address() {
+    *i32 ptr = &42
+}

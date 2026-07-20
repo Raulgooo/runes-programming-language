@@ -1,11 +1,17 @@
 <!-- GSD:project-start source:PROJECT.md -->
 ## Project
 
-**Runes Compiler — Frontend Completion**
+**Runes Compiler — v0.1 C Bootstrap**
 
-The Runes bootstrap compiler, written in C, implementing a systems-level language with explicit memory realm strategies (stack, regional, dynamic, gc, flex). The compiler currently handles lexing, parsing, name resolution, and partial type checking. This project completes the entire frontend pipeline to full spec v0.1 compliance.
+The Runes bootstrap compiler is written in C and implements a systems-level
+language with explicit memory realm strategies (stack, regional, dynamic, gc,
+flex). The lexer, parser, resolver, typechecker, and C backend cover the tested
+v0.1 core. Current work hardens the runtime, diagnostics, platform library, and
+the path toward self-hosting.
 
-**Core Value:** Every valid Runes program (per spec v0.1, excluding deprecated features) passes through lex → parse → resolve → typecheck → realm-check without false positives or missed errors, with comprehensive test coverage proving it.
+**Core Value:** Every supported Runes v0.1 program passes through lex, parse,
+resolve, typecheck, realm-check, and generated-C compilation, with executable
+coverage for bootstrap-critical behavior.
 
 ### Constraints
 
@@ -86,7 +92,6 @@ The Runes bootstrap compiler, written in C, implementing a systems-level languag
 - Composite: pointers, arrays, tuples, functions, variants, structs, interfaces
 - Fallible types (`!T`)
 - Error types
-- Schema types (JSON-related)
 - Procedural
 - Functional (pattern matching, type variants)
 - Systems-level (unsafe, inline assembly, raw pointers)
@@ -208,7 +213,7 @@ The Runes bootstrap compiler, written in C, implementing a systems-level languag
 - Used by: Type Checker (post-resolution names)
 - Purpose: Track declared names across scopes with type information
 - Location: `src/symbol_table.c`, `src/symbol_table.h`
-- Contains: Hash-table-based scope stack, symbol kinds (VAR, FUNC, TYPE, SCHEMA, IFACE, MOD, ERROR)
+- Contains: Hash-table-based scope stack, symbol kinds (VAR, FUNC, TYPE, IFACE, MOD, ERROR)
 - Depends on: Arena allocator
 - Used by: Resolver, Type Checker
 - Purpose: Define and manage semantic types for type checking

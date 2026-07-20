@@ -5,6 +5,9 @@
     array iteration, indexed, pointer-capture).
 ---
 
+extern f tick()
+extern f done() = result: bool
+
 f demo_if(x: i32) {
     -- Three-branch if
     if x > 0 {

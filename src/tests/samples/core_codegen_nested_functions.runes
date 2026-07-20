@@ -1,0 +1,15 @@
+f outer(value: i32) = result: i32 {
+    f twice(input: i32) = output: i32 {
+        output = input * 2
+    }
+
+    f add_two(input: i32) = output: i32 {
+        output = input + 2
+    }
+
+    result = add_two(twice(value))
+}
+
+f main() {
+    print(outer(20))
+}

@@ -1,0 +1,12 @@
+-- EXPECT FAIL: Non-exhaustive match; missing arm 'Blue'
+type Color =
+    | Red
+    | Green
+    | Blue
+
+f describe(color: Color) {
+    match color {
+        Red -> print("red"),
+        Green -> print("green"),
+    }
+}

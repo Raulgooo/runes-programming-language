@@ -1,0 +1,8 @@
+f values() = r: [3]i32 {
+    r = [10, 20, 12]
+}
+
+f main() {
+    [3]i32 data = values()
+    print(data[0] + data[1] + data[2])
+}

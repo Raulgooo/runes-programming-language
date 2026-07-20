@@ -1,0 +1,10 @@
+f classify(value: str) = result: str {
+    result = if value == "runes" { "equal" } else { "different" }
+}
+
+f main() {
+    str combined = "ru" + "nes"
+    bool equal = combined == "runes"
+    bool different = combined != "other"
+    print(combined, classify(combined), equal, different)
+}

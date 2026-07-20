@@ -16,6 +16,10 @@ use kernel.arch.x86.read_cr2
 extern f memset(ptr: *u8, val: i32, len: usize)
 extern f memcpy(dst: *u8, src: *u8, len: usize)
 extern f memcmp(a: *u8, b: *u8, len: usize) = r: i32
+extern f task_queue_push(task: Task)
+extern f task_queue_pop() = result: Task
+extern f task_queue_len() = result: i32
+extern f task_queue_current() = result: Task
 
 extern u64 BSS_START
 extern u64 BSS_END
@@ -77,6 +81,14 @@ type Task = {
     id:    i32,
     name:  str,
     state: i32,
+}
+
+method Task {
+    f run(self) {}
+}
+
+f task_queue_empty() = result: bool {
+    result = task_queue_len() == 0
 }
 
 -- ─────────────────────────────────────────────

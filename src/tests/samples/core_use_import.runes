@@ -1,0 +1,11 @@
+mod math {
+    pub f answer() = result: i32 {
+        result = 42
+    }
+}
+
+use math.answer
+
+f imported() = result: i32 {
+    result = answer()
+}

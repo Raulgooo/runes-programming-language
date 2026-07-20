@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Variant arm 'RGB' expects 3 payload value(s), got 2
+type Pixel = | RGB(u8, u8, u8)
+
+f bad_variant() {
+    Pixel color = Pixel.RGB(1, 2)
+}

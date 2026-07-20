@@ -1,0 +1,46 @@
+-- Phase 5: Systems & ASM Verification
+
+-- 1. Extern declarations
+extern f memset(ptr: *u8, val: i32, len: usize)
+extern u64 KERNEL_STACK_TOP
+
+-- 2. Volatile pointers
+f test_volatile() {
+    volatile *u8 doorbell = 0x1000 as *u8
+    *doorbell = 1
+    u8 val = *doorbell
+}
+
+-- 3. ASM blocks
+f test_asm() {
+    u64 cr3 = 0
+    asm { "mov %cr3, %rax" } -> cr3
+    asm { "cli; hlt" }
+}
+
+-- 4. Attributes
+#[section(".text.boot")]
+f boot_entry() {
+    -- entry point
+}
+
+#[link_name("main")]
+f renamed_func() {
+}
+
+#[interrupt]
+f handle_timer() {
+    -- interrupt handler
+}
+
+-- SHOULD ERROR: interrupt with params
+-- #[interrupt]
+-- f bad_interrupt(x: i32) {}
+
+f main() {
+    test_volatile()
+    test_asm()
+    boot_entry()
+    renamed_func()
+    handle_timer()
+}

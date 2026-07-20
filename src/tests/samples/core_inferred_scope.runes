@@ -1,0 +1,6 @@
+message := "before"
+
+f update_message() {
+    message = "after"
+    print(message)
+}

@@ -1,0 +1,7 @@
+-- EXPECT FAIL: print accepts only primitive values and pointers
+type Item = { value: i32 }
+
+f bad_print() {
+    Item item = Item(value: 1)
+    print(item)
+}

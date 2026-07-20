@@ -6,6 +6,14 @@
 
 use kernel.arch.x86
 
+type EFISystemTable = { revision: u64 }
+extern f handle_page_fault(address: u64)
+extern f kernel_main()
+
+mod scheduler {
+    pub f tick() {}
+}
+
 -- ─────────────────────────────────────────────
 -- extern — FFI declarations
 -- ─────────────────────────────────────────────

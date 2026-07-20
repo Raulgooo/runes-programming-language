@@ -5,6 +5,25 @@
     tuples, promote.
 ---
 
+type Token = { kind: i32 }
+type PageTable = { entries: [512]u64 }
+type Task = { id: i32, name: str, state: i32 }
+
+extern f tokenize(source: str) = result: *Token
+extern f task_queue_push(task: Task)
+
+mod scheduler {
+    pub f add(task: Task) { task_queue_push(task) }
+}
+
+method PageTable {
+    regional f new() = result: PageTable {
+        result = PageTable(entries: [])
+    }
+
+    f map(self, vaddr: u64, paddr: u64, flags: u64) = result: !void {}
+}
+
 -- ─────────────────────────────────────────────
 -- Basic stack functions (f)
 -- ─────────────────────────────────────────────
@@ -151,7 +170,7 @@ gc f run_pipeline(src: str) = r: i32 {
 
     if validate(src) {
         *Node tree = parse(src)
-        r = eval(tree)
+        r = eval(tree) catch -1
     } else {
         r = -1
     }
@@ -177,9 +196,9 @@ flex f copy_str(s: str) = r: *u8 {
 -- Multiple return values (tuples)
 -- ─────────────────────────────────────────────
 
-f parse(src: str) = r: (*Node, [512]Error) {
+f parse(src: str) = r: (*Node, *Error) {
     *Node      ast  = build_ast(src)
-    [512]Error errs = collect_errors(src)
+    *Error errs = collect_errors(src)
     r = (ast, errs)
 }
 
@@ -195,7 +214,7 @@ f minmax(a: i32, b: i32, c: i32) = r: (i32, i32) {
 
 -- Tuple destructure at call site
 f demo_tuples() {
-    *Node ast, [512]Error errs = parse("x = 1 + 2")
+    *Node ast, *Error errs = parse("x = 1 + 2")
     i32 lo, i32 hi = minmax(3, 1, 7)
 }
 
@@ -204,13 +223,13 @@ f demo_tuples() {
 -- ─────────────────────────────────────────────
 
 pub dynamic f kernel_main() {
-    regional f setup_paging() {
+    regional f setup_paging() = r: !void {
         PageTable pml4 = PageTable.new()
         PageTable pdpt = PageTable.new()
         try pml4.map(0xFFFF800000000000, (&pdpt) as u64, 0x3)
     }
 
-    setup_paging()
+    setup_paging() catch |e| { return }
 
     unsafe { asm { "mov %rax, %cr3" } }
 

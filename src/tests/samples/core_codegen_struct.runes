@@ -1,0 +1,8 @@
+type Point = { x: i32, y: i32 }
+
+f main() {
+    Point point = Point(x: 20, y: 22)
+    *Point pointer = &point
+    pointer.y = point.y + 1
+    print(point.x + pointer.y)
+}

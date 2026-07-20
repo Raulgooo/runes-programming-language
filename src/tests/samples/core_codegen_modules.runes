@@ -1,0 +1,30 @@
+mod math {
+    pub type Box = {
+        value: i32,
+    }
+
+    method Box {
+        f get(self) = result: i32 {
+            result = self.value
+        }
+    }
+
+    pub f double(value: i32) = result: i32 {
+        result = value * 2
+    }
+}
+
+mod platform {
+    mod constants {
+        pub f answer() = result: i32 {
+            result = 42
+        }
+    }
+}
+
+use math.double
+
+f main() {
+    math.Box box = math.Box(value: double(10))
+    print(box.get(), platform.constants.answer())
+}

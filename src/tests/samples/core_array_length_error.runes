@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Array literal has 2 elements; declared array requires 3
+f bad_array_length() {
+    [3]i32 values = [1, 2]
+}

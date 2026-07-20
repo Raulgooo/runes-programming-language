@@ -1,0 +1,34 @@
+{
+  "grammars": [
+    {
+      "name": "runes",
+      "camelcase": "Runes",
+      "scope": "source.runes",
+      "path": ".",
+      "file-types": ["runes"],
+      "injection-regex": "^runes$"
+    }
+  ],
+  "metadata": {
+    "version": "0.1.0",
+    "license": "MIT",
+    "description": "Tree-sitter grammar for Runes syntax highlighting",
+    "authors": [
+      {
+        "name": "Runes contributors"
+      }
+    ],
+    "links": {
+      "repository": "https://github.com/Raulgooo/runes-programming-language"
+    }
+  },
+  "bindings": {
+    "c": true,
+    "go": false,
+    "node": false,
+    "python": false,
+    "rust": false,
+    "swift": false,
+    "zig": false
+  }
+}

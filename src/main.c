@@ -1,4 +1,5 @@
 #include "ast.h"
+#include "codegen.h"
 #include "lexer.h"
 #include "parser.h"
 #include "resolver.h"
@@ -13,6 +14,7 @@ typedef struct {
   bool lex_only;
   bool parse_only;
   bool dump_ast;
+  const char *emit_c_filename;
   const char **filenames;
   int file_count;
 } Config;
@@ -24,6 +26,7 @@ static void print_usage(const char *prog) {
   fprintf(stderr, "  --lex-only    Only run the lexer and dump tokens\n");
   fprintf(stderr, "  --parse-only  Only run the parser and check syntax\n");
   fprintf(stderr, "  --dump-ast    Parse and dump the Abstract Syntax Tree\n");
+  fprintf(stderr, "  --emit-c FILE Emit C after successful analysis\n");
 }
 
 static Config parse_args(int argc, char **argv) {
@@ -36,6 +39,13 @@ static Config parse_args(int argc, char **argv) {
       config.parse_only = true;
     } else if (strcmp(argv[i], "--dump-ast") == 0) {
       config.dump_ast = true;
+    } else if (strcmp(argv[i], "--emit-c") == 0) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "--emit-c requires an output filename\n");
+        print_usage(argv[0]);
+        exit(1);
+      }
+      config.emit_c_filename = argv[++i];
     } else if (argv[i][0] == '-') {
       fprintf(stderr, "Unknown option: %s\n", argv[i]);
       print_usage(argv[0]);
@@ -49,9 +59,11 @@ static Config parse_args(int argc, char **argv) {
 
 int main(int argc, char **argv) {
   Config config = parse_args(argc, argv);
+  bool had_error = false;
 
   if (config.file_count == 0) {
     print_usage(argv[0]);
+    free(config.filenames);
     return 1;
   }
 
@@ -64,26 +76,52 @@ int main(int argc, char **argv) {
   AstNode *program = NULL;
   AstNode **next_decl = NULL;
 
-  char **sources = malloc(sizeof(char *) * config.file_count);
+  char **sources = calloc((size_t)config.file_count, sizeof(char *));
+  if (!sources) {
+    fprintf(stderr, "Out of memory\n");
+    arena_destroy(&arena);
+    free(config.filenames);
+    return 1;
+  }
 
   for (int i = 0; i < config.file_count; i++) {
     const char *filename = config.filenames[i];
     FILE *f = fopen(filename, "rb");
     if (!f) {
       perror("fopen");
-      return 1;
+      had_error = true;
+      goto cleanup;
     }
 
-    fseek(f, 0, SEEK_END);
+    if (fseek(f, 0, SEEK_END) != 0) {
+      perror("fseek");
+      fclose(f);
+      had_error = true;
+      goto cleanup;
+    }
     long size = ftell(f);
-    fseek(f, 0, SEEK_SET);
+    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
+      perror("ftell/fseek");
+      fclose(f);
+      had_error = true;
+      goto cleanup;
+    }
 
-    char *source = malloc(size + 1);
+    char *source = malloc((size_t)size + 1);
     if (!source) {
       fprintf(stderr, "Out of memory\n");
-      return 1;
+      fclose(f);
+      had_error = true;
+      goto cleanup;
     }
-    fread(source, 1, size, f);
+    size_t bytes_read = fread(source, 1, (size_t)size, f);
+    if (bytes_read != (size_t)size) {
+      fprintf(stderr, "Could not read all of %s\n", filename);
+      free(source);
+      fclose(f);
+      had_error = true;
+      goto cleanup;
+    }
     source[size] = '\0';
     fclose(f);
     sources[i] = source;
@@ -110,7 +148,8 @@ int main(int argc, char **argv) {
     if (parser.had_error) {
       fprintf(stderr, "Compilation failed in %s with %d error(s)\n", filename,
               parser.error_count);
-      return 1;
+      had_error = true;
+      goto cleanup;
     }
 
     if (!program) {
@@ -140,6 +179,9 @@ int main(int argc, char **argv) {
     ast_print(program);
   }
 
+  if (config.parse_only)
+    goto cleanup;
+
   // Phase 2: Name Resolution
   SymbolTable st;
   symbol_table_init(&st, &arena);
@@ -151,6 +193,7 @@ int main(int argc, char **argv) {
   if (resolver.had_error) {
     fprintf(stderr, "Name resolution failed with %d error(s)\n",
             resolver.error_count);
+    had_error = true;
     goto cleanup;
   }
 
@@ -164,7 +207,28 @@ int main(int argc, char **argv) {
 
   if (tc.had_error) {
     fprintf(stderr, "Type checking failed with %d error(s)\n", tc.error_count);
+    had_error = true;
     goto cleanup;
+  }
+
+  if (config.emit_c_filename) {
+    FILE *out = fopen(config.emit_c_filename, "wb");
+    if (!out) {
+      perror("fopen");
+      had_error = true;
+      goto cleanup;
+    }
+
+    Codegen cg;
+    codegen_init(&cg, out);
+    bool ok = codegen_emit_c(&cg, program);
+    fclose(out);
+    if (!ok) {
+      fprintf(stderr, "Code generation failed with %d error(s)\n",
+              cg.error_count);
+      had_error = true;
+      goto cleanup;
+    }
   }
 
 cleanup:
@@ -175,5 +239,5 @@ cleanup:
   free(sources);
   free(config.filenames);
 
-  return (resolver.had_error || tc.had_error) ? 1 : 0;
+  return had_error ? 1 : 0;
 }

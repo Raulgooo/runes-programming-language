@@ -1,0 +1,25 @@
+type Pixel =
+    | Clear
+    | Gray(u8)
+    | RGB(u8, u8, u8)
+
+f score(pixel: Pixel) = result: i32 {
+    result = match pixel {
+        Clear -> 0,
+        Gray(value) -> value as i32,
+        RGB(red, green, blue) ->
+            (red as i32) + (green as i32) + (blue as i32),
+    }
+}
+
+f main() {
+    Pixel clear = Pixel.Clear
+    Pixel gray = Pixel.Gray(7)
+    Pixel color = Pixel.RGB(10, 20, 30)
+
+    print(score(clear), score(gray), score(color))
+    match color {
+        RGB(red, green, blue) if red == 10 -> print(red, green, blue),
+        _ -> print("unexpected"),
+    }
+}

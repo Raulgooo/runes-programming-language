@@ -1,0 +1,23 @@
+id = "runes"
+name = "Runes"
+version = "0.1.0"
+schema_version = 1
+authors = ["Runes contributors"]
+description = "Runes language syntax highlighting"
+repository = "https://github.com/Raulgooo/runes-programming-language"
+themes = []
+icon_themes = []
+languages = ["languages/runes"]
+capabilities = []
+
+[grammars.runes]
+repository = "@GRAMMAR_REPOSITORY@"
+rev = "@GRAMMAR_REV@"
+
+[language_servers]
+
+[context_servers]
+
+[agent_servers]
+
+[slash_commands]

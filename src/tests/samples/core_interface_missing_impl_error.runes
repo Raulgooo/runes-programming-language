@@ -1,0 +1,17 @@
+-- EXPECT FAIL: Argument type mismatch in function call
+interface Value {
+    f get(self) = r: i32
+}
+
+type Item = { value: i32 }
+
+method Item {
+    f get(self) = r: i32 { r = self.value }
+}
+
+f read(value: Value) = r: i32 { r = value.get() }
+
+f main() {
+    Item item = Item(value: 42)
+    print(read(item))
+}

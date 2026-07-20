@@ -1,0 +1,11 @@
+mod math {
+    pub type Value = { number: i32 }
+
+    pub f double(value: i32) = result: i32 {
+        result = value * 2
+    }
+}
+
+f use_module() {
+    math.Value value = math.Value(number: math.double(21))
+}

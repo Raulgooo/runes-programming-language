@@ -3,6 +3,11 @@
     specific symbol, nested path), mixed pub/private functions.
 ---
 
+extern f task_queue_push(task: test_sched.Task)
+extern f task_queue_pop() = result: test_sched.Task
+extern f task_queue_len() = result: i32
+extern f task_queue_current() = result: test_sched.Task
+
 -- ─────────────────────────────────────────────
 -- Imports
 -- ─────────────────────────────────────────────
@@ -15,6 +20,10 @@
 -- ─────────────────────────────────────────────
 -- Module definitions
 -- ─────────────────────────────────────────────
+
+error MemError = {
+    | OutOfMemory
+}
 
 mod test_mem {
     --- alloc_page — allocate one 4KB page from the arena.
@@ -46,6 +55,10 @@ mod test_sched {
         id:    i32,
         name:  str,
         state: i32,   -- 0=ready 1=running 2=blocked
+    }
+
+    method Task {
+        f run(self) {}
     }
 
     pub f add(t: Task) {

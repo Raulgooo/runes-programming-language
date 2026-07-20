@@ -1,0 +1,17 @@
+i32 selector = 2
+str global_label = if selector == 2 { "global" } else { "wrong" }
+
+f classify(value: i32) = result: str {
+    result = if value > 0 {
+        "positive"
+    } else if value < 0 {
+        "negative"
+    } else {
+        "zero"
+    }
+}
+
+f main() {
+    i32 chosen = if selector > 1 { 40 + 2 } else { 0 }
+    print(global_label, classify(-1), chosen)
+}

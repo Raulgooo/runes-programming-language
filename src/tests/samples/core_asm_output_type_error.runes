@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Asm output binding must be an integer or a 2-4 integer tuple
+f main() {
+    bool result = false
+    asm { "mov $1, %rax" } -> result
+}

@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Arithmetic operators require numeric operands
+f bad_arithmetic() {
+    bool value = true + false
+}

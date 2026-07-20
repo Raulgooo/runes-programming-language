@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Array element does not match declared type
+f bad_array_element() {
+    [2]i32 values = [1, true]
+}

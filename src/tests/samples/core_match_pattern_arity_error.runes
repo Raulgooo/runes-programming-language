@@ -1,0 +1,9 @@
+-- EXPECT FAIL: Variant pattern 'RGB' expects 3 payload value(s), got 2
+type Color =
+    | RGB(u8, u8, u8)
+
+f describe(color: Color) {
+    match color {
+        RGB(red, green) -> print(red, green),
+    }
+}

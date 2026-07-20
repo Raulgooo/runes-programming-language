@@ -1,0 +1,14 @@
+(block_comment) @comment
+(comment) @comment
+(string) @string
+(character) @string
+(attribute) @attribute
+(float) @number
+(integer) @number
+(builtin_type) @type.builtin
+(boolean) @boolean
+(special_constant) @constant.builtin
+(keyword) @keyword
+(identifier) @variable
+(operator) @operator
+(punctuation) @punctuation

@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Range bounds must be integers
+f bad_range() {
+    for (1.0..2.0) |value| {
+        print(value)
+    }
+}

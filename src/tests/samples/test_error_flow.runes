@@ -58,4 +58,5 @@ f main() {
     catch_default()
     f32 c = chained_catch(10.0, 0.0, 5.0)
     f32 m = match_result()
+    print(c, m)
 }

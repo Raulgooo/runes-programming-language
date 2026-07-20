@@ -1,0 +1,5 @@
+-- print is a variadic builtin for primitive values and raw pointers.
+f main() {
+    u8 value = 1
+    print("value", 42, 3.5, true, 'x', &value)
+}

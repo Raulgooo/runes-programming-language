@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Variable initializer does not match declared type
+f bad_pointer(source: *u8) {
+    *u32 target = source
+}

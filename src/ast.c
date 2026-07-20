@@ -77,16 +77,6 @@ AstNode *ast_new_variant_arm(Arena *arena, const char *name, AstNode *fields) {
   return n;
 }
 
-AstNode *ast_new_schema_decl(Arena *arena, bool is_pub, const char *name,
-                             const char *parent, AstNode *fields) {
-  AstNode *n = ast_alloc(arena, AST_SCHEMA_DECL);
-  n->as.schema_decl.is_pub = is_pub;
-  n->as.schema_decl.name = name;
-  n->as.schema_decl.parent = parent;
-  n->as.schema_decl.fields = fields;
-  return n;
-}
-
 AstNode *ast_new_field_decl(Arena *arena, bool is_volatile, const char *name,
                             AstNode *type, AstNode *default_val, Attr *attrs) {
   AstNode *n = ast_alloc(arena, AST_FIELD_DECL);
@@ -482,24 +472,6 @@ AstNode *ast_new_type_tuple(Arena *arena, AstNode *elems) {
   AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
   n->as.type_expr.kind = TYPE_TUPLE;
   n->as.type_expr.elems = elems;
-  return n;
-}
-
-AstNode *ast_new_type_sl(Arena *arena) {
-  AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
-  n->as.type_expr.kind = TYPE_SL;
-  return n;
-}
-
-AstNode *ast_new_type_dl(Arena *arena) {
-  AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
-  n->as.type_expr.kind = TYPE_DL;
-  return n;
-}
-
-AstNode *ast_new_type_j(Arena *arena) {
-  AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
-  n->as.type_expr.kind = TYPE_J;
   return n;
 }
 

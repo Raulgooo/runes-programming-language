@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Array index is out of bounds
+f bad_array_index() {
+    [2]i32 values = [1, 2]
+    i32 value = values[2]
+}

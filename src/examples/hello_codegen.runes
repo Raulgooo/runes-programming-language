@@ -1,0 +1,5 @@
+extern f print(msg: str)
+
+f main() {
+    print("hello world")
+}

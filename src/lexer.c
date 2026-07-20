@@ -249,10 +249,6 @@ static TokenKind identifier_kind(Lexer *L) {
     if (L->current - L->start == 9)
       return check_keyword(L, 1, 8, "nterface", TOKEN_INTERFACE);
     return TOKEN_IDENTIFIER;
-  case 'J':
-    if (L->current - L->start == 1)
-      return TOKEN_J;
-    break;
   case 'l':
     return check_keyword(L, 1, 3, "oop", TOKEN_LOOP);
   case 'm':
@@ -296,8 +292,6 @@ static TokenKind identifier_kind(Lexer *L) {
   case 's':
     if (L->current - L->start > 1) {
       switch (L->start[1]) {
-      case 'c':
-        return check_keyword(L, 2, 4, "hema", TOKEN_SCHEMA);
       case 'e':
         return check_keyword(L, 2, 2, "lf", TOKEN_SELF);
       case 'i':
@@ -753,10 +747,6 @@ const char *token_kind_to_string(TokenKind kind) {
     return "true";
   case TOKEN_FALSE:
     return "false";
-  case TOKEN_J:
-    return "J";
-  case TOKEN_SCHEMA:
-    return "schema";
   case TOKEN_I8:
     return "i8";
   case TOKEN_I16:

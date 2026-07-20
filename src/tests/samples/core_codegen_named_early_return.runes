@@ -1,0 +1,18 @@
+f count_until_zero(values: *u8, len: usize) = result: i32 {
+    result = 0
+    if len == 0 {
+        result = -1
+        return
+    }
+    for (0..len) |index| {
+        if values[index] == 0 {
+            return
+        }
+        result = result + 1
+    }
+}
+
+f main() {
+    [4]u8 values = [7, 8, 0, 9]
+    print(count_until_zero(&values, 4), count_until_zero(&values, 0))
+}

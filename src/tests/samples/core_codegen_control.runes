@@ -1,0 +1,22 @@
+f main() {
+    [4]i32 values = [1, 2, 3, 4]
+    for (values) |*value| {
+        *value = *value + 1
+    }
+
+    i32 sum = 0
+    for (values) |value, index| {
+        sum = sum + value + (index as i32)
+    }
+    for (0..=2) |value| {
+        sum = sum + value
+    }
+    while sum < 23 {
+        sum = sum + 1
+    }
+    loop {
+        if sum == 23 { break }
+        sum = sum + 1
+    }
+    print(sum)
+}

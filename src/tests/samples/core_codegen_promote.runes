@@ -1,0 +1,10 @@
+regional f promoted_value() = result: *i32 {
+    i32 local = 41
+    result = promote(&local) as dynamic
+}
+
+f main() {
+    *i32 value = promoted_value()
+    *value = *value + 1
+    print(*value)
+}

@@ -1,0 +1,4 @@
+-- EXPECT FAIL: undefined asm output binding 'missing'
+f main() {
+    asm { "mov $1, %rax" } -> missing
+}

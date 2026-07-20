@@ -16,6 +16,8 @@
     — const with and without type annotation
 ---
 
+type PageTable = { entries: [512]u64 }
+
 -- ─────────────────────────────────────────────
 -- All comment forms
 -- ─────────────────────────────────────────────

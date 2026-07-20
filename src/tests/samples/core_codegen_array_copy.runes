@@ -1,0 +1,6 @@
+f main() {
+    [3]i32 source = [10, 20, 30]
+    [3]i32 copy = []
+    copy = source
+    print(copy[0] + copy[1] + copy[2])
+}

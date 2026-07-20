@@ -54,9 +54,6 @@ typedef enum {
   TOKEN_AS,
   TOKEN_TRUE,
   TOKEN_FALSE,
-  TOKEN_J,
-  TOKEN_SCHEMA,
-
   /* Primitive Types */
   TOKEN_I8,
   TOKEN_I16,

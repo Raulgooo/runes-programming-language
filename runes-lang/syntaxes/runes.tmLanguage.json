@@ -49,7 +49,7 @@
       "patterns": [
         {
           "name": "entity.name.function.attribute.runes",
-          "match": "\\b(section|link_name|callconv|interrupt|align|packed|repr|json|json_skip)\\b"
+          "match": "\\b(section|link_name|callconv|interrupt|align|packed|repr)\\b"
         },
         { "include": "#strings" },
         { "include": "#numbers" }
@@ -63,7 +63,7 @@
         },
         {
           "name": "keyword.declaration.runes",
-          "match": "\\b(f|type|error|mod|use|pub|const|method|interface|schema|extern|volatile)\\b"
+          "match": "\\b(f|type|error|mod|use|pub|const|method|interface|extern|volatile)\\b"
         },
         {
           "name": "keyword.control.runes",
@@ -87,7 +87,7 @@
       "patterns": [
         {
           "name": "storage.type.primitive.runes",
-          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|str|char|usize|void|sl|dl|J)\\b"
+          "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|str|char|usize|void)\\b"
         }
       ]
     },

@@ -1,0 +1,7 @@
+const i32 BASE = 40
+volatile i32 counter = 0
+
+f main() {
+    counter = BASE + 2
+    print(counter)
+}

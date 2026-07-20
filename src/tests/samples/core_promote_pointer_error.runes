@@ -1,0 +1,5 @@
+-- EXPECT FAIL: promote requires a pointer to the value being copied
+regional f invalid_promote() = result: i32 {
+    i32 local = 1
+    result = promote(local) as dynamic
+}

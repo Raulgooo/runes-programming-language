@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Pointer capture requires a fixed array
+f bad_range_capture() {
+    for (0..3) |*value| {
+        print(*value)
+    }
+}

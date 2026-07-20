@@ -1,0 +1,6 @@
+-- EXPECT FAIL: For loop requires a range or fixed array
+f bad_loop() {
+    for (true) |value| {
+        print(value)
+    }
+}

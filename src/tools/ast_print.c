@@ -36,16 +36,10 @@ static const char *type_kind_to_string(TypeKind kind) {
     return "pointer";
   case TYPE_ARRAY:
     return "array";
-  case TYPE_SL:
-    return "sl";
-  case TYPE_DL:
-    return "dl";
   case TYPE_FALLIBLE:
     return "fallible";
   case TYPE_TUPLE:
     return "tuple";
-  case TYPE_J:
-    return "J";
   default:
     return "unknown";
   }
@@ -153,14 +147,6 @@ void ast_print_ext(AstNode *node, int level) {
     printf("VariantArm name='%s'\n",
            node->as.variant_arm.name ? node->as.variant_arm.name : "(null)");
     ast_print_ext(node->as.variant_arm.fields, level + 1);
-    break;
-
-  case AST_SCHEMA_DECL:
-    printf("SchemaDecl name='%s' parent='%s' is_pub=%s\n",
-           node->as.schema_decl.name ? node->as.schema_decl.name : "(null)",
-           node->as.schema_decl.parent ? node->as.schema_decl.parent : "(null)",
-           node->as.schema_decl.is_pub ? "true" : "false");
-    ast_print_ext(node->as.schema_decl.fields, level + 1);
     break;
 
   case AST_FIELD_DECL:

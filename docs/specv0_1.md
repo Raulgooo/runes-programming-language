@@ -71,7 +71,9 @@ for (nums) |n| { print(n) }
 for (nums) |*n| { *n = *n * 2 }
 ```
 
-No dynamic arrays on compile time. You can use `gc` or `dynamic` memory strategies to create dynamic arrays. or stdlib
+Runes v0.1 has only fixed arrays. Dynamic collections are library types built
+from pointers, lengths, capacities, and an explicit allocation strategy.
+Fixed arrays copy by value, including across function returns.
 
 ---
 
@@ -155,7 +157,7 @@ regional f make_table() = t: PageTable {
 }
 
 -- GC — garbage collected, for high-level userspace code
-gc f run_shell(input: str) = result: sl {
+gc f run_shell(input: str) = result: [128]str {
     result = tokenize(input)
 }
 
@@ -566,13 +568,17 @@ f render(d: Drawable) {
 }
 ```
 
+The C bootstrap backend represents an interface value as an erased data pointer
+plus typed method pointers. Passing or assigning a concrete struct to an
+interface requires an explicit `method Interface for Struct` implementation.
+
 ---
 
 ## 8. Generics not in v0.1
 
 ```runes
 type Stack<T> = {
-    data: dl,
+    data: [128]T,
     top:  usize,
 }
 
@@ -581,7 +587,7 @@ method Stack<T> {
     f pop(self) = r: Option<T> { ... }
 }
 
-f first<T>(items: dl) = r: Option<T> {
+f first<T>(items: [128]T) = r: Option<T> {
     r = if items.len == 0 { None } else { Some(items[0]) }
 }
 ```
@@ -902,125 +908,7 @@ pub f kernel_main() {
 
 ---
 
-## 13. JSON and Schemas
-
-### The `J` type
-
-`J` is a built-in type representing a JSON value. Any `type` or `schema` can be
-converted to `J` using `as J`. The compiler generates the serializer at compile
-time — zero runtime reflection, zero overhead.
-
-```runes
--- J methods
-j.string()        -- compact JSON string: {"name":"raul","age":18}
-j.pretty()        -- indented JSON string
-j.get("key")      -- access field by name
-j.set("key", val) -- mutate field
-j.has("key")      -- bool, check if field exists
-```
-
-### `as J` — serialize any type to JSON \*not in v0.1
-
-```runes
-type Point = { x: f32, y: f32 }
-
-Point p = Point(x: 1.0, y: 2.0)
-j = p as J
-
-print(j.string())    -- {"x":1.0,"y":2.0}
-print(j.pretty())
--- {
---   "x": 1.0,
---   "y": 2.0
--- }
-
-f32 x = j.get("x")  -- 1.0
-j.set("x", 5.0)
-```
-
-### `as T` — deserialize JSON back to a type \*not in v0.1
-
-```runes
-str raw = "{\"x\":3.0,\"y\":4.0}"
-J j     = raw as J       -- parse string → J
-Point p = j as Point     -- J → struct, fields validated at runtime
-```
-
-### `schema` — type with inheritance for validation
-
-`schema` is like `type` but supports inheritance. A function that expects a
-`schema` parent accepts any child schema — exactly like Pydantic.
-
-```runes
-schema Shoe = {
-    brand: str,
-    size:  f32,
-}
-
-schema RedShoe : Shoe = {   -- inherits brand and size
-    color: str = "red",     -- extra field with default
-}
-
--- function expects Shoe — accepts any child schema
-f process(shoe: Shoe) {
-    print(shoe.brand)
-}
-
-f handle_request() {
-    RedShoe s = RedShoe(brand: "Nike", size: 10.5)
-    process(s)              -- ✅ RedShoe satisfies Shoe
-
-    j = s as J              -- serialize
-    print(j.string())       -- {"brand":"Nike","size":10.5,"color":"red"}
-
-    RedShoe s2 = j as RedShoe  -- deserialize back
-}
-```
-
-### Field annotations
-
-```runes
-schema User = {
-    name:     str,
-    age:      i32,
-    #[json("email_address")]   -- custom JSON key name
-    email:    str,
-    #[json_skip]               -- excluded from JSON output
-    password: str,
-}
-
-User u = User(name: "raul", age: 18, email: "r@x.com", password: "secret")
-j = u as J
-print(j.string())   -- {"name":"raul","age":18,"email_address":"r@x.com"}
-                    -- password is not included
-```
-
-### Nested schemas
-
-```runes
-schema Address = {
-    street: str,
-    city:   str,
-}
-
-schema Person = {
-    name:    str,
-    address: Address,
-}
-
-Person p = Person(
-    name: "raul",
-    address: Address(street: "Av. Morones", city: "Monterrey")
-)
-
-j = p as J
-print(j.string())
--- {"name":"raul","address":{"street":"Av. Morones","city":"Monterrey"}}
-```
-
----
-
-## 14. Modules
+## 13. Modules
 
 ```runes
 -- Define
@@ -1041,7 +929,7 @@ use kernel.arch.x86.read_cr3
 
 ---
 
-## 15. Comments
+## 14. Comments
 
 ```runes
 -- Single line comment
@@ -1060,19 +948,7 @@ f add(x: i32, y: i32) = result: i32 {
 
 ---
 
-## 16. Pipes
-
-> **Not yet implemented.** The `pipe` keyword and pipeline function syntax are planned for v0.1 but are not yet in the lexer or parser. The syntax below is the intended design.
-
-Pipes are one of the differential features of the language. A `pipe` function declares a sequential data transformation — each stage receives the output of the previous.
-
-```runes
-pipe compile(input: str) = output: *Node {
-    lex | parse | resolve | typecheck
-}
-```
-
-## 17. Full OS Example
+## 15. Full OS Example
 
 ```runes
 use kernel.arch.x86
@@ -1127,7 +1003,7 @@ pub f kernel_main() {
 
 ---
 
-## 18. Keyword Reference
+## 16. Keyword Reference
 
 | Keyword      | Meaning                                                |
 | ------------ | ------------------------------------------------------ | --- |
@@ -1155,15 +1031,13 @@ pub f kernel_main() {
 | `catch`      | Handle error inline                                    |
 | `unsafe`     | Unsafe block                                           |
 | `asm`        | Inline assembly                                        |
-| `schema`     | Schema definition (type with inheritance + JSON)       |
-| `J`          | Built-in JSON type                                     |
 | `extern`     | Foreign function / variable declaration                |
 | `volatile`   | Prevent compiler optimization of memory access         |
 | `promote`    | Escape value from region scope (unsafe)                |
 
 ---
 
-## 19. Feature Roadmap
+## 17. Feature Roadmap
 
 | Feature                        | Version |
 | ------------------------------ | ------- |
@@ -1182,7 +1056,6 @@ pub f kernel_main() {
 | volatile                       | v0.1    |
 | #[section] / #[link_name]      | v0.1    |
 | #[callconv] / #[interrupt]     | v0.1    |
-| JSON (`as J`, `schema`)        | v0.1    |
 | Code generation (C backend)    | v0.1    |
 | LLVM IR backend                | v0.2    |
 | HTTP / web stdlib              | v0.2    |

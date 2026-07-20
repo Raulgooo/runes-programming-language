@@ -1,0 +1,8 @@
+type Pixel =
+    | Gray(u8)
+    | RGB(u8, u8, u8)
+
+f variants() {
+    Pixel gray = Pixel.Gray(127)
+    Pixel color = Pixel.RGB(255, 128, 0)
+}

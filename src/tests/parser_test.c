@@ -2,6 +2,7 @@
 #include "../ast.h"
 #include "../lexer.h"
 #include "../utils/arena.h"
+#include "../utils/strtab.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -18,8 +19,10 @@ void test_attributes() {
         "#[interrupt]\n"
         "f handle_irq() { }\n";
 
+    StrTab strtab;
+    strtab_init(&strtab, &arena);
     Lexer lexer;
-    lexer_init(&lexer, source, "test.runes");
+    lexer_init(&lexer, source, &strtab);
     
     Parser parser;
     parser_init(&parser, &lexer, &arena, "test.runes", source);
