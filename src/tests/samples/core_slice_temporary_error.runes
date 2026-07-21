@@ -1,0 +1,12 @@
+-- EXPECT FAIL: Cannot create a slice from a temporary array
+f make_values() = result: [2]i32 {
+    result = [1, 2]
+}
+
+f consume(values: []const i32) = result: i32 {
+    result = values[0]
+}
+
+f main() {
+    print(consume(make_values()))
+}

@@ -1,0 +1,8 @@
+-- EXPECT FAIL: Integer literal overflow for type 'u8'
+f consume(value: u8) {
+    print(value)
+}
+
+f main() {
+    consume(256)
+}

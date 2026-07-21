@@ -1,0 +1,6 @@
+f main() {
+    u8 value = 42
+    ?*u8 maybe = &value
+    *u8 definite = unwrap(maybe)
+    unsafe { print(*definite) }
+}

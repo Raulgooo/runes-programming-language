@@ -1,0 +1,5 @@
+f main() {
+    u8 value = 250
+    u8 zero = 0
+    print(value + 5, " ", 5 + value, " ", ~zero, " ", 1 & value)
+}

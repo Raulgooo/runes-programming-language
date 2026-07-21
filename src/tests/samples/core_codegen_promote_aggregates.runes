@@ -1,0 +1,37 @@
+extern f alloc(size: usize) = result: *void
+extern f raw_free(pointer: *void)
+
+type Node = { value: i32 }
+type Choice =
+    | Empty
+    | One(*Node)
+type Graph = { nodes: [2]?*Node, pair: (?*Node, ?*Node), choice: Choice }
+
+regional f promoted_graph() = result: *Graph {
+    unsafe {
+        *Node node = alloc(sizeof(Node)) as *Node
+        *Graph graph = alloc(sizeof(Graph)) as *Graph
+        node.value = 42
+        graph.nodes[0] = node
+        graph.nodes[1] = node
+        ?*Node optional = node
+        graph.pair = (optional, optional)
+        graph.choice = Choice.One(node)
+        result = promote(graph) as dynamic
+    }
+}
+
+f main() {
+    unsafe {
+        *Graph graph = promoted_graph()
+        *Node first = unwrap(graph.nodes[0])
+        ?*Node left, ?*Node right = graph.pair
+        print(graph.nodes[0] == graph.nodes[1], " ", left == right, " ", first.value)
+        match graph.choice {
+            One(selected) -> print(selected == first),
+            _ -> print(false),
+        }
+        raw_free(first)
+        raw_free(graph)
+    }
+}

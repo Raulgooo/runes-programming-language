@@ -4,7 +4,7 @@ type Counter = {
 
 method Counter {
     f add(self: *Counter, amount: i32) {
-        self.value = self.value + amount
+        unsafe { self.value = self.value + amount }
     }
 
     f get(self) = result: i32 {
@@ -16,6 +16,8 @@ f main() {
     Counter counter = Counter(value: 10)
     counter.add(5)
     *Counter pointer = &counter
-    pointer.add(2)
-    print(counter.get(), pointer.get())
+    unsafe {
+        pointer.add(2)
+        print(counter.get(), " ", pointer.get())
+    }
 }

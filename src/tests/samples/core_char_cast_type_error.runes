@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Only an integer may be cast to char
+f main() {
+    char invalid = "x" as char
+}

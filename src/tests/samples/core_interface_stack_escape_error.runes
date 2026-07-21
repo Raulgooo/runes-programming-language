@@ -1,0 +1,15 @@
+-- EXPECT FAIL: Stack-backed interface cannot escape a function
+type Value = { number: i32 }
+
+interface Readable {
+    f read(self) = result: i32
+}
+
+method Readable for Value {
+    f read(self) = result: i32 { result = self.number }
+}
+
+f invalid() = result: Readable {
+    Value value = Value(number: 42)
+    result = value
+}

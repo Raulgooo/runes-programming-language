@@ -1,0 +1,9 @@
+mod worker {
+    pub f main(value: i32) = result: i32 {
+        result = value + 1
+    }
+}
+
+f main() {
+    print(worker.main(41))
+}

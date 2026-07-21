@@ -1,0 +1,5 @@
+mod math
+
+f main() {
+    print(math.double(21), " ", math.constants.answer())
+}

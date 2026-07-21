@@ -1,0 +1,9 @@
+-- EXPECT FAIL: generic type 'containers.Box' is private
+mod containers {
+    type Box<T> = { value: T }
+}
+
+f main() {
+    containers.Box<i32> box = containers.Box<i32>(value: 42)
+    print(box.value)
+}

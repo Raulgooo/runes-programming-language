@@ -1,0 +1,5 @@
+f main() {
+    u32 scalar = 0x1f30d
+    char world = scalar as char
+    print(world, " ", world as u32)
+}

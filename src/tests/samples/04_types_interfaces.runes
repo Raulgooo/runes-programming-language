@@ -22,7 +22,7 @@ type Vec3 = {
 -- Struct without defaults (all fields required)
 type TestNode = {
     val:  i32,
-    next: *TestNode,
+    next: ?*TestNode,
 }
 
 type Rect = {
@@ -133,8 +133,8 @@ method Rect {
     }
 
     f contains(self, p: Vec2) = r: bool {
-        r = p.x >= self.x and p.x <= self.x + self.w
-            and p.y >= self.y and p.y <= self.y + self.h
+        r = p.x >= self.x and p.x <= self.x + self.w and
+            p.y >= self.y and p.y <= self.y + self.h
     }
 }
 
@@ -142,12 +142,14 @@ method Rect {
 method TestNode {
     dynamic f new(val: i32) = r: *TestNode {
         r = raw_alloc(sizeof(TestNode))
-        r.val  = val
-        r.next = 0 as *TestNode
+        unsafe {
+            r.val  = val
+            r.next = null
+        }
     }
 
     f is_tail(self) = r: bool {
-        r = self.next == 0 as *TestNode
+        r = self.next == null
     }
 }
 

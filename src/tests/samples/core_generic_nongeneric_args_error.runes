@@ -1,0 +1,8 @@
+-- EXPECT FAIL: explicit type arguments require a generic declaration
+f answer() = result: i32 {
+    result = 42
+}
+
+f main() {
+    print(answer<i32>())
+}

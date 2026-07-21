@@ -1,0 +1,7 @@
+-- EXPECT FAIL: Promotion cannot make borrowed pointers outlive their owner
+type Holder = { pointer: *i32 }
+
+regional f invalid_clone(pointer: *i32) = result: *Holder {
+    Holder local = Holder(pointer: pointer)
+    result = promote(&local) as dynamic
+}

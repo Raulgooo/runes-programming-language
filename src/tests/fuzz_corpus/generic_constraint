@@ -1,0 +1,7 @@
+interface Value { f get(self) = result: i32 }
+type Item = { value: i32 }
+method Value for Item {
+    f get(self) = result: i32 { result = self.value }
+}
+f read<T: Value>(value: T) = result: i32 { result = value.get() }
+f main() { print(read<Item>(Item(value: 42))) }

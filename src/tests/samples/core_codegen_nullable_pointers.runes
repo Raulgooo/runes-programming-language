@@ -1,0 +1,8 @@
+f main() {
+    i32 value = 42
+    *i32 present = &value
+    ?*i32 widened = present
+    ?*i32 missing = null
+
+    print(widened != null, " ", missing == null)
+}

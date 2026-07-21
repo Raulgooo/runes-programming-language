@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Pointer arithmetic is not allowed on nullable pointers
+f advance(pointer: ?*u8) = result: ?*u8 {
+    unsafe { result = pointer + 1 }
+}

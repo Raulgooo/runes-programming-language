@@ -1,0 +1,11 @@
+extern f raw_alloc(size: usize) = result: *void
+extern f raw_free(pointer: *void)
+
+f main() {
+    unsafe {
+        *i32 pointer = raw_alloc(sizeof(i32)) as *i32
+        []i32 empty = slice(pointer, 0)
+        print(empty.len)
+        raw_free(pointer)
+    }
+}

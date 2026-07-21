@@ -1,0 +1,4 @@
+-- EXPECT FAIL: main must not declare parameters
+f main(value: i32) = result: i32 {
+    result = value
+}

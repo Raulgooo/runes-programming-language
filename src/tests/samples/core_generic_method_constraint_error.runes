@@ -1,0 +1,19 @@
+-- EXPECT FAIL: does not satisfy exact interface constraint
+interface Value {
+    f get(self) = result: i32
+}
+
+type Missing = { value: i32 }
+type Tool = { value: i32 }
+
+method Tool {
+    f read<V: Value>(self, value: V) = result: i32 {
+        result = value.get()
+    }
+}
+
+f main() {
+    Tool tool = Tool(value: 1)
+    Missing missing = Missing(value: 42)
+    print(tool.read(missing))
+}

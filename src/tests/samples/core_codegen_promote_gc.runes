@@ -1,0 +1,34 @@
+extern f alloc(size: usize) = result: *void
+extern f runes_gc_collect()
+extern f runes_gc_debug_object_count() = result: usize
+
+type Node = {
+    next: ?*Node,
+    alias: ?*Node,
+    value: i32,
+}
+
+regional f promoted_graph() = result: *Node {
+    unsafe {
+        *Node root = alloc(sizeof(Node)) as *Node
+        *Node child = alloc(sizeof(Node)) as *Node
+        root.next = child
+        root.alias = child
+        root.value = 40
+        child.next = root
+        child.alias = null
+        child.value = 2
+        result = promote(root) as gc
+    }
+}
+
+f main() {
+    *Node root = promoted_graph()
+    runes_gc_collect()
+    unsafe {
+        *Node child = unwrap(root.next)
+        print(root.next == root.alias, " ", unwrap(child.next) == root, " ",
+              root.value + child.value, " ",
+              runes_gc_debug_object_count())
+    }
+}

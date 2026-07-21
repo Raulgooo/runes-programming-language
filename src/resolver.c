@@ -19,9 +19,6 @@ static void define_symbol(Resolver *r, AstNode *node, const char *name,
     return;
   Symbol *existing = symbol_table_lookup_local(r->st, name);
   if (existing) {
-    if (existing->kind == kind) {
-      return;
-    }
     error(r, node->line, node->col, "duplicate declaration of '%s'", name);
     return;
   }
@@ -133,6 +130,27 @@ static SymbolKind get_node_sym_kind(AstNode *node) {
   }
 }
 
+static bool node_is_pub(AstNode *node) {
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return node->as.func_decl.is_pub;
+  case AST_TYPE_DECL:
+    return node->as.type_decl.is_pub;
+  case AST_VARIANT_DECL:
+    return node->as.variant_decl.is_pub;
+  case AST_INTERFACE_DECL:
+    return node->as.interface_decl.is_pub;
+  case AST_ERROR_DECL:
+    return node->as.error_decl.is_pub;
+  case AST_MOD_DECL:
+    return node->as.mod_decl.is_pub;
+  case AST_EXTERN_DECL:
+    return true;
+  default:
+    return false;
+  }
+}
+
 static Symbol *find_symbol_in_path(Resolver *r, AstNode *path) {
   if (!path)
     return NULL;
@@ -148,13 +166,14 @@ static Symbol *find_symbol_in_path(Resolver *r, AstNode *path) {
     bool found = false;
     while (decl) {
       const char *name = get_node_name(decl);
-      if (name && strcmp(name, seg->as.identifier.name) == 0) {
+      if (name && strcmp(name, seg->as.identifier.name) == 0 &&
+          node_is_pub(decl)) {
         // Arena-allocated symbol for module path lookup
         Symbol *tmp = arena_alloc(r->st->arena, sizeof(Symbol));
         tmp->name = name;
         tmp->kind = get_node_sym_kind(decl);
         tmp->node = decl;
-        tmp->is_pub = true;
+        tmp->is_pub = node_is_pub(decl);
         current = tmp;
         found = true;
         break;
@@ -292,7 +311,10 @@ static void resolve_node(Resolver *r, AstNode *node) {
     break;
 
   case AST_IDENTIFIER:
-    if (strcmp(node->as.identifier.name, "print") != 0) {
+    if (strcmp(node->as.identifier.name, "print") != 0 &&
+        strcmp(node->as.identifier.name, "unwrap") != 0 &&
+        strcmp(node->as.identifier.name, "slice") != 0 &&
+        strcmp(node->as.identifier.name, "const_slice") != 0) {
       Symbol *symbol = symbol_table_lookup(r->st, node->as.identifier.name);
       if (symbol)
         node->resolved_decl = symbol->node;

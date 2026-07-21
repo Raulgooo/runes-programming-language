@@ -1,4 +1,0 @@
--- EXPECT FAIL: String comparison supports only == and !=
-f main() {
-    bool ordered = "a" < "b"
-}

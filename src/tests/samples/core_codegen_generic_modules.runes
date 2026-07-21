@@ -1,0 +1,29 @@
+mod containers {
+    pub type Box<T> = { value: T }
+    pub type Maybe<T> = | None | Some(T)
+
+    pub f identity<T>(value: T) = result: T {
+        result = value
+    }
+
+    method Box<T> {
+        f get(self) = result: T { result = self.value }
+        f replace<U>(self, value: U) = result: U { result = value }
+    }
+}
+
+mod alternate {
+    pub type Box<T> = { value: T }
+}
+
+f main() {
+    containers.Box<i32> first = containers.Box(value: 42)
+    alternate.Box<bool> second = alternate.Box(value: true)
+    containers.Maybe<i32> maybe = containers.Maybe.Some(first.value)
+    i32 value = match maybe {
+        Some(inner) -> inner,
+        None -> 0,
+    }
+    print(containers.identity(second.value), " ", first.get(), " ",
+          first.replace(value))
+}

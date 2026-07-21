@@ -1,0 +1,3 @@
+-- EXPECT FAIL: Unknown attribute
+#[mystery]
+f answer() {}

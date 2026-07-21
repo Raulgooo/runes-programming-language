@@ -1,0 +1,39 @@
+extern f alloc(size: usize) = result: *void
+extern f runes_gc_collect()
+extern f runes_gc_debug_object_count() = result: usize
+extern f runes_gc_debug_collection_count() = result: usize
+
+type Node = {
+    next: ?*Node,
+    value: i32,
+}
+
+gc f make_graph() = result: *Node {
+    unsafe {
+        result = alloc(sizeof(Node)) as *Node
+        result.next = null
+        result.value = 1
+
+        *Node second = alloc(sizeof(Node)) as *Node
+        second.next = null
+        second.value = 2
+        result.next = second
+        runes_gc_collect()
+
+        *Node third = alloc(sizeof(Node)) as *Node
+        third.next = result
+        third.value = 3
+        second.next = third
+        runes_gc_collect()
+    }
+}
+
+f main() {
+    *Node root = make_graph()
+    runes_gc_collect()
+    unsafe {
+        print(root.value, " ", unwrap(root.next).value, " ",
+              runes_gc_debug_object_count(), " ",
+              runes_gc_debug_collection_count())
+    }
+}

@@ -15,7 +15,7 @@ mod math {
 }
 
 mod platform {
-    mod constants {
+    pub mod constants {
         pub f answer() = result: i32 {
             result = 42
         }
@@ -26,5 +26,5 @@ use math.double
 
 f main() {
     math.Box box = math.Box(value: double(10))
-    print(box.get(), platform.constants.answer())
+    print(box.get(), " ", platform.constants.answer())
 }

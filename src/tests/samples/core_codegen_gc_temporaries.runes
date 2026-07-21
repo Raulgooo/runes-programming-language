@@ -1,0 +1,37 @@
+extern f alloc(size: usize) = result: *void
+extern f runes_gc_collect()
+extern f runes_gc_debug_object_count() = result: usize
+
+type Cell = { value: i32 }
+type Pair = { left: *Cell, right: *Cell }
+
+gc f make_cell(value: i32) = result: *Cell {
+    runes_gc_collect()
+    unsafe {
+        result = alloc(sizeof(Cell)) as *Cell
+        result.value = value
+    }
+}
+
+gc f combine(left: *Cell, right: *Cell) = result: *Pair {
+    runes_gc_collect()
+    unsafe {
+        result = alloc(sizeof(Pair)) as *Pair
+        result.left = left
+        result.right = right
+    }
+}
+
+gc f build() = result: *Pair {
+    result = combine(make_cell(20), make_cell(22))
+    runes_gc_collect()
+}
+
+f main() {
+    *Pair pair = build()
+    runes_gc_collect()
+    unsafe {
+        print(pair.left.value + pair.right.value, " ",
+              runes_gc_debug_object_count())
+    }
+}

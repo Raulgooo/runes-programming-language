@@ -1,1068 +1,292 @@
-# Runes Language Specification — v0.1 (Draft)
+# Runes Language Specification v0.1
 
-> Systems-level language with high-level ergonomics.
-> Designed for writing operating systems, compilers, and tooling without sacrificing expressiveness. Stdlib aims to deliver a comprehensive set of tools for systems programming and high-level basic programming.
-> Bootstrap compiler: C → self-hosted.
+Status: experimental specification for the implemented hosted C bootstrap.
 
----
+This document states normative v0.1 behavior. The practical syntax reference
+and examples are in [language-guide.md](language-guide.md). Runtime-only ABI
+requirements are in
+[v0.1-runtime-requirements.md](v0.1-runtime-requirements.md).
 
-## 1. Core Philosophy
+## 1. Execution model
 
-- **Explicit over magic but ergonomics over explicitness** — the programmer controls what happens, the compiler enforces contracts, but we don't sacrifice ergonomics for explicitness. The language should be easy to read and write, but also easy to reason about, still almost all importat decisions are handed to the programmer.
-- **Mutable by default** — immutability is opt-in via `const`
-- **Scope-local memory** — memory strategy is declared per function, not globally. This is a key feature of the language, and it is enforced by the compiler.
-- **Minimal runtime by default** — GC is available but not mandatory, the language tries to avoid runtime overhead as much as possible.
-- **Unsafe as an escape hatch** — not a loophole, a deliberate door
-- **Elegant syntax** — readable at a glance, no cryptic abbreviations
-- **Cover your own eyes** - The programmer can decide between memory safety with runtime overhead or no memory safety with no runtime overhead. This is the core of runes. Also it allows you to focus on what really matters.
+1. A program consists of one or more root source files plus recursively loaded
+   external modules.
+2. The compiler lexes, parses, monomorphizes, resolves, type-checks, and emits
+   C11.
+3. The supported target is hosted Linux x86-64 through GCC or Clang.
+4. Only a root declaration exactly matching `f main()` is the process entry.
+   It has no parameters, type parameters, or return value.
+5. `main` may call every memory realm. A non-root function named `main` is
+   ordinary and receives normal name mangling and realm rules.
+6. The compiler runtime is not a standard library.
 
----
+## 2. Lexical rules
 
-## 2. Variables
+Identifiers begin with an ASCII letter or `_` and continue with ASCII letters,
+digits, or `_`. Keywords cannot be identifiers.
 
-```runes
--- Mutable by default
-i32 x = 5
-i64 y = 10
+Line comments begin with `--`. Block comments are delimited by `---`.
+Statements end at semicolon or at an unambiguous newline. Newlines inside
+delimiters or after incomplete operators are whitespace.
 
--- Type inference
-z    = 3.14       -- inferred f64
-name = "hello"    -- inferred str
+String and character literals contain UTF-8 and the implemented escapes.
+String literals may contain embedded NUL. Character literals denote exactly one
+Unicode scalar value.
 
--- Immutable
-const i32 MAX   = 512
-const     LIMIT = 1024  -- inferred
+## 3. Types
 
--- Explicit
-u8  flags = 0xFF
-u64 addr  = 0xFFFF800000000000
-```
+Primitive types are signed `i8`, `i16`, `i32`, `i64`; unsigned `u8`, `u16`,
+`u32`, `u64`, `usize`; floating `f32`, `f64`; `bool`; Unicode scalar `char`;
+length-bearing UTF-8 view `str`; and `void`.
 
----
+`usize` is target-sized and is `u64` on the v0.1 target. `char` has a `u32`
+representation but excludes surrogate values and values above `U+10FFFF`.
+`str` has pointer and byte-length representation and is not a C string.
 
-## 3. Primitive Types
+Constructed types are:
 
-| Type        | Description                    |
-| ----------- | ------------------------------ |
-| `i8`–`i64`  | Signed integers                |
-| `u8`–`u64`  | Unsigned integers              |
-| `f32`,`f64` | Floats                         |
-| `bool`      | `true` / `false`               |
-| `str`       | Immutable UTF-8 string         |
-| `char`      | Single Unicode codepoint       |
-| `*T`        | Raw pointer to T               |
-| `[N]T`      | Fixed-size array of N elements |
+- non-null pointer `*T` and nullable pointer `?*T`;
+- fixed array `[N]T`, where `N` is a positive integer literal;
+- mutable slice `[]T` and read-only slice `[]const T`;
+- tuple `(T, U, ...)`;
+- function/closure `f(T, ...) -> R`, optionally realm-qualified;
+- nominal struct, variant, interface, and error-set types;
+- fallible `!T`;
+- compile-time generic instantiations.
 
-### Arrays
+Unrelated nominal types are incompatible even when their layouts match.
+Unresolved types are errors.
 
-```runes
-[5]i32   nums    = [1, 2, 3, 4, 5]
-[4]u8    rgba    = [255, 0, 128, 255]
-[512]u64 entries = []               -- zero initialized
+## 4. Values and storage
 
--- Access
-nums[0] = 10
-i32 val = nums[2]
+Variables have explicit types or use `name := expression` inference. `const`
+storage is not assignable. `volatile` storage preserves volatile access in
+generated C and requires an unsafe context when accessed through raw pointers.
 
--- Iterate
-for (nums) |n| { print(n) }
+Primitive, fixed-array, tuple, struct, and variant values copy by value.
+Pointers, strings, slices, interfaces, and closures contain references and copy
+their view/handle; copying does not extend backing-storage lifetime.
 
--- Mutate in place
-for (nums) |*n| { *n = *n * 2 }
-```
+Array literal elements are homogeneous. A declared `[N]T` initializer must
+contain exactly `N` values, except `[]`, which zero-initializes the array.
 
-Runes v0.1 has only fixed arrays. Dynamic collections are library types built
-from pointers, lengths, capacities, and an explicit allocation strategy.
-Fixed arrays copy by value, including across function returns.
+Slices are non-owning pointer/length views. Arrays coerce to compatible slices;
+mutable slices coerce to read-only slices. No conversion may increase
+mutability or storage lifetime.
 
----
+## 5. Expressions and checks
 
-## 4. Functions
+Arithmetic operators require compatible numeric operands. `%` and bitwise
+operators require integers. `and` and `or` require booleans. `str + str`
+concatenates, and string comparison is length-aware byte lexicographic order.
 
-All functions use `f`, optionally preceded by a memory strategy keyword.
-**Named return variables are always required.** Anonymous return types are invalid.
-**Void functions omit the return clause entirely.**
+Ordinary integer add, subtract, multiply, divide, remainder, negation, and left
+shift are checked in every build mode. Invalid operations trap. Right shift is
+defined through the emitted checked helpers for its operand width/sign.
 
-| Declaration  | Memory strategy                                                                 |
-| ------------ | ------------------------------------------------------------------------------- |
-| `f`          | Stack — default, zero overhead, auto freed                                      |
-| `stack f`    | Explicitly stack-only — same as `f` but enforces no nesting of other strategies |
-| `dynamic f`  | Raw heap — like C `malloc`/`free`, no compiler help                             |
-| `regional f` | Region — arena bump allocator, freed at scope exit                              |
-| `gc f`       | GC tracked — for userspace / high-level code                                    |
-| `flex f`     | Inherits caller's memory strategy                                               |
+Array, slice, and string indexes are checked. Static out-of-range cases are
+diagnosed; dynamic cases trap with source location. Sub-slicing validates range
+order, bounds, and UTF-8 scalar boundaries where a string result requires it.
 
-### `main` — the orchestrator
+`as` is an explicit conversion. Integer narrowing, pointer construction from an
+integer, and unsafe pointer conversions are never implicit.
 
-`f main()` is special. When declared as plain `f`, variables inside it are stack by default, but it can contain any memory
-strategy function nested inside — it is the program entry point and orchestrates everything.
-To restrict it, declare it with an explicit strategy modifier.
+`sizeof(T)` and `alignof(T)` use target C layout. `print(arguments...)` accepts
+the implemented primitive/pointer values, writes each consecutively, and then
+one newline. It inserts no separator.
 
-```runes
--- f main() — unrestricted, can contain any strategy
-f main() {
-    regional f setup() { ... }   -- ✅
-    gc f run() { ... }           -- ✅
-    dynamic f init() { ... }     -- ✅
-}
+## 6. Functions
 
--- regional f main() — restricted to regional rules
-regional f main() {
-    regional f setup() { ... }   -- ✅
-    gc f run() { ... }           -- ❌ compile error
-}
-
--- dynamic f main() — restricted to dynamic rules
-dynamic f main() {
-    regional f setup() { ... }   -- ✅ dynamic can contain regional
-    gc f run() { ... }           -- ✅
-}
-
--- gc f main() — restricted to gc rules
-gc f main() {
-    gc f parse() { ... }         -- ✅
-    regional f bad() { ... }     -- ❌ compile error
-}
-
--- stack f main() — strictly stack only
-stack f main() {
-    regional f bad() { ... }     -- ❌ compile error
-    gc f bad() { ... }           -- ❌ compile error
-}
-```
+A value-returning function declares a named result:
 
 ```runes
--- Stack (default) — named return required
-f add(x: i32, y: i32) = result: i32 {
-    result = x + y
-}
-
--- Void — omit return clause entirely
-f greet(name: str) {
-    print("hello " + name)
-}
-
--- One-liner — named return still required
-f square(x: i32) = r: i32  r = x * x
-
--- Dynamic — raw heap, C-style, you own the memory
-dynamic f alloc_buf(size: u64) = ptr: *u8 {
-    ptr = raw_alloc(size)
-    -- caller must raw_free(ptr)
-}
-
--- Regional — arena allocated, freed in bulk at function scope exit
-regional f make_table() = t: PageTable {
-    t = PageTable(entries: [])
-}
-
--- GC — garbage collected, for high-level userspace code
-gc f run_shell(input: str) = result: [128]str {
-    result = tokenize(input)
-}
-
-
+f add(a: i32, b: i32) = result: i32 { result = a + b }
 ```
 
-### Named return rules
-
-```runes
--- ✅ valid — named return
-f foo() = result: i32 {
-    result = 42
-}
-
--- ✅ valid — void, no return clause
-f bar() {
-    print("hi")
-}
-
--- ❌ invalid — anonymous return type not allowed
-f foo() = i32 {
-    ...
-}
-
--- ❌ invalid — void function with return clause
-f bar() = v {
-    ...
-}
-```
-
----
-
-## 5. Memory Model
-
-The memory strategy keyword before `f` defines how everything inside that function
-is allocated. Violations of nesting rules are **compile errors** — the type checker
-rejects invalid combinations.
-
-| Keyword      | Allocator                  | Who frees          |
-| ------------ | -------------------------- | ------------------ |
-| `f`          | Stack                      | Auto on return     |
-| `dynamic f`  | Raw heap (`raw_alloc`)     | Caller, explicitly |
-| `regional f` | Arena bump allocator       | Auto at scope exit |
-| `gc f`       | GC heap                    | GC runtime         |
-| `flex f`     | Inherits caller's strategy | Whoever caller is  |
-
-### Nesting rules
-
-Each function type has strict rules about what can be nested inside it.
-The type checker enforces these at compile time.
-
-| Outer function | Can contain                                  | Cannot contain                |
-| -------------- | -------------------------------------------- | ----------------------------- |
-| `f main()`     | anything — unrestricted orchestrator         | nothing blocked               |
-| `stack f`      | nothing — strictly stack only                | all other strategies          |
-| `f` (nested)   | other `f` only                               | any other strategy            |
-| `dynamic f`    | `f`, other `dynamic f`, `gc f`, `regional f` | none                          |
-| `regional f`   | `f` and `regional f` only                    | `dynamic f`, `gc f`, `flex f` |
-| `gc f`         | `f`, other `gc f`                            | `dynamic f`, `regional f`     |
-| `flex f`       | inherits — same rules as caller              | whatever caller cannot have   |
-
-```runes
--- ✅ f contains only f
-f kernel_main() {
-    f setup() {           -- ok: f inside f
-        i32 x = 5
-    }
-    setup()
-}
-
--- ✅ dynamic f contains f and gc f
-dynamic f init_driver() {
-    f helper() {          -- ok: f inside dynamic f
-        i32 x = 5
-    }
-    gc f parse_config() = r: Node {   -- ok: gc f inside dynamic f
-        r = build_ast()
-    }
-}
-
--- ✅ regional f contains only f
-regional f build_tables() {
-    f zero(p: *u8) {      -- ok: f inside regional f
-        *p = 0
-    }
-}
-
--- ✅ gc f contains f and gc f
-gc f run_shell() {
-    f validate(s: str) = r: bool {   -- ok: f inside gc f
-        r = s.len > 0
-    }
-    gc f parse(s: str) = r: Node {   -- ok: gc f inside gc f
-        r = build_ast(s)
-    }
-}
-
--- ❌ compile error — regional f inside f (top-level)
-f kernel_main() {
-    regional f bad() {    -- ERROR: regional f cannot nest inside f
-        PageTable t = PageTable()
-    }
-}
-
-
--- ❌ compile error — dynamic f inside regional f
-regional f build() {
-    dynamic f bad() {     -- ERROR: dynamic f cannot nest inside regional f
-        *u8 p = raw_alloc(64)
-    }
-}
-```
-
-### `flex f` — inherits caller strategy
-
-`flex f` takes on the memory strategy of whatever function calls it.
-Designed for stdlib functions that should work in any context.
-
-```runes
--- flex f — works in any context
-flex f make_node(val: i32) = r: *Node {
-    r = alloc(sizeof(Node))   -- uses caller's allocator
-    r.val = val
-}
-
--- called from regional f → make_node uses arena
-regional f build_ast() {
-    *Node n = make_node(42)   -- arena allocated
-}
-
--- called from gc f → make_node uses GC
-gc f parse() {
-    *Node n = make_node(42)   -- GC allocated
-}
-
--- called from dynamic f → make_node uses raw heap
-dynamic f init() {
-    *Node n = make_node(42)   -- raw heap allocated
-}
-```
-
-`flex f` nesting rules follow the caller — if called from `regional f`,
-it obeys `regional f` rules. If called from `dynamic f`, it obeys
-`dynamic f` rules.
-
-```runes
--- flex f inside regional f → becomes regional, can only nest f
-regional f build() {
-    flex f helper() {     -- becomes regional here
-        f inner() { }     -- ok: f inside regional (via flex)
-        -- dynamic f inner() { }  ← ERROR
-    }
-}
-```
-
-### Scope crossing rules
-
-Values cannot escape their memory scope unless:
-
-1. They are `Copy` types (primitives, small structs) — copied out automatically
-2. `promote() as X` is used — explicit memory strategy transfer
-
----
-
-### `promote() as X` — escape from arena
-
-`promote` solves one problem only: **moving a value out of a regional scope
-into a different memory strategy**. It is not a return mechanism — it is a
-memory transfer.
-
-`promote` always requires an explicit target strategy. Bare `promote()` without
-`as X` is a compile error.
-
-```runes
--- ✅ promote as dynamic — moves value to raw heap
-regional f build() = r: *PageTable {
-    PageTable t = PageTable()
-    r = promote(&t) as dynamic    -- t copied to raw heap
-                                  -- caller must raw_free(r)
-}
-
--- ✅ promote as gc — moves value to GC heap
-regional f build() = r: *PageTable {
-    PageTable t = PageTable()
-    r = promote(&t) as gc         -- t copied to GC heap
-                                  -- GC takes ownership
-}
-
--- ❌ promote as f — compile error, stack of caller will also die
-regional f build() = r: *PageTable {
-    r = promote(&t) as f          -- ERROR: cannot promote to stack
-}
-
--- ❌ promote without as — compile error, target strategy required
-regional f build() = r: *PageTable {
-    r = promote(&t)               -- ERROR: promote requires target strategy
-}
-```
-
-What the compiler emits for `promote(&t) as dynamic`:
-
-```llvm
-; memcpy value to raw_alloc'd memory, return new pointer
-%new = call i8* @raw_alloc(i64 sizeof_PageTable)
-call void @memcpy(i8* %new, i8* %t, i64 sizeof_PageTable)
-```
-
-The original value stays in the arena until the arena is freed normally.
-`promote` makes a **copy** — it does not move the original.
-
----
-
-### Multiple returns — tuples
-
-For returning multiple values from any function, use tuples.
-This is separate from `promote` — tuples are about API, not memory.
-
-```runes
--- return multiple values via tuple
-f parse(src: str) = r: (*Node, [512]Error) {
-    *Node      ast  = build_ast(src)
-    [512]Error errs = collect_errors(src)
-    r = (ast, errs)
-}
-
--- caller destructures
-*Node ast, [512]Error errs = parse(source)
-```
-
-### Combining `promote` and tuples in `regional f`
-
-The natural pattern for returning multiple arena-allocated values:
-
-```runes
-regional f build() = r: (*PageTable, *PageTable) {
-    PageTable pml4 = PageTable()
-    PageTable pdpt = PageTable()
-
-    *PageTable pml4_h = promote(&pml4) as dynamic
-    *PageTable pdpt_h = promote(&pdpt) as dynamic
-
-    r = (pml4_h, pdpt_h)
-}
-
--- caller
-*PageTable pml4, *PageTable pdpt = build()
--- caller owns both, must raw_free(pml4) and raw_free(pdpt)
-```
-
-### `promote` in other function types
-
-`promote` also works outside `regional f` to transfer ownership between
-allocators explicitly:
-
-```runes
--- dynamic f → gc: transfer ownership to GC
-dynamic f init() = r: *Node {
-    *Node n = raw_alloc(sizeof(Node))
-    r = promote(n) as gc     -- GC takes over, no need to raw_free
-}
-
--- gc f → dynamic: escape GC (rare, use with care)
-gc f extract() = r: *Node {
-    Node n = Node.new()
-    r = promote(&n) as dynamic   -- caller must raw_free(r)
-}
-```
-
-Summary of valid `promote` targets by source:
-
-| Source       | `as dynamic` | `as gc` | `as f` |
-| ------------ | ------------ | ------- | ------ |
-| `regional f` | ✅           | ✅      | ❌     |
-| `dynamic f`  | ✅           | ✅      | ❌     |
-| `gc f`       | ✅           | ✅      | ❌     |
-| `f`          | ❌           | ❌      | ❌     |
-
----
-
-## 6. Control Flow
-
-```runes
--- if / else
-if x > 0 {
-    print("positive")
-} else if x < 0 {
-    print("negative")
-} else {
-    print("zero")
-}
-
--- if as expression
-str label = if x > 0 { "pos" } else { "neg" }
-
--- while
-while running {
-    tick()
-}
-
--- infinite loop
-loop {
-    if done() { break }
-}
-```
-
-### For Loop (Zig-style)
-
-```runes
--- Range (exclusive end)
-for (0..10) |i| {
-    print(i)
-}
-
--- Range (inclusive end)
-for (0..=10) |i| {
-    print(i)
-}
-
--- Over array
-[5]i32 nums = [1, 2, 3, 4, 5]
-for (nums) |n| {
-    print(n)
-}
-
--- With index
-for (items) |item, i| {
-    print(i, item)
-}
-
--- Pointer capture — mutate in place
-for (nums) |*n| {
-    *n = *n * 2
-}
-
--- Over linked list
-for (tasks) |task| {
-    task.run()
-}
-```
-
----
-
-## 7. Types — Structs and Variants
-
-### Structs
-
-```runes
--- One-liner
-type Vec2 = x: f32, y: f32
-
--- Full struct with defaults
-type Vec2 = {
-    x: f32 = 0.0,
-    y: f32 = 0.0,
-}
-
--- Instantiation
-Vec2 v      = Vec2(x: 1.0, y: 2.0)
-Vec2 origin = Vec2()           -- uses defaults
-Vec2 pt     = Vec2(y: 5.0)    -- x stays default
-
--- Methods
-method Vec2 {
-    f length(self) = r: f32 {
-        r = sqrt(self.x * self.x + self.y * self.y)
-    }
-
-    f scale(self, factor: f32) = r: Vec2 {
-        r = Vec2(x: self.x * factor, y: self.y * factor)
-    }
-}
-```
-
-### Variants (Algebraic Data Types)
-
-```runes
-type Color =
-    | Red
-    | Green
-    | Blue
-    | RGB(u8, u8, u8)
-    | Hex(str)
-
-type Option<T> =
-    | Some(T)
-    | None
-```
-
-### Interfaces
-
-```runes
-interface Drawable {
-    f draw(self)
-    f bbox(self) = r: (f32, f32, f32, f32)
-}
-
-method Drawable for Vec2 {
-    f draw(self) {
-        render_point(self.x, self.y)
-    }
-    f bbox(self) = r: (f32, f32, f32, f32) {
-        r = (self.x, self.y, self.x, self.y)
-    }
-}
-
-f render(d: Drawable) {
-    d.draw()
-}
-```
-
-The C bootstrap backend represents an interface value as an erased data pointer
-plus typed method pointers. Passing or assigning a concrete struct to an
-interface requires an explicit `method Interface for Struct` implementation.
-
----
-
-## 8. Generics not in v0.1
-
-```runes
-type Stack<T> = {
-    data: [128]T,
-    top:  usize,
-}
-
-method Stack<T> {
-    f push(self, val: T) { ... }
-    f pop(self) = r: Option<T> { ... }
-}
-
-f first<T>(items: [128]T) = r: Option<T> {
-    r = if items.len == 0 { None } else { Some(items[0]) }
-}
-```
-
----
-
-## 9. Pattern Matching
-
-```runes
--- Basic
-match color {
-    Red        -> print("red"),
-    RGB(r,g,b) -> print(r, g, b),
-    Hex(s)     -> print(s),
-    _          -> print("other"),
-}
-
--- As expression
-str label = match color {
-    Red   -> "red",
-    Green -> "green",
-    Blue  -> "blue",
-    _     -> "custom",
-}
-
--- Guards
-match x {
-    n if n < 0   -> print("negative"),
-    0            -> print("zero"),
-    n if n > 100 -> print("big"),
-    _            -> print("normal"),
-}
-
--- Destructuring
-match point {
-    Vec2(x: 0.0, y) -> print("on y-axis", y),
-    Vec2(x, y: 0.0) -> print("on x-axis", x),
-    Vec2(x, y)      -> print(x, y),
-}
-```
-
----
-
-## 10. Error Handling (Zig-style)
-
-`!T` means the function can fail. `try` propagates errors up. `catch` handles inline.
-
-```runes
--- Define a named error set
-error MathError = {
-    | DivByZero
-    | Overflow
-}
-
-error PageFault = {
-    | NotMapped
-    | PermissionDenied
-    | OutOfMemory
-}
-
--- Fallible function — ! on return type
-f divide(a: f32, b: f32) = result: !f32 {
-    if b == 0.0 {
-        result = error.MathError.DivByZero
-    } else {
-        result = a / b
-    }
-}
-
--- try — propagate error to caller (caller must also return !T)
-f run() = r: !f32 {
-    f32 val = try divide(10.0, 2.0)
-    r = val * 2.0
-}
-
--- catch — handle inline
-f safe_run() {
-    f32 val = divide(10.0, 0.0) catch |e| {
-        print("caught:", e)
-        return
-    }
-    print(val)
-}
-
--- catch with default value
-f32 val = divide(10.0, 0.0) catch 0.0
-
--- match for full control
-match divide(10.0, 0.0) {
-    Ok(v)  -> print(v),
-    Err(e) -> print("error:", e),
-}
-```
-
----
-
-## 11. Unsafe and Systems Features
-
-```runes
--- Unsafe block
-f zero_page(addr: *u8, len: usize) {
-    unsafe {
-        for (0..len) |i| {
-            *(addr + i) = 0
-        }
-    }
-}
-
--- Inline assembly
-f halt() {
-    asm { "cli; hlt" }
-}
-
-f read_cr3() = r: u64 {
-    asm { "mov %cr3, %rax" } -> r
-}
-
--- Struct layout annotations
-#[packed]
-#[align(4096)]
-type PageTable = {
-    entries: [512]u64,
-}
-
-#[repr(C)]
-type SyscallFrame = {
-    rax: u64,
-    rbx: u64,
-    rcx: u64,
-    rdx: u64,
-}
-```
-
----
-
-## 12. OS-Critical Features
-
-These four features are required for real OS development. All map directly to
-existing LLVM IR constructs — the compiler emits the appropriate IR attributes.
-
-### `extern` — Foreign Function Interface
-
-Declare functions that live outside Runes (bootloader, UEFI, libgcc, C stdlib).
-
-```runes
--- Declare external C functions
-extern f memset(ptr: *u8, val: i32, len: usize)
-extern f memcpy(dst: *u8, src: *u8, len: usize)
-extern f memcmp(a: *u8, b: *u8, len: usize) = r: i32
-
--- External variables (MMIO base addresses, linker symbols)
-extern u64 KERNEL_START
-extern u64 KERNEL_END
-
--- Use them normally — typechecker enforces signatures
-memset(buffer, 0, 4096)
-u64 size = KERNEL_END - KERNEL_START
-```
-
-LLVM IR emitted:
-
-```llvm
-declare void @memset(i8*, i32, i64)
-@KERNEL_START = external global i64
-```
-
----
-
-### `volatile` — Hardware Memory Access
-
-Prevents the compiler/LLVM from optimizing away reads and writes to memory-mapped
-hardware registers. Essential for UART, PIC, APIC, PCI, and any MMIO device.
-
-```runes
--- Declare a volatile pointer
-volatile *u32 uart   = 0x10000000 as *u32
-volatile *u8  pic    = 0xFEC00000 as *u8
-
--- Read and write — compiler NEVER eliminates these
-*uart = 0x41            -- write 'A' to UART
-u32 status = *uart      -- read status register
-
--- Volatile struct field
-type UARTRegs = {
-    volatile data:    u8,
-    volatile status:  u8,
-    volatile control: u16,
-}
-```
-
-LLVM IR emitted:
-
-```llvm
-store volatile i32 65, i32* %uart
-%status = load volatile i32, i32* %uart
-```
-
----
-
-### `#[section]` and `#[link_name]` — Linker Control
-
-Place functions and data into specific ELF sections. Required for bootloader
-entry points, interrupt vectors, and DMA buffers.
-
-```runes
--- Entry point at a specific ELF section
-#[section(".text.boot")]
-#[link_name("_start")]
-pub f entry_point() {
-    kernel_main()
-}
-
--- Place data in a specific section
-#[section(".rodata.tables")]
-const [256]u64 IDT_TABLE = []
-
--- Align to page boundary in a specific section
-#[section(".bss.stack")]
-#[align(4096)]
-[16384]u8 KERNEL_STACK = []
-```
-
-LLVM IR emitted:
-
-```llvm
-define void @_start() section ".text.boot" { ... }
-@IDT_TABLE = constant [256 x i64] zeroinitializer, section ".rodata.tables"
-```
-
----
-
-### `#[callconv]` and `#[interrupt]` — Calling Conventions
-
-Control how functions pass arguments and preserve registers. Required for
-syscall handlers, interrupt service routines, and UEFI calls.
-
-```runes
--- Explicit calling convention
-#[callconv("sysv64")]
-f syscall_entry(nr: u64, a: u64, b: u64, c: u64) = r: u64 {
-    r = dispatch(nr, a, b, c)
-}
-
--- Interrupt handler — compiler saves/restores ALL registers
--- No arguments, no return value, ends with iretq
-#[interrupt]
-f page_fault_handler() {
-    u64 cr2 = read_cr2()
-    handle_page_fault(cr2)
-}
-
-#[interrupt]
-f double_fault_handler() {
-    panic("double fault")
-}
-
--- UEFI calling convention (win64) for UEFI bootloaders
-#[callconv("win64")]
-f efi_main(handle: *void, table: *EFISystemTable) = r: u64 {
-    r = 0
-}
-```
-
-LLVM IR emitted:
-
-```llvm
-define x86_64_sysvcc i64 @syscall_entry(i64, i64, i64, i64) { ... }
-define x86_intr_cc void @page_fault_handler() { ... }
-define win64cc i64 @efi_main(i8*, i8*) { ... }
-```
-
----
-
-### Complete OS boot example
-
-```runes
-use kernel.arch.x86
-
-extern f memset(ptr: *u8, val: i32, len: usize)
-
-#[section(".bss.stack")]
-#[align(4096)]
-[16384]u8 KERNEL_STACK = []
-
-#[section(".text.boot")]
-#[link_name("_start")]
-pub f entry_point() {
-    -- zero the BSS
-    extern u64 BSS_START
-    extern u64 BSS_END
-    u64 len = BSS_END - BSS_START
-    memset(BSS_START as *u8, 0, len)
-
-    kernel_main()
-
-    -- should never reach here
-    loop { unsafe { asm { "cli; hlt" } } }
-}
-
-#[interrupt]
-f page_fault_handler() {
-    volatile *u32 uart = 0x10000000 as *u32
-    *uart = 0x21    -- '!' to UART
-    loop { unsafe { asm { "cli; hlt" } } }
-}
-
-pub f kernel_main() {
-    regional f setup_paging() {
-        PageTable pml4 = PageTable.new()
-        try pml4.map(0xFFFF800000000000, 0x0, 0x3)
-    }
-
-    setup_paging()
-
-    unsafe { asm { "mov %rax, %cr3" } }
-}
-```
-
----
-
-## 13. Modules
-
-```runes
--- Define
-mod kernel {
-    pub regional f alloc_page() = p: !*u8 { ... }
-    pub f         free_page(p: *u8) { ... }
-}
-
--- Import whole module
-use kernel
-
--- Import specific symbol
-use kernel.alloc_page
-
--- Nested path
-use kernel.arch.x86.read_cr3
-```
-
----
-
-## 14. Comments
-
-```runes
--- Single line comment
-
---- Multi-line comment
-    spans as many lines as needed
----
-
---- Doc comment — attached to the next declaration
-    Supports Markdown.
----
-f add(x: i32, y: i32) = result: i32 {
-    result = x + y
-}
-```
-
----
-
-## 15. Full OS Example
-
-```runes
-use kernel.arch.x86
-
-error MapError = {
-    | AlreadyMapped
-    | InvalidAddress
-}
-
-#[packed]
-#[align(4096)]
-type PageTable = {
-    entries: [512]u64,
-}
-
-method PageTable {
-    regional f new() = t: PageTable {
-        t = PageTable(entries: [])
-    }
-
-    f map(self, vaddr: u64, paddr: u64, flags: u64) = r: !void {
-        u64 idx = (vaddr >> 12) & 0x1FF
-        if self.entries[idx] != 0 {
-            r = error.MapError.AlreadyMapped
-        } else {
-            self.entries[idx] = paddr | flags
-        }
-    }
-}
-
-pub f kernel_main() {
-    regional f setup() {
-        PageTable pml4 = PageTable.new()
-        PageTable pdpt = PageTable.new()
-        try pml4.map(0xFFFF800000000000, &pdpt as u64, 0x3)
-    }
-
-    setup()
-
-    unsafe {
-        asm { "mov %rax, %cr3" }
-    }
-
-    gc f run_userspace() {
-        Task t = Task.spawn(shell_main)
-        scheduler.add(t)
-    }
-
-    run_userspace()
-}
-```
-
----
-
-## 16. Keyword Reference
-
-| Keyword      | Meaning                                                |
-| ------------ | ------------------------------------------------------ | --- |
-| `f`          | Stack function                                         |
-| `stack f`    | Explicitly stack-only function                         |
-| `dynamic f`  | Raw heap function (C-style malloc)                     |
-| `regional f` | Arena/region allocated function                        |
-| `gc f`       | Garbage collected function                             |
-| `flex f`     | Inherits caller's memory strategy (monomorphized v0.2) |     |
-| `method`     | Method block for a type                                |
-| `interface`  | Interface definition                                   |
-| `type`       | Type definition (struct or variant)                    |
-| `error`      | Error set definition                                   |
-| `mod`        | Module definition                                      |
-| `use`        | Import                                                 |
-| `pub`        | Public visibility                                      |
-| `const`      | Immutable binding                                      |
-| `match`      | Pattern match                                          |
-| `if/else`    | Conditional                                            |
-| `for`        | Loop — `for (iter) \|val\| { }`                        |
-| `while`      | Conditional loop                                       |
-| `loop`       | Infinite loop                                          |
-| `break`      | Exit loop                                              |
-| `try`        | Propagate error to caller                              |
-| `catch`      | Handle error inline                                    |
-| `unsafe`     | Unsafe block                                           |
-| `asm`        | Inline assembly                                        |
-| `extern`     | Foreign function / variable declaration                |
-| `volatile`   | Prevent compiler optimization of memory access         |
-| `promote`    | Escape value from region scope (unsafe)                |
-
----
-
-## 17. Feature Roadmap
-
-| Feature                        | Version |
-| ------------------------------ | ------- |
-| Variables, primitives          | v0.1    |
-| Functions (f, dynamic, etc.)   | v0.1    |
-| Structs, variants, interfaces  | v0.1    |
-| Pattern matching               | v0.1    |
-| Generics                       | v0.2    |
-| flex f (stack only, v0.1)      | v0.1    |
-| flex f (full monomorphization) | v0.2    |
-| Error handling (!T, try/catch) | v0.1    |
-| Memory model (f modifiers)     | v0.1    |
-| Inline assembly, unsafe        | v0.1    |
-| Struct layout annotations      | v0.1    |
-| extern / FFI                   | v0.1    |
-| volatile                       | v0.1    |
-| #[section] / #[link_name]      | v0.1    |
-| #[callconv] / #[interrupt]     | v0.1    |
-| Code generation (C backend)    | v0.1    |
-| LLVM IR backend                | v0.2    |
-| HTTP / web stdlib              | v0.2    |
-| Async / await                  | v0.2    |
-| Macros                         | v0.3    |
-| Native AI primitives           | v0.4    |
-
----
-
-_Runes — v0.1 draft. Bootstrap compiler: C. Codegen target: C backend (v0.1) → LLVM IR (v0.2) → self-hosted._
+A void function omits the return declaration. An explicit `return` performs
+all compiler-managed arena and GC cleanup. Reaching the end returns the current
+named result. Fallible functions use a named `!T` result.
+
+Functions may be declared before or after their uses. Overloading is not
+supported. Generated internal symbols are deterministic and encode declaration
+path segments without underscore-collision ambiguity. Only extern or explicit
+link names form a stable foreign ABI.
+
+## 7. Memory realms
+
+Every function has one realm:
+
+| Syntax | Realm | `alloc` behavior |
+|---|---|---|
+| `f`, `stack f` | stack | no owning allocator |
+| `dynamic f` | raw heap | raw allocation |
+| `regional f` | arena | active arena allocation |
+| `gc f` | managed | tracked GC allocation |
+| `flex f` | inherited | caller's active realm |
+
+Legal calls/nesting are:
+
+| Caller | May call |
+|---|---|
+| root `main`, `dynamic f` | stack, flex, dynamic, regional, GC |
+| stack `f` | stack, flex |
+| `regional f` | stack, flex, regional |
+| `gc f` | stack, flex, GC |
+
+A root regional invocation creates an arena. Each nested regional invocation
+creates a child attached to its parent. Children remain alive after return and
+the root destroys the full tree on every exit path.
+
+References cannot escape shorter-lived storage through return, assignment,
+globals, aggregates, variants, interfaces, slices, or closures. Inline values
+return by value and do not need a realm conversion.
+
+`raw_alloc` is always raw ownership and requires explicit `raw_free`.
+
+## 8. Promotion
+
+`promote(value) as dynamic` and `promote(value) as gc` transfer arena-derived
+ownership by deep cloning. No omitted target is allowed.
+
+The clone preserves cycles and aliases. It traverses compiler-known owned
+edges in pointers, arrays, slices, strings, structs, variants, tuples,
+interfaces, and closure environments. Borrowed, raw, external, MMIO, and GC
+edges remain pointer values and are not recursively claimed.
+
+Promotion is rejected outside an arena ownership context and for values that do
+not represent arena-backed data.
+
+## 9. Scoped garbage collection
+
+There is one precise, non-moving mark/sweep heap owned by one OS thread. Any
+number of `gc f` functions on that thread share it.
+
+Collection occurs only on a GC allocation threshold/slow path or explicit
+collection call. The compiler emits exact type descriptors, shadow-stack
+frames, roots, transient protections, and return-value protection. There are no
+read/write barriers or asynchronous pauses in non-GC code.
+
+GC references may not cross OS threads. v0.1 has no finalizers, weak
+references, public free, generations, compaction, incremental collection, or
+concurrent collection. Regional code cannot call GC-capable code and therefore
+does not hold GC edges across a safepoint.
+
+## 10. Pointers and unsafe operations
+
+`*T` excludes null. `?*T` admits `null`; `unwrap` checks and returns `*T`.
+Nullable pointers cannot be dereferenced or used arithmetically.
+
+The following require lexical `unsafe`:
+
+- pointer dereference;
+- pointer arithmetic;
+- volatile/MMIO access through pointers;
+- integer-to-pointer construction and unsafe pointer casts;
+- calls through arbitrary external function declarations;
+- raw pointer/length slice construction;
+- inline assembly.
+
+Taking an address and passing a typed pointer are not inherently unsafe.
+Entering `unsafe` does not disable arithmetic or bounds checks.
+Compiler-lowered intrinsics and reserved `runes_` runtime functions are trusted
+compiler/runtime contracts, not arbitrary foreign calls.
+
+## 11. Structs, variants, and interfaces
+
+Structs are nominal named field aggregates. Duplicate fields and direct
+by-value recursive layout are errors. Constructors validate field names,
+arity, defaults, and types.
+
+Variants are nominal tagged unions with zero or more ordered payloads per arm.
+Constructors validate exact arm payloads. `match` supports variant, literal,
+binding, wildcard, and guarded patterns. A value-producing match requires
+compatible results.
+
+Interfaces are nominal method sets. An implementation must exactly match
+receiver, parameters, result, fallibility, and realm. Concrete-to-interface
+conversion produces a data/vtable value and retains the concrete value's
+provenance.
+
+## 12. Generics
+
+Functions, structs, variants, and methods may declare type parameters. A type
+parameter may have an interface constraint. The generic body may use only
+operations valid for its parameters and declared constraints.
+
+Calls infer function type arguments when the mapping is unique, or accept
+explicit type arguments. Each concrete use is monomorphized before resolution
+and type checking and receives a collision-safe symbol.
+
+Const generics, higher-kinded types, specialization, variance, and runtime type
+erasure are outside v0.1.
+
+## 13. Closures
+
+Nested functions may capture lexical bindings by reference. Such a closure may
+mutate mutable captures but cannot escape any captured binding's lifetime.
+
+`move f` is legal only for a nested function and captures values into an
+allocated environment. Its environment follows the active memory realm and may
+escape only when that realm and all captured values permit it.
+
+Closure values are first class: they may be parameters, results, variables,
+array/tuple/struct fields, or variant payloads. Invocation evaluates the callee
+expression exactly once. Arena closure environments participate in deep
+promotion; GC environments participate in precise tracing.
+
+## 14. Control flow and errors
+
+`if`, `while`, `loop`, range/iterable `for`, `break`, `continue`, `return`, and
+`match` are implemented. `if` and `match` may produce values where every path
+has a compatible result.
+
+Error sets are nominal. `!T` is a result carrying `T` or an error. `try`
+propagates an error from the current fallible function. `catch` handles the
+error inline and may bind it. Error-set and success types must match exactly;
+unrelated sets are not structurally interchangeable.
+
+## 15. Modules
+
+An inline module is `mod name { declarations }`. An external declaration
+`mod name` loads exactly one relative path:
+
+1. `name.runes`, or
+2. `name/mod.runes`.
+
+Both existing is an ambiguity. Neither existing is an error. Nested flat
+modules resolve children beneath a same-named directory. Canonical duplicate
+loads and cycles are rejected deterministically.
+
+Members are private unless `pub`. Qualified access uses dot-separated paths.
+`use path.member` imports the final public member into the current scope.
+
+## 16. Foreign and systems ABI
+
+`extern f` and extern variables declare host symbols. There are no variadic
+function declarations in v0.1. The implemented target attributes are:
+
+- struct: `#[repr(C)]`, `#[packed]`, `#[align(N)]`;
+- global: `#[section("...")]`, `#[align(N)]`, `#[link_name("...")]`;
+- function: `#[section("...")]`, `#[link_name("...")]`,
+  `#[callconv("sysv64")]`, `#[callconv("win64")]`;
+- extern function: link name and calling convention.
+
+An extern function is unsafe to call by default. `#[safe]` is permitted only as
+a marker on an extern function and asserts that the binding author guarantees a
+safe wrapper contract. It changes call-site checking but emits no ABI attribute.
+
+Unknown, duplicate, malformed, or inapplicable attributes are errors. Field
+attributes other than the `volatile` keyword are rejected. `#[interrupt]`
+signatures are validated, but C emission is unsupported and fails explicitly;
+an external assembly entry stub is required.
+
+Inline assembly uses the host compiler's GNU assembly syntax and is
+target-specific.
+
+## 17. Deliberate omissions
+
+v0.1 has no standard library, package manager, variadics, overloads, const
+generics, async, macros, cleanup/defer construct, deterministic destructors,
+public foreign GC-root API, native object backend, or freestanding runtime.
+
+Pipeline syntax is deferred. No incomplete linear pipe form is part of v0.1.

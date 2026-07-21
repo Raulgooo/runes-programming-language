@@ -1,0 +1,40 @@
+extern f alloc(size: usize) = result: *void
+extern f runes_gc_collect()
+
+type Node = { value: i32 }
+type Boxed =
+    | Empty
+    | Box(*Node)
+
+gc f make_node(value: i32) = result: *Node {
+    unsafe {
+        result = alloc(sizeof(Node)) as *Node
+        result.value = value
+    }
+}
+
+gc f loop_binding() = result: i32 {
+    [1]*Node nodes = [make_node(1)]
+    []*Node view = nodes
+    for (view) |node| {
+        node = make_node(42)
+        runes_gc_collect()
+        unsafe { result = result + node.value }
+    }
+}
+
+gc f match_binding() = result: i32 {
+    Boxed value = Boxed.Box(make_node(1))
+    match value {
+        Box(node) -> {
+            node = make_node(43)
+            runes_gc_collect()
+            unsafe { result = node.value }
+        },
+        Empty -> result = -1,
+    }
+}
+
+f main() {
+    print(loop_binding(), " ", match_binding())
+}

@@ -1,0 +1,4 @@
+-- EXPECT FAIL: unwrap requires exactly one argument
+f invalid_unwrap() {
+    unwrap()
+}

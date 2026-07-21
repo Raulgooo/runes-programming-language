@@ -1,0 +1,15 @@
+extern f raw_alloc(size: usize) = result: *void
+extern f raw_free(pointer: *void)
+
+f main() {
+    unsafe {
+        *i32 pointer = raw_alloc(sizeof(i32) * 3) as *i32
+        []i32 values = slice(pointer, 3)
+        values[0] = 10
+        values[1] = 20
+        values[2] = 12
+        []const i32 readonly = const_slice(pointer, 3)
+        print(readonly[0] + readonly[1] + readonly[2], " ", readonly.len)
+        raw_free(pointer)
+    }
+}

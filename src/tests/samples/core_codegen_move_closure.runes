@@ -1,0 +1,31 @@
+dynamic f make_adder(base: i32) = result: f(i32) -> i32 {
+    move f add(value: i32) = answer: i32 {
+        answer = base + value
+    }
+    result = add
+}
+
+dynamic f snapshot(base: i32) = result: i32 {
+    move f read() = value: i32 {
+        value = base
+    }
+    base = 99
+    result = read()
+}
+
+dynamic f nested_snapshot(base: i32) = result: i32 {
+    move f read() = value: i32 {
+        value = base
+    }
+    f invoke() = value: i32 {
+        value = read()
+    }
+    base = 99
+    result = invoke()
+}
+
+f main() {
+    f(i32) -> i32 add_forty = make_adder(40)
+    print(add_forty(2), " ", add_forty(5), " ", snapshot(40), " ",
+          nested_snapshot(40))
+}

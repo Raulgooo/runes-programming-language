@@ -1,0 +1,5 @@
+f main() {
+    i8 negative = -3
+    u8 positive = 3
+    print(negative >> 1, " ", positive << 2)
+}

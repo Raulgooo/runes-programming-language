@@ -13,12 +13,15 @@ use kernel.arch.x86.read_cr2
 -- extern — C / linker symbols
 -- ─────────────────────────────────────────────
 
-extern f memset(ptr: *u8, val: i32, len: usize)
-extern f memcpy(dst: *u8, src: *u8, len: usize)
+#[safe]
 extern f memcmp(a: *u8, b: *u8, len: usize) = r: i32
+#[safe]
 extern f task_queue_push(task: Task)
+#[safe]
 extern f task_queue_pop() = result: Task
+#[safe]
 extern f task_queue_len() = result: i32
+#[safe]
 extern f task_queue_current() = result: Task
 
 extern u64 BSS_START
@@ -142,19 +145,23 @@ method PageTable {
 -- ─────────────────────────────────────────────
 
 f uart_putc(ch: u8) {
-    volatile *u32 uart = 0x10000000 as *u32
-    *uart = ch as u32
+    unsafe {
+        volatile *u32 uart = 0x10000000 as *u32
+        *uart = ch as u32
+    }
 }
 
 f uart_puts(s: str) {
     for (0..s.len) |i| {
-        uart_putc(*(s.ptr + i))
+        unsafe { uart_putc(*(s.ptr + i)) }
     }
 }
 
 f uart_ready() = r: bool {
-    volatile *u8 lsr = 0x10000005 as *u8
-    r = (*lsr & 0x20) != 0
+    unsafe {
+        volatile *u8 lsr = 0x10000005 as *u8
+        r = (*lsr & 0x20) != 0
+    }
 }
 
 -- ─────────────────────────────────────────────
@@ -192,11 +199,13 @@ f timer_handler() {
 
 #[callconv("sysv64")]
 f syscall_entry(nr: u64, a: u64, b: u64, c: u64, d: u64) = r: u64 {
-    match nr {
-        0 -> r = sys_read(a, b as *u8, c),
-        1 -> r = sys_write(a, b as *u8, c),
-        2 -> r = sys_exit(a as i32),
-        _ -> r = 0xFFFFFFFFFFFFFFFF,   -- -1, unknown syscall
+    unsafe {
+        match nr {
+            0 -> r = sys_read(a, b as *u8, c),
+            1 -> r = sys_write(a, b as *u8, c),
+            2 -> r = sys_exit(a as i32),
+            _ -> r = 0xFFFFFFFFFFFFFFFF,   -- -1, unknown syscall
+        }
     }
 }
 
@@ -207,7 +216,7 @@ f sys_read(fd: u64, buf: *u8, len: u64) = r: u64 {
 
 f sys_write(fd: u64, buf: *u8, len: u64) = r: u64 {
     for (0..len) |i| {
-        uart_putc(*(buf + i))
+        unsafe { uart_putc(*(buf + i)) }
     }
     r = len
 }
@@ -225,13 +234,9 @@ f handle_page_fault(addr: u64) = r: !void {
     -- demand-zero for user heap region
     if addr >= 0x0000000000400000 and addr < 0x0000800000000000 {
         *u8 page = raw_alloc(4096)
-        if page == 0 as *u8 {
-            r = error.MapError.OutOfMemory
-            return
-        }
         memset(page, 0, 4096)
         -- map it (simplified)
-        try map_page(addr & 0xFFFFFFFFFFFFF000, page as u64, 0x7)
+        unsafe { try map_page(addr & 0xFFFFFFFFFFFFF000, page as u64, 0x7) }
     } else {
         r = error.MapError.InvalidAddress
     }
@@ -257,19 +262,21 @@ dynamic f setup_paging() = r: !void {
     -- identity-map first 2MB
     u64 addr = 0
     while addr < 0x200000 {
-        match pml4.map(addr, addr, 0x3) {
-            Ok(_)                        -> {},
-            Err(MapError.AlreadyMapped)  -> {},
-            Err(e)                       -> {
-                r = e
-                return
-            },
+        unsafe {
+            match pml4.map(addr, addr, 0x3) {
+                Ok(_)                        -> {},
+                Err(MapError.AlreadyMapped)  -> {},
+                Err(e)                       -> {
+                    r = e
+                    return
+                },
+            }
         }
         addr = addr + 4096
     }
 
     -- map kernel higher-half
-    try pml4.map(0xFFFF800000000000, KERNEL_START, 0x3)
+    unsafe { try pml4.map(0xFFFF800000000000, KERNEL_START, 0x3) }
 
     unsafe { asm { "mov %rax, %cr3" } }
 }
@@ -290,10 +297,12 @@ f scheduler_tick() {
 }
 
 f pic_eoi(irq: u8) {
-    volatile *u8 pic1 = 0x20 as *u8
-    volatile *u8 pic2 = 0xA0 as *u8
-    if irq >= 8 { *pic2 = 0x20 }
-    *pic1 = 0x20
+    unsafe {
+        volatile *u8 pic1 = 0x20 as *u8
+        volatile *u8 pic2 = 0xA0 as *u8
+        if irq >= 8 { *pic2 = 0x20 }
+        *pic1 = 0x20
+    }
 }
 
 -- ─────────────────────────────────────────────
@@ -338,10 +347,10 @@ pub dynamic f kernel_main() {
 
 #[section(".text.boot")]
 #[link_name("_start")]
-pub f entry_point() {
+pub dynamic f entry_point() {
     -- Zero BSS before anything touches it
     u64 bss_len = BSS_END - BSS_START
-    memset(BSS_START as *u8, 0, bss_len)
+    unsafe { memset(BSS_START as *u8, 0, bss_len) }
 
     kernel_main()
 

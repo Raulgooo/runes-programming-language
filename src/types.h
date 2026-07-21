@@ -17,6 +17,7 @@ typedef enum {
   TY_PRIMITIVE, // i8, i32, f64, bool, str, char, usize, void...
   TY_POINTER,   // *T
   TY_ARRAY,     // [N]T
+  TY_SLICE,     // []T or []const T
   TY_TUPLE,     // (T1, T2, ...)
   TY_FUNCTION,  // funct firm
   TY_FALLIBLE,  // !T
@@ -24,6 +25,7 @@ typedef enum {
   TY_VARIANT,   // type Color = | Red | Green | RGB(u8,u8,u8)
   TY_INTERFACE, // interface Drawable { ... }
   TY_ERROR,     // error MathError = { | DivByZero | Overflow }
+  TY_NULL,      // null literal, assignable only to nullable pointers
   TY_UNKNOWN,     // pending inference -- not yet resolved
   TY_INFER_ERROR, // inference failed, error already reported (poison type)
 } SemTypeKind;
@@ -36,12 +38,18 @@ typedef struct {
 
 typedef struct {
   Type *inner;
+  bool nullable;
 } PointerType;
 
 typedef struct {
   Type *inner;
   size_t size; // N en [N]T
 } ArrayType;
+
+typedef struct {
+  Type *inner;
+  bool readonly;
+} SliceType;
 
 typedef struct {
   Type **elems;
@@ -62,6 +70,7 @@ typedef struct {
 
 typedef struct Method {
   const char *name;
+  const char *interface_name; // NULL for an inherent method
   Type *type;
   struct AstNode *node;
   struct Method *next;
@@ -104,6 +113,7 @@ struct Type {
     PrimitiveType primitive;
     PointerType pointer;
     ArrayType array;
+    SliceType slice;
     TupleType tuple;
     FunctionType function;
     FallibleType fallible;
@@ -136,6 +146,7 @@ typedef struct {
   Type *type_char;
   Type *type_usize;
   Type *type_void;
+  Type *type_null;
 
   // Singletons especiales
   Type *type_unknown;
@@ -145,7 +156,9 @@ typedef struct {
 void type_context_init(TypeContext *ctx, Arena *arena);
 Type *type_new_primitive(TypeContext *ctx, const char *name);
 Type *type_new_pointer(TypeContext *ctx, Type *inner);
+Type *type_new_nullable_pointer(TypeContext *ctx, Type *inner);
 Type *type_new_array(TypeContext *ctx, Type *inner, size_t size);
+Type *type_new_slice(TypeContext *ctx, Type *inner, bool readonly);
 Type *type_new_tuple(TypeContext *ctx, Type **elems, int count);
 Type *type_new_function(TypeContext *ctx, Type **params, int param_count,
                         Type *ret, MemoryStrategy strategy, bool is_method);

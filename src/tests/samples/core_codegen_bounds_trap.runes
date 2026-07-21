@@ -1,0 +1,5 @@
+f main() {
+    [2]i32 values = [10, 20]
+    i32 index = 2
+    print(values[index])
+}

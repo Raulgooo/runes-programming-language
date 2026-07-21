@@ -1,0 +1,10 @@
+-- EXPECT FAIL: must have an untyped self receiver
+interface Value {
+    f get(value: i32) = result: i32
+}
+
+type Item = { value: i32 }
+
+method Value for Item {
+    f get(self) = result: i32 { result = self.value }
+}

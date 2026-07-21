@@ -1,51 +1,43 @@
 # Runes v0.1 Language Usage Guide
 
-This guide describes the language implemented by the current bootstrap
-compiler. It covers what can be checked and executed today, including current
-limitations. The draft specification contains design context; when it differs
-from this guide, this guide follows tested compiler behavior.
+This guide describes the behavior implemented by the bootstrap compiler on the
+`v0-1-exp` branch. Runes currently emits hosted C11 for GCC or Clang on Linux
+x86-64. It is experimental, not self-hosted, and does not ship a standard
+library. `src/runtime.c` contains only compiler-required runtime machinery.
 
-## 1. Toolchain and execution model
+## 1. Build and run
 
-Runes currently compiles through C:
-
-1. `runes` lexes, parses, resolves, and type-checks all input files.
-2. `--emit-c` lowers the checked program to readable C11.
-3. `runec build` compiles and links that C with the host compiler.
-
-Build the compiler with `make`. Use the higher-level driver for normal work:
+Requirements: Bash, Make, and GCC or Clang.
 
 ```bash
+make
 ./runec check app.runes
-./runec run app.runes
-./runec emit-c app.runes -o build/app.c
+./runec run app.runes -- argument1 argument2
 ./runec build app.runes -o build/app
+./runec emit-c app.runes -o build/app.c
 ```
 
-| Command | Purpose |
-|---|---|
-| `runec check FILE...` | Analyze without producing a binary. |
-| `runec emit-c FILE...` | Emit C; default is `build/<first-file>.c`. |
-| `runec build FILE...` | Emit C and compile it. |
-| `runec run FILE...` | Build a temporary executable and run it. |
-
-`runec` rebuilds `runes` when compiler sources are newer. Useful forms:
+`runec` rebuilds `./runes` when compiler sources are newer. `build` and `run`
+link generated C with `src/runtime.c`, `src/utils/arena.c`, and `-lm`. Set `CC`
+or `CFLAGS` to change the host compilation:
 
 ```bash
-./runec check --prelude app.runes
-./runec build app.runes -o build/app -- support.c -lpthread
 CC=clang CFLAGS="-O0 -g" ./runec build app.runes -o build/app
-./runec run app.runes -- program-argument
+./runec build app.runes -o build/app -- -lpthread
 ```
 
-After `--`, `build` accepts C compiler/linker arguments while `run` accepts
-program arguments. The low-level frontend also provides:
+Arguments after `--` are linker flags for `build` and program arguments for
+`run`. `--prelude` adds `src/std/prelude.runes`, which declares the compiler
+runtime ABI; it is not a standard library.
+
+The lower-level compiler commands are:
 
 ```bash
-./runes --lex-only app.runes
-./runes --parse-only app.runes
-./runes --dump-ast app.runes
-./runes app.runes --emit-c build/app.c
+./runes app.runes                         # resolve and type-check
+./runes --lex-only app.runes              # print tokens
+./runes --parse-only app.runes            # parse, including external modules
+./runes --dump-ast app.runes              # print the AST
+./runes app.runes --emit-c build/app.c    # generate C
 ```
 
 ## 2. First program
@@ -56,653 +48,546 @@ f add(left: i32, right: i32) = result: i32 {
 }
 
 f main() {
-    i32 answer = add(20, 22)
-    print("answer:", answer)
+    print("answer: ", add(20, 22))
 }
 ```
 
-Run it with `./runec run hello.runes`. `main` is the entry point. The portable
-v0.1 form is `f main()` with no parameters or named return; generated programs
-return zero. A larger executable example is `src/examples/language_tour.runes`.
+A value-returning function declares a named result after `=`. Assigning that
+name determines the returned value. A void function omits the return clause.
 
-## 3. Files, names, comments, and statements
+Only a root-level `f main()` is the process entry point. It must have no type
+parameters, value parameters, or return value. It is an orchestrator realm and
+may call every implemented memory realm. A module member or nested function
+named `main` is an ordinary function.
 
-Source files use `.runes`. Identifiers begin with an ASCII letter or underscore
-and continue with letters, digits, or underscores. Names are case-sensitive.
-Newlines or semicolons separate statements; semicolons are optional.
+`print` writes arguments consecutively and then exactly one newline. It never
+inserts spaces or commas:
 
 ```runes
--- A line comment
+print("hello, ", name)  -- programmer supplies the separator
+```
 
+## 3. Source structure
+
+Runes files use `.runes`. Statements normally end at an unambiguous newline;
+semicolon is also accepted. Newlines inside `()`, `[]`, and expression
+continuations do not terminate the statement.
+
+```runes
+-- one-line comment
 ---
-A multiline comment.
+block comment
 ---
 ```
 
-Top-level declarations include functions, variables, types, variants,
-interfaces, methods, errors, modules, imports, and extern symbols. Executable
-behavior should normally live in functions.
+Identifiers use ASCII letters, digits, and `_`, and cannot start with a digit.
+Text and character literals may contain UTF-8.
 
 ## 4. Types and literals
 
-| Type | Current meaning |
+Primitive types:
+
+| Type | Meaning |
 |---|---|
-| `i8`, `i16`, `i32`, `i64` | Signed integers. |
-| `u8`, `u16`, `u32`, `u64` | Unsigned integers. |
-| `usize` | Pointer-sized unsigned integer; currently 64-bit. |
-| `f32`, `f64` | Floating-point numbers. |
-| `bool` | `true` or `false`. |
-| `char` | Character value; ASCII is the reliable executable subset. |
-| `str` | NUL-terminated string data in the C backend. |
-| `void` | No value, mainly in `!void` and `*void`. |
+| `i8`, `i16`, `i32`, `i64` | Signed integers |
+| `u8`, `u16`, `u32`, `u64` | Unsigned integers |
+| `usize` | Target-sized unsigned integer; `u64` on the current target |
+| `f32`, `f64` | IEEE-style floating point through the C backend |
+| `bool` | `true` or `false` |
+| `char` | Unicode scalar value represented as `u32` |
+| `str` | Immutable length-bearing UTF-8 byte view |
+| `void` | No value, mainly in FFI and fallible-void types |
 
-Integer literals default to `i32`; floating literals default to `f64`.
-Compatible literals adapt to a declared destination:
-
-```runes
-i32 decimal = 42
-u64 address = 0x1000
-f32 ratio = 0.5
-bool enabled = true
-char marker = 'R'
-str name = "Runes"
-```
-
-Decimal, hexadecimal, fractional, and exponent forms are accepted. String and
-character escapes include `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`, and
-`\uXXXX`. Non-ASCII `char` lowering is incomplete.
-
-Composite forms are:
+Composite types:
 
 ```runes
-*i32          -- pointer
-[4]i32        -- fixed array
-(i32, str)    -- tuple
-!i32          -- fallible value
-!void         -- fallible operation without a success value
-math.Point    -- qualified type
+*i32                 -- non-null raw/owned pointer
+?*i32                -- nullable pointer
+[4]i32               -- fixed array
+[]i32                -- mutable non-owning slice
+[]const i32          -- read-only non-owning slice
+(i32, bool)          -- tuple
+f(i32) -> i32        -- closure/function value
+[regional] f(i32) -> i32 -- realm-qualified function type
+!i32                 -- fallible i32
 ```
 
-Array lengths must be positive integer literals. Generics and user-defined
-aliases are not implemented.
+Integer literals support decimal and the implemented base prefixes. Numeric
+conversions are explicit with `as`. Narrowing an integer literal is allowed
+only when its value fits; other implicit narrowing is rejected.
 
-Use `as` for explicit numeric and pointer casts:
+String literals carry a byte pointer and byte length. Embedded NUL is valid.
+Characters must be Unicode scalar values; surrogate code points and values
+above `U+10FFFF` are rejected or trap when constructed dynamically.
 
-```runes
-u64 wide = 42 as u64
-*u8 device = 0x10000000 as *u8
-*void erased = device as *void
-```
-
-Casts are low-level; validity and alignment are not proven.
-
-## 5. Variables, constants, and assignment
+## 5. Variables and constants
 
 ```runes
 i32 count = 0
-label := "ready"          -- inferred local
-const i32 LIMIT = 10
-const answer := 42
-volatile i32 global_counter = 0
+name := "Runes"
+const usize BUFFER_SIZE = 4096
+volatile *u32 uart = 0x10000000 as *u32
 ```
 
-Assignment targets may be variables, fields, indexes, or dereferences:
+`:=` infers the type. `const` prevents assignment. `volatile` is emitted for
+storage and struct fields and is intended for FFI or MMIO. Reading or writing
+through a raw pointer requires `unsafe`.
+
+Fixed arrays copy by value. Structs, variants, and tuples also have value
+semantics; pointer and slice values copy their address/view, not their backing
+storage.
+
+## 6. Operators and checks
+
+Implemented operators include:
+
+- arithmetic: `+ - * / %`;
+- comparison: `== != < <= > >=`;
+- boolean: `and or !`;
+- bitwise: `& | ^ << >>`;
+- assignment: `=`;
+- range: `start..end` and `start..=end`;
+- cast: `value as Type`.
+
+Ordinary integer add, subtract, multiply, divide, remainder, negate, and left
+shift are checked. Overflow, division by zero, invalid shift counts, and
+`MIN / -1` trap with a source location. Safe array, slice, and string indexing
+also traps on an invalid bound. `unsafe` does not disable these checks.
+
+`str + str` concatenates in the active realm. String equality and ordering are
+byte-wise and length-aware, including embedded NUL bytes.
+
+Explicit wrapping/saturating arithmetic and an unchecked-indexing operation are
+not yet implemented.
+
+## 7. Functions and memory realms
 
 ```runes
-count = count + 1
-point.x = 10
-values[0] = 7
-*pointer = 9
+f local_work() {}
+stack f strict_leaf() {}
+dynamic f raw_heap_work() {}
+regional f arena_work() {}
+gc f managed_work() {}
+flex f inherited_work() {}
 ```
 
-Constants cannot be reassigned. Compound assignments and increment operators
-do not exist; write `value = value + 1`.
+| Form | Allocation selected by `alloc` | Lifetime |
+|---|---|---|
+| `f` / `stack f` | no owning allocator; local values are stack values | call |
+| `dynamic f` | raw heap | explicit `raw_free` |
+| `regional f` | a new arena or attached child arena | root regional exit |
+| `gc f` | process GC heap | reachability |
+| `flex f` | active caller arena/GC, otherwise raw behavior | inherited |
 
-## 6. Operators
+`f` and `stack f` use the same v0.1 realm. They may call stack/flex functions.
+`regional f` may call stack/flex/regional functions. `gc f` may call
+stack/flex/gc functions. `dynamic f` and root `main` may call every realm.
+Illegal calls are rejected statically.
 
-Precedence, highest to lowest:
+Every root regional call creates an arena. A regional call made inside it
+creates a child arena which remains attached after the child returns. The full
+tree is destroyed when the root regional call exits, including early and
+fallible exits. This permits a child to return arena data to its regional
+parent but not outside the regional tree.
 
-| Group | Operators |
-|---|---|
-| Postfix | calls, indexing, `.field`, `..`, `..=` |
-| Cast | `as Type` |
-| Unary | `!`, `-`, `~`, `&`, `*` |
-| Multiplicative | `*`, `/`, `%` |
-| Additive | `+`, `-` |
-| Bitwise | `&`, `^`, `|`, `<<`, `>>` |
-| Comparison | `<`, `<=`, `>`, `>=` |
-| Equality | `==`, `!=` |
-| Logical | `and`, then `or` |
-| Errors | prefix `try`, then infix `catch` |
-| Assignment | `=` |
+`raw_alloc` and `raw_alloc_aligned` always allocate raw memory and
+`raw_free` releases it. Arena destruction only releases memory; files, sockets,
+locks, and other resources still need explicit cleanup.
 
-Arithmetic is numeric; `%`, shifts, and bitwise operations require integers;
-logical operations require booleans. Mixed widths normally need casts. Pointer
-addition/subtraction accepts an integer offset. String `+` concatenates, while
-`==` and `!=` compare contents.
+## 8. Allocation and promotion
 
-## 7. Functions and returns
-
-Parameters are typed. Void functions omit a return clause:
+The allocation operations require ABI declarations, normally through
+`--prelude`:
 
 ```runes
-f log(message: str) {
-    print(message)
-}
+extern f alloc(size: usize) = result: *void
+extern f raw_alloc(size: usize) = result: *void
+extern f raw_alloc_aligned(size: usize, align: usize) = result: *void
+extern f raw_free(pointer: *void)
 ```
 
-Value-returning functions declare a writable named result:
-
-```runes
-f square(value: i32) = result: i32 {
-    result = value * value
-}
-```
-
-Falling off the end returns that variable. Assign it before a bare early
-`return`:
-
-```runes
-f nonnegative(value: i32) = result: i32 {
-    if value < 0 {
-        result = 0
-        return
-    }
-    result = value
-}
-```
-
-A same-line shorthand is accepted:
-
-```runes
-f double(value: i32) = result: i32 result = value * 2
-```
-
-Functions are visible before declaration. Local functions are supported but
-cannot capture surrounding locals; pass state explicitly.
-
-### Memory realms
-
-```runes
-f ordinary() {}          -- stack by default
-stack f explicit() {}
-regional f arena_job() {}
-dynamic f heap_job() {}
-gc f managed_job() {}
-flex f inherited_job() {}
-```
-
-| Caller | Allowed callees/nested functions |
-|---|---|
-| `main` | All realms |
-| `stack` / plain `f` | `stack` only |
-| `regional` | `stack` only |
-| `dynamic` | All realms |
-| `gc` | `stack` and `gc` |
-| `flex` | Accepted as inheriting its caller |
-
-These rules are checked, but the C backend does not yet create arenas or a GC.
-Ordinary locals retain C storage behavior.
-
-## 8. Built-in operations
-
-### `print`
-
-`print(value, ...)` accepts one or more primitives, pointers, or errors. It
-separates arguments with spaces and adds a newline:
-
-```runes
-print("count", 42, true, 'x')
-```
-
-Pointers print as addresses and errors as numeric codes. Aggregate types cannot
-be printed directly. `print` works only as a statement.
-
-### `sizeof` and `alignof`
-
-```runes
-usize bytes = sizeof([4]i32)
-usize alignment = alignof(i64)
-```
-
-Both return `usize` and reflect the host C ABI.
-
-### `promote`
+Cast the returned pointer to the intended type before dereferencing:
 
 ```runes
 regional f make_value() = result: *i32 {
-    i32 local = 42
-    result = promote(&local) as dynamic
+    unsafe {
+        result = alloc(sizeof(i32)) as *i32
+        *result = 42
+    }
 }
 ```
 
-`promote(pointer) as dynamic|gc` copies the pointed-to object and returns the
-same pointer type. It requires a pointer, rejects promotion from pure `stack`,
-and accepts only `dynamic` or `gc`. Both targets currently use `malloc`; there
-is no automatic destruction or garbage collection.
+Arena-backed references cannot escape their regional tree implicitly.
+`promote(value) as dynamic` or `promote(value) as gc` deep-clones an
+arena-owned graph into the selected longer-lived realm. Descriptors emitted by
+the compiler traverse structs, variants, arrays, slices, strings, and closure
+environments. The clone map preserves aliases and cycles. Borrowed, external,
+raw, and GC edges are not recursively claimed as arena ownership.
 
-## 9. Prelude contracts
+Promotion only applies to arena-derived data. Inline values already leave by
+value copy, and raw/borrowed/GC values do not need or permit arena promotion.
 
-`--prelude` prepends these declarations:
+## 9. Garbage collection
 
-```runes
-extern f raw_alloc(size: usize) = result: *void
-extern f raw_free(ptr: *void)
-extern f alloc(size: usize) = result: *void
-extern f memset(ptr: *void, value: i32, size: usize) = result: *void
-extern f memcpy(dst: *void, src: *void, len: usize) = result: *void
-extern f sqrt(value: f32) = result: f32
-```
+v0.1 implements one precise, non-moving mark/sweep heap per process, owned by
+one OS thread. Any number of `gc f` calls on that thread share the heap.
 
-They are contracts, not a complete runtime. Host C provides memory functions
-and `sqrt` maps to `sqrtf`; callers of `raw_alloc`, `raw_free`, or `alloc` must
-link implementations. `*void` is the untyped FFI pointer:
+Collection is synchronous and cooperative. It occurs only on a GC allocation
+slow path or an explicit `runes_gc_collect()` call. Code that cannot reach such
+a safepoint has no GC poll or barrier. The compiler emits type descriptors and
+shadow-stack roots for live locals, parameters, globals, closure environments,
+interfaces, aggregate contents, and protected return/temporary values.
 
-```runes
-*i32 value = raw_alloc(sizeof(i32)) as *i32
-*value = 42
-raw_free(value as *void)
-```
+There are no read or write barriers, moving/compaction, finalizers, weak
+references, generations, concurrent marking, or public `gc_free`. GC
+references cannot cross OS threads. Current realm rules also prevent regional
+code from calling GC-capable code, so regional arenas are not GC root
+containers in v0.1.
 
-## 10. Arrays and pointers
+Runtime diagnostic functions declared by the bootstrap prelude are
+`runes_gc_collect`, `runes_gc_debug_object_count`, and
+`runes_gc_debug_collection_count`.
+
+## 10. Arrays and slices
 
 ```runes
 [4]i32 values = [10, 20, 30, 40]
-[512]u64 zeroed = []
-i32 first = values[0]
-values[1] = 25
-usize length = values.len
+[4]i32 zeros = []
+[]i32 mutable = values[..]
+[]const i32 tail = values[1..]
+[]const i32 first_two = values[..2]
+[]const i32 inclusive = values[1..=2]
 ```
 
-Initializers must match element type and length. Contextual `[]` zero-fills.
-Literal out-of-range indexes are diagnosed; dynamic indexes have no runtime
-bounds check. Arrays copy on assignment and return. `&array` decays to `*T`.
+An explicit fixed-array initializer must contain exactly its declared number
+of same-typed elements. `[]` zero-initializes a declared array. Array indexes
+known to be invalid are rejected; dynamic indexes are checked at runtime.
+
+Slices are `{ pointer, length }` views with no allocation or ownership. Arrays
+coerce to slices, mutable slices coerce to read-only slices, and the reverse is
+rejected. Sub-slicing preserves provenance and checks its range. A slice cannot
+escape the lifetime of stack, arena, raw, GC, or external storage it views.
+
+For external buffers, `slice(pointer, length)` and
+`const_slice(pointer, length)` construct typed views inside `unsafe`. Their
+result type is inferred from context.
+
+Arrays and slices support `.len`, indexing, sub-slicing, and iteration:
 
 ```runes
-*i32 first_ptr = &values
-first_ptr[1] = 7
-*(first_ptr + 2) = 9
-```
-
-Pointers are invariant except for explicit `*void` use. Address-of requires an
-assignable expression. Null is written `0 as *Type`. Lifetime, null, alignment,
-aliasing, and dynamic bounds are the programmer's responsibility. Dynamic
-arrays and slices are not built in; model them as pointer/length structs.
-
-## 11. Strings, tuples, and destructuring
-
-Strings expose byte-level properties:
-
-```runes
-str text = "ru" + "nes"
-usize length = text.len
-*u8 bytes = text.ptr
-bool equal = text == "runes"
-```
-
-Concatenation allocates with `malloc` and is not automatically reclaimed.
-`len` counts bytes.
-
-Tuple syntax and typed destructuring:
-
-```runes
-(i32, str) pair = (42, "answer")
-i32 number, str label = pair
-
-f bounds() = result: (i32, i32) {
-    result = (0, 10)
-}
-```
-
-Destructuring arity and types must match. There is no numeric tuple-field
-syntax; destructure instead.
-
-## 12. Structs and methods
-
-```runes
-type Point = {
-    x: i32,
-    y: i32,
-}
-
-type Options = retries: i32 = 3, verbose: bool = false
-```
-
-Constructors require named arguments. Required fields cannot be omitted;
-defaulted fields can:
-
-```runes
-Point point = Point(x: 20, y: 22)
-Options options = Options(verbose: true)
-```
-
-Pointers auto-dereference for field access. Recursive structs must use a
-pointer, not contain themselves by value.
-
-```runes
-method Point {
-    f move(self: *Point, amount: i32) {
-        self.x = self.x + amount
+f sum(values: []const i32) = result: i32 {
+    result = 0
+    for (values) |value| {
+        result = result + value
     }
+}
+```
 
-    f sum(self) = result: i32 {
+## 11. Pointers and nullability
+
+`*T` is non-null. `?*T` can contain `null`. Use `unwrap(pointer)` to obtain a
+non-null pointer; it traps if null. Nullable pointers cannot be dereferenced or
+used in pointer arithmetic before unwrapping.
+
+Address-of requires assignable storage. Pointer arithmetic is limited to
+pointer-plus-integer, integer-plus-pointer, and pointer-minus-integer, and is
+allowed only in `unsafe`. Dereference and integer-to-pointer casts are also
+unsafe. `*void` is the untyped FFI/allocation pointer and explicitly converts
+to or from typed pointers.
+
+## 12. Structs, methods, and interfaces
+
+```runes
+type Vec2 = { x: f32, y: f32 }
+
+method Vec2 {
+    f sum(self) = result: f32 {
         result = self.x + self.y
     }
-
-    f zero() = result: Point {
-        result = Point(x: 0, y: 0)
-    }
 }
-```
 
-`self` may be an inferred value receiver or explicitly typed. Calls perform the
-tested implicit adjustment between `T` and `*T`. A method without `self` is an
-associated function, called as `Point.zero()`.
-
-## 13. Interfaces
-
-```runes
 interface Value {
-    f read_value(self) = result: i32
+    f value(self) = result: i32
 }
 
-type Box = { value: i32 }
-
-method Value for Box {
-    f read_value(self) = result: i32 { result = self.value }
-}
-
-f read(value: Value) = result: i32 {
-    result = value.read_value()
+method Value for Counter {
+    f value(self) = result: i32 { result = self.current }
 }
 ```
 
-Concrete implementors coerce to interface values on assignment or calls. The C
-backend generates a fat pointer and method adapters. Keep implementation
-signatures exactly aligned; conformance diagnostics are still being hardened.
-Avoid giving an inherent method and an interface implementation method the same
-name on one concrete type; the current C name mangling collides in that case.
+Construct structs with named fields. Field names are checked, defaults are
+supported where declared, and duplicate or recursive by-value fields are
+rejected. Interface implementations must exactly match receiver,
+parameter, result, fallibility, and realm signatures. Converting a concrete
+value to an interface creates a data/vtable pair and participates in lifetime
+checking.
 
-## 14. Variants and match
+Methods can be generic. Overloads are not supported; generated names include
+module and owner identity to prevent C symbol collisions.
 
-```runes
-type Pixel =
-    | Clear
-    | Gray(u8)
-    | RGB(u8, u8, u8)
-
-Pixel clear = Pixel.Clear
-Pixel gray = Pixel.Gray(7)
-Pixel color = Pixel.RGB(10, 20, 30)
-```
-
-Payload arity and types are checked. `match` supports literals, wildcard `_`,
-bindings, variant payloads, struct patterns, error members, and guards:
+## 13. Variants and pattern matching
 
 ```runes
-f score(pixel: Pixel) = result: i32 {
-    result = match pixel {
-        Clear -> 0,
-        Gray(value) -> value as i32,
-        RGB(red, green, blue) if red > 0 ->
-            (red as i32) + (green as i32) + (blue as i32),
-        RGB(_, _, _) -> -1,
+type Message =
+    | Quit
+    | Move(i32, i32)
+    | Text(str)
+
+f describe(message: Message) {
+    match message {
+        Quit -> print("quit"),
+        Move(x, y) if x == y -> print("diagonal ", x),
+        Move(x, y) -> print(x, ",", y),
+        Text(value) -> print(value),
     }
 }
 ```
 
-Arm bodies may be expressions or blocks; a value block yields its final
-expression. Variant and boolean matches are checked for exhaustiveness. Guards
-must be boolean and do not make an arm exhaustive. Struct patterns can use
-`Point(x: 0, y)` or `Point(x, y)`.
+Variant constructors enforce exact payload count and types. `match` supports
+variant, literal, binding, wildcard, and guarded arms and can be used as a
+statement or value where all paths produce a compatible value.
 
-## 15. Control flow
+## 14. Generics
 
-Conditions must be boolean. `if` is both a statement and a value:
+Functions, structs, variants, and methods support compile-time
+monomorphization:
 
 ```runes
-if ready { work() } else { wait() }
-str sign = if value < 0 { "negative" } else { "nonnegative" }
+interface Value { f value(self) = result: i32 }
+type Pair<T, U> = { first: T, second: U }
+type Maybe<T> = | None | Some(T)
+
+f identity<T>(value: T) = result: T { result = value }
+f read<T: Value>(value: T) = result: i32 { result = value.value() }
 ```
 
-Value-producing `if` needs `else`, compatible branch values, and uses each
-block's final expression.
+Type arguments may be explicit, and function arguments can infer them where
+the mapping is unambiguous. Constraints are interfaces and are checked exactly.
+Every concrete instantiation receives a deterministic internal symbol.
+
+v0.1 does not implement const generics, higher-kinded types, specialization,
+variance, or runtime generic erasure.
+
+## 15. Nested functions and closures
+
+Nested functions capture referenced outer bindings by reference:
 
 ```runes
-while count < 10 { count = count + 1 }
-loop {
-    if done { break }
-    work()
+f apply(callback: f(i32) -> i32, value: i32) = result: i32 {
+    result = callback(value)
+}
+
+f example(base: i32) = result: i32 {
+    f add(value: i32) = answer: i32 { answer = base + value }
+    result = apply(add, 2)
 }
 ```
 
-`break` and `continue` carry no value and are valid only in loops.
-
-Ranges and fixed arrays are iterable:
+Borrowing closures may mutate mutable captures but cannot outlive them.
+`move f` copies captures into an allocated closure environment and is allowed
+only for nested functions:
 
 ```runes
-for (0..10) |index| { print(index) }       -- excludes 10
-for (0..=10) |index| { print(index) }      -- includes 10
+dynamic f make_adder(base: i32) = result: f(i32) -> i32 {
+    move f add(value: i32) = answer: i32 { answer = base + value }
+    result = add
+}
+```
+
+Function values can be passed, returned, stored in arrays, structs, tuples, and
+variant payloads, and invoked through fields or indexes. Environment lifetime
+follows its realm. An arena closure requires deep promotion to escape its
+regional tree; a GC closure is traced precisely.
+
+## 16. Control flow
+
+```runes
+if ready { start() } else { wait() }
+while count > 0 { count = count - 1 }
+loop { if done { break } }
+
+for (0..10) |index| { print(index) }
 for (values) |value| { print(value) }
-for (values) |value, index| { print(index, value) }
-for (values) |*value| { *value = *value + 1 }
-for (values) |*value, index| { *value = index as i32 }
+for (values) |value, index| { print(index, ":", value) }
 ```
 
-Range bounds are compatible integers. Array value capture copies; pointer
-capture mutates in place. Capture indexes are `usize`.
+`break` and `continue` are loop-only. `if` and `match` can initialize a value
+when their branches produce compatible results. `return` performs deterministic
+arena and GC frame cleanup before leaving the function.
 
-## 16. Errors, `try`, and `catch`
+## 17. Errors, `try`, and `catch`
 
 ```runes
-error MathError = {
-    | DivisionByZero
-    | Overflow
-}
+error ParseError = { | Empty | Invalid }
 
-f divide(a: i32, b: i32) = result: !i32 {
-    if b == 0 {
-        result = error.MathError.DivisionByZero
+f parse(value: str) = result: !i32 {
+    if value.len == 0 {
+        result = error.ParseError.Empty
     } else {
-        result = a / b
+        result = 42
     }
 }
-```
 
-Inside a fallible function, `try` unwraps success or propagates failure:
+f load(value: str) = result: !i32 {
+    i32 parsed = try parse(value)
+    result = parsed
+}
 
-```runes
-f doubled(a: i32, b: i32) = result: !i32 {
-    i32 value = try divide(a, b)
-    result = value * 2
+f main() {
+    i32 parsed = parse("") catch |error| {
+        print("parse failed")
+        0
+    }
+    print(parsed)
 }
 ```
 
-`try` in a non-fallible function is rejected. Handle errors with a default or
-a bound handler:
+Error sets are nominal. `!T` carries either `T` or an error. `try` propagates
+the error from a fallible function; `catch` handles it and may bind the error.
+Fallible `void` is written `!void`.
 
-```runes
-i32 fallback = divide(10, 0) catch -1
-i32 handled = divide(10, 0) catch |err| {
-    print("failed", err)
-    return
-}
-```
+## 18. Modules and visibility
 
-`!void` models failure without a success payload. Fallible values match as
-`Ok(value)` and `Err(error)`. Runtime error sets currently share one numeric
-code space; strict error-set identity is unfinished.
-
-## 17. Modules and multiple files
+Inline modules:
 
 ```runes
 mod math {
-    pub type Box = { value: i32 }
-    pub f double(value: i32) = result: i32 {
-        result = value * 2
-    }
+    pub f double(value: i32) = result: i32 { result = value * 2 }
 }
 
 use math.double
-math.Box box = math.Box(value: double(21))
 ```
 
-Qualified and nested module paths work. `use module.member` imports one member.
-`pub` records public intent, but visibility enforcement is incomplete.
+External modules use `mod name` and are resolved relative to the declaring
+file as either `name.runes` or `name/mod.runes`. If both exist the compiler
+reports an ambiguity; if neither exists it reports a missing module. Nested
+flat modules resolve children under a directory named after the flat module.
+Cycles or loading the same canonical file twice are rejected.
 
-There is no filesystem module discovery. List every file; they are analyzed as
-one program:
+Only `pub` members cross module boundaries. Qualified access uses dots, such as
+`math.double(21)`. Multiple root files may still be supplied explicitly and
+are analyzed as one program.
 
-```bash
-./runec build types.runes math.runes app.runes -o build/app
-```
-
-## 18. FFI and linking
+## 19. FFI, attributes, and unsafe code
 
 ```runes
-extern f abs(value: i32) = result: i32
-extern f write_bytes(data: *u8, len: usize)
-extern u64 KERNEL_START
+extern f read(fd: i32, buffer: *u8, count: usize) = result: i64
+extern u64 external_counter
+
+#[safe]
+#[link_name("abs")]
+extern f c_abs(value: i32) = result: i32
 ```
 
-External symbols must come from host libraries, object files, or C sources:
+Extern signatures use the platform C ABI unless `#[callconv("sysv64")]` or
+`#[callconv("win64")]` is supplied. Foreign strings use the Runes `RunesStr`
+ABI unless you explicitly pass a C pointer using the runtime conversion
+functions. Variadic C functions are not supported; use a fixed-signature C
+wrapper.
 
-```bash
-./runec build app.runes -o build/app -- support.c -lcurl
-```
+Extern calls require `unsafe` by default. `#[safe]` on an extern function is an
+explicit assertion by the binding author that its complete contract is safe to
+call with type-checked arguments; it does not validate the foreign
+implementation.
 
-FFI follows the generated host C ABI. Fixed-width primitives and explicit
-pointer casts are safest. A web server today should declare socket operations
-with `extern`, use a small C shim for awkward platform APIs, and link it after
-`--`; native networking modules are not included yet.
+Implemented Linux x86-64 attributes:
 
-## 19. Systems syntax
+- `#[repr(C)]`, `#[packed]`, and `#[align(N)]` on structs;
+- `#[section("name")]` and `#[align(N)]` on global storage;
+- `#[section("name")]`, `#[link_name("symbol")]`, and `#[callconv(...)]` on
+  functions where applicable;
+- `#[link_name(...)]` and `#[callconv(...)]` on extern functions.
 
-`unsafe` scopes low-level code but is not yet a strict capability gate; pointer
-operations and assembly are currently accepted outside it too.
+Unknown, duplicate, malformed, or inapplicable attributes are rejected.
+`#[interrupt]` signatures are recognized but the v0.1 C backend deliberately
+rejects emission; use an external assembly entry stub.
+
+Unsafe operations are lexically isolated:
 
 ```runes
 unsafe {
-    *u64 pointer = address as *u64
-    *pointer = value
+    *device = 0x41
+    *i32 next = pointer + 1
+    asm { "nop" }
 }
 ```
 
-Volatile declarations and expressions parse and check:
+Dereference, pointer arithmetic, volatile/MMIO access, integer-to-pointer
+casts, arbitrary foreign calls, raw slice construction, and inline assembly
+require `unsafe`. Compiler-lowered intrinsics and reserved `runes_` runtime
+functions are checked contracts rather than arbitrary FFI. Inline assembly is
+GNU-style backend assembly and therefore target-specific.
+
+## 20. Reading user input
+
+Input is currently ordinary FFI, not a compiler builtin. On Linux, declare
+`read`, read bytes, remove the terminal newline yourself, and construct or view
+text according to your chosen library policy:
 
 ```runes
-volatile *u32 uart = 0x10000000 as *u32
-*uart = 65
-u32 status = volatile *uart
+extern f read(fd: i32, buffer: *u8, count: usize) = result: i64
+
+f main() {
+    [64]u8 input = []
+    print("What's your name?: ")
+    i64 count = 0
+    unsafe { count = read(0, &input, 63) }
+    if count > 0 {
+        usize length = count as usize
+        if input[length - 1] == '\n' { length = length - 1 }
+        input[length] = 0
+        print("hello, ", (&input) as str)
+    }
+}
 ```
 
-The C backend does not yet consistently preserve `volatile`; verify generated
-C before using it for MMIO.
+The raw terminal line includes `\n`, and `print` adds its own final newline.
+C-style variadic `scanf` is intentionally not built in. A user standard
+library can provide `read_line` and typed parsers over byte slices.
 
-Inline assembly accepts a string and one optional output:
+## 21. Runtime ABI versus standard library
 
-```runes
-asm { "cli" }
-u64 value = 0
-asm { "mov $42, %rax" } -> value
-```
+The compiler-required runtime provides traps, raw allocation helpers, arenas,
+deep promotion, the scoped collector, string primitives, and generated-code
+support. It does not provide collections, filesystem/path APIs, sockets, HTTP,
+format strings, scanners, threading, tensor operations, or ML code. Those are
+standard-library or application responsibilities.
 
-It lowers to GNU-style host assembly. Inputs, clobber lists, and general
-constraints are not exposed.
+See [v0.1-runtime-requirements.md](v0.1-runtime-requirements.md) for the exact
+runtime boundary and exported C ABI.
 
-Attributes use `#[name]` or `#[name(argument)]`:
+## 22. Current limits
 
-```runes
-#[packed]
-#[align(16)]
-#[repr(C)]
-type Frame = { ip: u64, sp: u64 }
+- hosted C11 backend only; no native object backend or freestanding profile;
+- one owning OS thread for all GC references and allocations;
+- no variadic functions, function overloading, async, cleanup/defer construct,
+  or deterministic object destructors;
+- no const generics, higher-kinded generics, or generic specialization;
+- no public registered-root API in the language surface;
+- no automatic C-string conversion or lifetime extension across FFI;
+- `#[interrupt]` requires an external assembly stub;
+- pipeline syntax is deferred and is not reserved as an incomplete feature.
 
-#[section(".text.boot")]
-#[link_name("_start")]
-f entry() {}
-
-#[callconv("sysv64")]
-f syscall(number: u64) = result: u64 { result = number }
-
-#[interrupt]
-f timer_handler() {}
-```
-
-The checker validates string arguments for `section`/`link_name`, power-of-two
-literal alignment, and parameterless/returnless interrupt functions. It parses
-`packed`, `repr`, and `callconv`. The current C emitter does not yet lower these
-attributes, symbol names, layouts, or calling conventions.
-
-## 20. Executable surface and limits
-
-The tested C backend executes primitives, globals, inference, named returns,
-forward calls, non-capturing local functions, operators, casts, all control
-flow above, arrays, pointers, strings, tuples, structs, methods, variants,
-matches, errors, modules, interfaces, externs, `sizeof`, `alignof`, limited
-assembly, `promote`, and `print`. Unsupported AST nodes fail emission rather
-than being silently ignored.
-
-Current boundaries:
-
-- no filesystem module loader, packages, or dependency format;
-- no native file/socket/process/thread/event-loop modules;
-- no generics, capturing closures, slices, maps, dynamic arrays, or async;
-- no real arena/GC runtime or automatic cleanup;
-- no dynamic array bounds checks;
-- incomplete `unsafe`, `volatile`, and systems-attribute enforcement/lowering;
-- limited assembly and permissive error/interface diagnostics;
-- incomplete `pub` visibility enforcement;
-- host-dependent C ABI and target sizes.
-
-See `CODEBASE_AUDIT_AND_FIX_PLAN.md` for readiness and next priorities.
-
-## 21. Editors, testing, and further examples
-
-Install VS Code highlighting with:
+## 23. Verification and editor support
 
 ```bash
-code --install-extension runes-lang/runes-lang-0.0.1.vsix
+make test                 # unit, core, tooling, scale, differential
+make test-samples         # positive and expected-failure language inventory
+make test-codegen         # executable generated C under -Werror
+make test-sanitize        # compiler and runtime ASan/UBSan coverage
+make fuzz-smoke           # lexer through codegen fuzz smoke
+make test-zed             # Zed extension checks
+make install-zed          # install local Zed highlighting
 ```
 
-Install Zed highlighting with `make install-zed`, then restart Zed if needed.
-Validate it with `make test-zed`.
+Restart Zed after installation and open a `.runes` file. The local extension is
+under `editors/zed/`; VS Code support is under `runes-lang/`.
 
-Project verification commands:
-
-```bash
-make test
-make test-samples
-make test-codegen
-make test-sanitize
-```
-
-Useful executable examples:
-
-| Topic | File |
-|---|---|
-| Language tour | `src/examples/language_tour.runes` |
-| Arrays/pointers | `src/tests/samples/core_arrays_pointers.runes` |
-| Control flow | `src/tests/samples/core_codegen_control.runes` |
-| Structs/methods | `src/tests/samples/core_codegen_methods.runes` |
-| Variants/match | `src/tests/samples/core_codegen_variants.runes` |
-| Errors | `src/tests/samples/core_codegen_errors.runes` |
-| Interfaces | `src/tests/samples/core_codegen_interfaces.runes` |
-| Modules | `src/tests/samples/core_codegen_modules.runes` |
-| Systems | `src/tests/samples/core_codegen_systems.runes` |
-
-## 22. Keywords
+## 24. Keywords
 
 ```text
-f dynamic regional gc flex stack
-method interface type error mod use pub const
-match if else for while loop break continue return
-try catch unsafe asm extern volatile promote sizeof alignof
-self as true false and or
-i8 i16 i32 i64 u8 u16 u32 u64 f32 f64
-bool str char usize void
+and as asm bool break catch char const continue dynamic else error extern
+f f32 f64 false flex for gc i8 i16 i32 i64 if interface loop match method
+mod move null or promote pub regional return self sizeof alignof stack str
+true try type u8 u16 u32 u64 unsafe use usize void volatile while
 ```
-
-There is no `class`, `new`, `null`, `switch`, `throw`, `import`, or `fn`.
-Use structs/methods, constructors, zero pointer casts, `match`, fallible values,
-`use`, and `f` respectively.

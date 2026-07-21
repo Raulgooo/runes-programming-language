@@ -1,0 +1,10 @@
+type Pair<T, U> = { first: T, second: U }
+type Maybe<T> = | None | Some(T)
+f identity<T>(value: T) = result: T { result = value }
+f main() {
+    Pair<i32, Maybe<i32>> pair = Pair<i32, Maybe<i32>>(
+        first: identity<i32>(42),
+        second: Maybe.Some<i32>(7)
+    )
+    print(pair.first)
+}

@@ -27,7 +27,7 @@ for f in src/tests/samples/*.runes; do
 
   if [ -n "$expected_pattern" ]; then
     # Expected-failure test
-    if [ $status -ne 0 ] && echo "$output" | grep -q "$expected_pattern"; then
+    if [ $status -ne 0 ] && echo "$output" | grep -Fq "$expected_pattern"; then
       echo "PASS (expected failure) $name"
       XPASS=$((XPASS + 1))
     elif [ $status -eq 0 ]; then

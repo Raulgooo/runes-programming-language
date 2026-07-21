@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Pointer dereference requires an unsafe block
+f read(pointer: *i32) = result: i32 {
+    result = *pointer
+}

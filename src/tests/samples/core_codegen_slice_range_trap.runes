@@ -1,0 +1,6 @@
+f main() {
+    [3]i32 values = [1, 2, 3]
+    []i32 slice = values
+    []i32 invalid = slice[2..1]
+    print(invalid.len)
+}

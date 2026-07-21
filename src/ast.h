@@ -19,6 +19,18 @@ typedef enum {
   REALM_MAIN,  // f main() — unrestricted orchestrator
 } MemoryRealm;
 
+typedef enum {
+  MEM_PROV_NONE = 0,
+  MEM_PROV_STACK = 1u << 0,
+  MEM_PROV_ARENA = 1u << 1,
+  MEM_PROV_RAW = 1u << 2,
+  MEM_PROV_GC = 1u << 3,
+  MEM_PROV_BORROWED = 1u << 4,
+  MEM_PROV_EXTERNAL = 1u << 5,
+  MEM_PROV_INHERITED = 1u << 6,
+  MEM_PROV_UNKNOWN = 1u << 7,
+} MemoryProvenance;
+
 // Nesting legality matrix (enforced by the type checker, not the parser).
 //
 //  outer\inner  STACK  ARENA  HEAP  GC   FLEX
@@ -50,8 +62,10 @@ typedef enum {
   TYPE_QUALIFIED, // module.Type — qualified type name
   TYPE_PTR,       // *T
   TYPE_ARRAY,     // [N]T
+  TYPE_SLICE,     // []T or []const T
   TYPE_FALLIBLE,  // !T — can fail; inner == NULL means !void
   TYPE_TUPLE,     // (T, U, ...) — multiple returns
+  TYPE_FUNCTION,  // [realm] f(T, U) -> R
 } TypeKind;
 
 // for-loop capture forms
@@ -109,6 +123,7 @@ typedef enum {
   AST_STRING_LITERAL,
   AST_BOOL_LITERAL,
   AST_CHAR_LITERAL,
+  AST_NULL_LITERAL,
   AST_ARRAY_LITERAL,
   AST_TUPLE_EXPR,
 
@@ -168,6 +183,8 @@ typedef struct AstNode {
       *next; // intrusive list — next sibling in whatever list owns this node
   struct Type *resolved_type; // The type inferred by the type checker
   struct AstNode *resolved_decl; // Declaration selected during resolution
+  uint32_t memory_provenance;
+  struct AstNode *enclosing_function;
 
   union {
 
@@ -185,12 +202,21 @@ typedef struct AstNode {
       MemoryRealm realm;
       bool is_pub;
       bool is_main; // f main() — exempt from nesting rules
+      bool is_move; // move f captures values into its environment
       const char *name;
+      struct AstNode *generic_params; // AST_PARAM list; type is constraint
       struct AstNode *params;   // linked list of AST_PARAM; NULL if ()
       const char *ret_name;     // NULL if void
       struct AstNode *ret_type; // NULL if void (AST_TYPE_EXPR)
       struct AstNode *body;     // AST_BLOCK; NULL for interface signatures
       Attr *attrs;              // #[section], #[interrupt], #[callconv], etc.
+      struct AstNode *lexical_parent;
+      struct AstNode **captures; // declarations borrowed by reference
+      const char **capture_names;
+      struct Type **capture_types;
+      int capture_count;
+      struct AstNode **closure_calls; // nested callees used by this function
+      int closure_call_count;
     } func_decl;
 
     // i32 x = 5   /   const i32 MAX = 512   /   volatile *u32 uart = ...
@@ -207,6 +233,7 @@ typedef struct AstNode {
     struct {
       bool is_pub;
       const char *name;
+      struct AstNode *generic_params; // AST_PARAM list; type is constraint
       struct AstNode *fields; // linked list of AST_FIELD_DECL
       Attr *attrs;            // #[packed], #[align], #[repr]
     } type_decl;
@@ -215,6 +242,7 @@ typedef struct AstNode {
     struct {
       bool is_pub;
       const char *name;
+      struct AstNode *generic_params; // AST_PARAM list; type is constraint
       struct AstNode *arms; // linked list of AST_VARIANT_ARM
     } variant_decl;
 
@@ -240,6 +268,7 @@ typedef struct AstNode {
       bool is_pub;
       const char *type_name;   // the type being extended
       const char *iface_name;  // NULL unless "for <iface>" form
+      struct AstNode *type_args; // owner generic arguments
       struct AstNode *methods; // linked list of AST_FUNC_DECL
     } method_decl;
 
@@ -261,6 +290,7 @@ typedef struct AstNode {
     // mod kernel { ... }
     struct {
       bool is_pub;
+      bool is_external;
       const char *name;
       struct AstNode *declarations; // linked list
     } mod_decl;
@@ -280,6 +310,7 @@ typedef struct AstNode {
       const char *ret_name;     // NULL if void or variable
       struct AstNode *ret_type; // NULL if void or variable (AST_TYPE_EXPR)
       struct AstNode *var_type; // NULL if func (AST_TYPE_EXPR)
+      Attr *attrs;              // #[link_name], #[callconv]
     } extern_decl;
 
     // x: i32
@@ -359,6 +390,7 @@ typedef struct AstNode {
     } float_literal;
     struct {
       const char *value;
+      size_t length;
     } string_literal; // arena-interned, UTF-8
     struct {
       bool value;
@@ -412,6 +444,7 @@ typedef struct AstNode {
     // foo(a, b)  /  PageTable.new()  /  d.draw()
     struct {
       struct AstNode *callee; // AST_IDENTIFIER | AST_FIELD_EXPR
+      struct AstNode *type_args; // explicit generic type arguments
       struct AstNode *args;   // linked list of argument expressions
     } call;
 
@@ -470,7 +503,8 @@ typedef struct AstNode {
 
     // asm { "cli; hlt" }  /  asm { "mov %cr3, %rax" } -> r
     struct {
-      const char *code;   // the raw assembly string
+      const char *code;   // decoded assembly bytes
+      size_t code_length;
       const char *output; // bound output register name; NULL if no -> binding
     } asm_expr;
 
@@ -518,6 +552,10 @@ typedef struct AstNode {
       struct AstNode *size; // TYPE_ARRAY  → size expression (AST_INT_LITERAL or
                             // AST_IDENTIFIER)
       struct AstNode *elems; // TYPE_TUPLE  → linked list of AST_TYPE_EXPR
+      struct AstNode *type_args; // TYPE_NAMED/QUALIFIED generic arguments
+      bool nullable;         // TYPE_PTR: true for ?*T
+      bool readonly;         // TYPE_SLICE: true for []const T
+      MemoryRealm realm;     // TYPE_FUNCTION: callable memory strategy
     } type_expr;
 
   } as;
@@ -581,9 +619,11 @@ AstNode *ast_new_continue(Arena *arena);
 // literals
 AstNode *ast_new_int_literal(Arena *arena, long long value);
 AstNode *ast_new_float_literal(Arena *arena, double value);
-AstNode *ast_new_string_literal(Arena *arena, const char *value);
+AstNode *ast_new_string_literal(Arena *arena, const char *value,
+                                size_t length);
 AstNode *ast_new_bool_literal(Arena *arena, bool value);
 AstNode *ast_new_char_literal(Arena *arena, uint32_t codepoint);
+AstNode *ast_new_null_literal(Arena *arena);
 AstNode *ast_new_array_literal(Arena *arena, AstNode *elems);
 AstNode *ast_new_tuple_expr(Arena *arena, AstNode *elems);
 
@@ -607,7 +647,8 @@ AstNode *ast_new_try_expr(Arena *arena, AstNode *expr);
 AstNode *ast_new_catch_expr(Arena *arena, AstNode *expr, const char *err_name,
                             AstNode *handler);
 AstNode *ast_new_error_expr(Arena *arena, AstNode *path);
-AstNode *ast_new_asm_expr(Arena *arena, const char *code, const char *output);
+AstNode *ast_new_asm_expr(Arena *arena, const char *code, size_t code_length,
+                          const char *output);
 AstNode *ast_new_named_arg(Arena *arena, const char *name, AstNode *value);
 AstNode *ast_new_tuple_destructure(Arena *arena, AstNode *targets,
                                    AstNode *init);
@@ -623,9 +664,12 @@ AstNode *ast_new_type_qualified(Arena *arena, const char *module,
                                 const char *name);
 AstNode *ast_new_type_ptr(Arena *arena, AstNode *inner);
 AstNode *ast_new_type_array(Arena *arena, AstNode *size, AstNode *elem_type);
+AstNode *ast_new_type_slice(Arena *arena, AstNode *elem_type, bool readonly);
 AstNode *ast_new_type_fallible(Arena *arena,
                                AstNode *inner); // inner == NULL → !void
 AstNode *ast_new_type_tuple(Arena *arena, AstNode *elems);
+AstNode *ast_new_type_function(Arena *arena, AstNode *params, AstNode *ret,
+                               MemoryRealm realm);
 
 // attributes
 Attr *attr_new(Arena *arena, const char *name, AstNode *arg);

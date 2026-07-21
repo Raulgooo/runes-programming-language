@@ -1,0 +1,55 @@
+interface Value {
+    f get(self) = result: i32
+}
+
+type Item = {
+    value: i32
+}
+
+method Value for Item {
+    f get(self) = result: i32 {
+        result = self.value
+    }
+}
+
+type Box<T> = {
+    value: T
+}
+
+type Link<T> = {
+    value: T,
+    next: ?*Link<T>
+}
+
+type Maybe<T> =
+    | None
+    | Some(T)
+
+method Box<T> {
+    f get(self) = result: T {
+        result = self.value
+    }
+}
+
+f identity<T>(value: T) = result: T {
+    result = value
+}
+
+f read<T: Value>(value: T) = result: i32 {
+    result = value.get()
+}
+
+f extract(value: Maybe<i32>) = result: i32 {
+    result = match value {
+        Some(inner) -> inner,
+        None -> 0,
+    }
+}
+
+f main() {
+    Box<i32> box = Box(value: identity<i32>(42))
+    Link<i32> link = Link<i32>(value: box.get(), next: null)
+    Maybe<i32> maybe = Maybe.Some(link.value)
+    Item item = Item(value: extract(maybe))
+    print(read<Item>(item), " ", identity<bool>(true))
+}

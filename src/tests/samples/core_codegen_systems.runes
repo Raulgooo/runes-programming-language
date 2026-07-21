@@ -12,5 +12,5 @@ f main() {
         asm { "mov $42, %rax" } -> from_asm
     }
 
-    print(sizeof([4]i32), alignof(i64), changed, from_asm)
+    print(sizeof([4]i32), " ", alignof(i64), " ", changed, " ", from_asm)
 }

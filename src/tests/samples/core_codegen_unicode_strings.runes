@@ -1,0 +1,6 @@
+f main() {
+    str value = "héllo\0世界"
+    str same = "h\u00e9llo\0世界"
+    print(value.len, " ", value == same, " ", "a" < "b", " ",
+          value[3], " ", value[0..3], " ", '界')
+}

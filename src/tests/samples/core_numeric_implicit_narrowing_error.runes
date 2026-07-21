@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Variable initializer does not match declared type
+f main() {
+    i32 wide = 42
+    i8 narrow = wide
+    print(narrow)
+}

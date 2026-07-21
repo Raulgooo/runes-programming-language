@@ -30,7 +30,7 @@ f checked_value(value: i32) = result: !i32 {
 
 f report_failure() {
     i32 value = divide(1, 0) catch |err| {
-        print("error", err)
+        print("error ", err)
         return
     }
     print(value)
@@ -47,7 +47,7 @@ f main() {
     i32 success = doubled_quotient(20, 4) catch -1
     i32 failure = doubled_quotient(20, 0) catch -1
     i32 void_failure = checked_value(0) catch -1
-    print(success, failure, void_failure)
+    print(success, " ", failure, " ", void_failure)
     report_failure()
-    print(matched_quotient(9, 3), matched_quotient(9, 0))
+    print(matched_quotient(9, 3), " ", matched_quotient(9, 0))
 }

@@ -11,6 +11,9 @@
 // ──  Expressions
 static AstNode *parse_expr(Parser *p);
 static AstNode *parse_type_expr(Parser *p);
+static AstNode *parse_type_argument_list(Parser *p);
+static AstNode *parse_generic_params(Parser *p);
+static bool consume_type_gt(Parser *p);
 static AstNode *parse_unary(Parser *p);
 static AstNode *parse_primary(Parser *p);
 static AstNode *parse_postfix(Parser *p);
@@ -35,7 +38,7 @@ static AstNode *parse_interface_decl(Parser *p, bool is_pub);
 static AstNode *parse_error_decl(Parser *p, bool is_pub);
 static AstNode *parse_mod_decl(Parser *p, bool is_pub);
 static AstNode *parse_use_decl(Parser *p);
-static AstNode *parse_extern_decl(Parser *p);
+static AstNode *parse_extern_decl(Parser *p, Attr *attrs);
 static AstNode *parse_param_list(Parser *p);
 static AstNode *parse_param(Parser *p);
 static Attr *parse_attrs(Parser *p);
@@ -53,7 +56,7 @@ static AstNode *parse_unsafe_block(Parser *p);
 
 // ── Scaffolding
 // ───────────────────────────────────────────────────────────────
-static Token advance(Parser *p) {
+static Token advance_raw(Parser *p) {
   Token prev = p->current;
   p->prev_line = p->current.line;
   p->current = p->next;
@@ -62,9 +65,32 @@ static Token advance(Parser *p) {
   return prev;
 }
 
+static Token advance(Parser *p) {
+  Token prev = p->current;
+
+  if (p->current.kind == TOKEN_LPAREN ||
+      p->current.kind == TOKEN_LBRACKET) {
+    p->soft_delimiter_depth++;
+  } else if ((p->current.kind == TOKEN_RPAREN ||
+              p->current.kind == TOKEN_RBRACKET) &&
+             p->soft_delimiter_depth > 0) {
+    p->soft_delimiter_depth--;
+  }
+
+  advance_raw(p);
+  while (p->soft_delimiter_depth > 0 && p->current.kind == TOKEN_NEWLINE)
+    advance_raw(p);
+  return prev;
+}
+
 static Token peek(Parser *p) { return p->next; }
 
 static bool check(Parser *p, TokenKind kind) { return p->current.kind == kind; }
+
+static bool starts_new_line(Parser *p) {
+  return p->soft_delimiter_depth == 0 &&
+         (uint32_t)p->current.line > p->prev_line;
+}
 
 static bool match(Parser *p, TokenKind kind) {
   if (check(p, kind)) {
@@ -72,6 +98,18 @@ static bool match(Parser *p, TokenKind kind) {
     return true;
   }
   return false;
+}
+
+static bool consume_type_gt(Parser *p) {
+  if (match(p, TOKEN_GT))
+    return true;
+  if (!check(p, TOKEN_SHR))
+    return false;
+  p->current.kind = TOKEN_GT;
+  p->current.start++;
+  p->current.length = 1;
+  p->current.column++;
+  return true;
 }
 
 static void skip_newlines(Parser *p) {
@@ -125,6 +163,7 @@ static void synchronize(Parser *p) {
     case TOKEN_FLEX:
     case TOKEN_STACK:
     case TOKEN_VOLATILE:
+    case TOKEN_MOVE:
     case TOKEN_CONST:
     case TOKEN_I8:
     case TOKEN_I16:
@@ -177,6 +216,8 @@ void parser_init(Parser *p, Lexer *lexer, Arena *arena, const char *filename,
   p->next = lexer_next_token(lexer);
   p->next2 = lexer_next_token(lexer);
   p->prev_line = 1;
+  p->soft_delimiter_depth = 0;
+  p->declaration_depth = 0;
 }
 
 void parser_free(Parser *p) { (void)p; }
@@ -185,6 +226,67 @@ void parser_free(Parser *p) { (void)p; }
 // ──────────────────────────────────────────────────────────
 static AstNode *parse_type_expr(Parser *p) {
   Token T = p->current;
+
+  MemoryRealm function_realm = REALM_STACK;
+  bool has_function_realm = false;
+  if ((check(p, TOKEN_STACK) || check(p, TOKEN_REGIONAL) ||
+       check(p, TOKEN_DYNAMIC) || check(p, TOKEN_GC) ||
+       check(p, TOKEN_FLEX)) &&
+      peek(p).kind == TOKEN_F) {
+    TokenKind realm = advance(p).kind;
+    has_function_realm = true;
+    function_realm = realm == TOKEN_REGIONAL ? REALM_ARENA
+                     : realm == TOKEN_DYNAMIC ? REALM_HEAP
+                     : realm == TOKEN_GC      ? REALM_GC
+                     : realm == TOKEN_FLEX    ? REALM_FLEX
+                                              : REALM_STACK;
+  }
+  if (check(p, TOKEN_F)) {
+    advance(p);
+    expect(p, TOKEN_LPAREN, "expected '(' after 'f' in function type");
+    AstNode *head = NULL, *tail = NULL;
+    if (!check(p, TOKEN_RPAREN)) {
+      do {
+        AstNode *parameter = parse_type_expr(p);
+        if (!parameter)
+          return NULL;
+        if (!head)
+          head = tail = parameter;
+        else {
+          tail->next = parameter;
+          tail = parameter;
+        }
+      } while (match(p, TOKEN_COMMA));
+    }
+    expect(p, TOKEN_RPAREN, "expected ')' after function parameter types");
+    expect(p, TOKEN_ARROW, "expected '->' after function parameter types");
+    if (p->panic_mode)
+      return NULL;
+    AstNode *ret = parse_type_expr(p);
+    if (!ret)
+      return NULL;
+    AstNode *n = ast_new_type_function(p->arena, head, ret,
+                                       has_function_realm ? function_realm
+                                                          : REALM_STACK);
+    n->line = T.line;
+    n->col = T.column;
+    return n;
+  }
+
+  // nullable pointer: ?*T
+  if (match(p, TOKEN_QUESTION)) {
+    expect(p, TOKEN_STAR, "expected '*' after '?' in nullable pointer type");
+    if (p->panic_mode)
+      return NULL;
+    AstNode *inner = parse_type_expr(p);
+    if (!inner)
+      return NULL;
+    AstNode *n = ast_new_type_ptr(p->arena, inner);
+    n->as.type_expr.nullable = true;
+    n->line = T.line;
+    n->col = T.column;
+    return n;
+  }
 
   // pointer: *T
   if (match(p, TOKEN_STAR)) {
@@ -209,6 +311,16 @@ static AstNode *parse_type_expr(Parser *p) {
 
   // array: [N]T
   if (match(p, TOKEN_LBRACKET)) {
+    if (match(p, TOKEN_RBRACKET)) {
+      bool readonly = match(p, TOKEN_CONST);
+      AstNode *elem = parse_type_expr(p);
+      if (!elem)
+        return NULL;
+      AstNode *n = ast_new_type_slice(p->arena, elem, readonly);
+      n->line = T.line;
+      n->col = T.column;
+      return n;
+    }
     AstNode *size = parse_expr(p);
     if (!size)
       return NULL;
@@ -268,6 +380,8 @@ static AstNode *parse_type_expr(Parser *p) {
         return NULL;
       AstNode *n = ast_new_type_qualified(p->arena, module_tok.str_val.ptr,
                                           type_tok.str_val.ptr);
+      if (check(p, TOKEN_LT))
+        n->as.type_expr.type_args = parse_type_argument_list(p);
       n->line = module_tok.line;
       n->col = module_tok.column;
       return n;
@@ -280,6 +394,8 @@ static AstNode *parse_type_expr(Parser *p) {
       name = token_kind_to_string(name_tok.kind);
     }
     AstNode *n = ast_new_type_named(p->arena, name);
+    if (check(p, TOKEN_LT))
+      n->as.type_expr.type_args = parse_type_argument_list(p);
     n->line = name_tok.line;
     n->col = name_tok.column;
     return n;
@@ -287,6 +403,63 @@ static AstNode *parse_type_expr(Parser *p) {
 
   parser_error(p, "expected a type expression");
   return NULL;
+}
+
+static AstNode *parse_type_argument_list(Parser *p) {
+  expect(p, TOKEN_LT, "expected '<' before type arguments");
+  if (p->panic_mode)
+    return NULL;
+  AstNode *head = NULL, *tail = NULL;
+  do {
+    AstNode *argument = parse_type_expr(p);
+    if (!argument)
+      return NULL;
+    if (!head)
+      head = tail = argument;
+    else {
+      tail->next = argument;
+      tail = argument;
+    }
+  } while (match(p, TOKEN_COMMA));
+  if (!consume_type_gt(p)) {
+    parser_error(p, "expected '>' after type arguments");
+    return NULL;
+  }
+  return head;
+}
+
+static AstNode *parse_generic_params(Parser *p) {
+  expect(p, TOKEN_LT, "expected '<' before generic parameters");
+  if (p->panic_mode)
+    return NULL;
+  AstNode *head = NULL, *tail = NULL;
+  do {
+    Token name =
+        expect(p, TOKEN_IDENTIFIER, "expected generic parameter name");
+    if (p->panic_mode)
+      return NULL;
+    AstNode *constraint = NULL;
+    if (match(p, TOKEN_COLON)) {
+      constraint = parse_type_expr(p);
+      if (!constraint)
+        return NULL;
+    }
+    AstNode *parameter =
+        ast_new_param(p->arena, name.str_val.ptr, constraint);
+    parameter->line = name.line;
+    parameter->col = name.column;
+    if (!head)
+      head = tail = parameter;
+    else {
+      tail->next = parameter;
+      tail = parameter;
+    }
+  } while (match(p, TOKEN_COMMA));
+  if (!consume_type_gt(p)) {
+    parser_error(p, "expected '>' after generic parameters");
+    return NULL;
+  }
+  return head;
 }
 
 // ── Declarations ─────────────────────────────────────────────────────────────
@@ -298,9 +471,13 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
   Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected function name");
   if (p->panic_mode)
     return NULL;
+  AstNode *generic_params =
+      check(p, TOKEN_LT) ? parse_generic_params(p) : NULL;
+  if (p->panic_mode)
+    return NULL;
 
-  bool is_main =
-      (name_tok.str_val.ptr && strcmp(name_tok.str_val.ptr, "main") == 0);
+  bool is_main = p->declaration_depth == 0 && name_tok.str_val.ptr &&
+                 strcmp(name_tok.str_val.ptr, "main") == 0;
 
   // parameter list — f name(params)
   expect(p, TOKEN_LPAREN, "expected '(' after function name");
@@ -339,7 +516,9 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
   //   Signature-only: body == NULL (interface / extern)
   AstNode *body = NULL;
   if (body_allowed && check(p, TOKEN_LBRACE)) {
+    p->declaration_depth++;
     body = parse_block(p);
+    p->declaration_depth--;
     if (!body)
       return NULL;
   } else if (body_allowed && has_return &&
@@ -358,6 +537,7 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
   AstNode *n =
       ast_new_func_decl(p->arena, realm, is_pub, is_main, name_tok.str_val.ptr,
                         params, ret_name, ret_type, body, attrs);
+  n->as.func_decl.generic_params = generic_params;
   n->line = f_tok.line;
   n->col = f_tok.column;
   return n;
@@ -372,23 +552,7 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile,
   do {
     AstNode *type = NULL;
     bool has_type = false;
-    if (is_type_keyword(p->current.kind) ||
-        (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_IDENTIFIER) ||
-        check(p, TOKEN_STAR) || check(p, TOKEN_LBRACKET) ||
-        check(p, TOKEN_BANG) || check(p, TOKEN_LPAREN)) {
-      has_type = true;
-    }
-    // Qualified type: Module.Type var - check if there's a variable name after
-    if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_DOT &&
-        p->next2.kind == TOKEN_IDENTIFIER) {
-      // Look ahead to see if there's a variable name after Module.Type
-      Lexer l = *p->lexer;
-      Token t = p->next2;
-      t = lexer_next_token(&l);
-      if (t.kind == TOKEN_IDENTIFIER) {
-        has_type = true;
-      }
-    }
+    has_type = is_var_decl_lookahead(p);
 
     Token name_tok;
     if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_COLON_EQUAL) {
@@ -420,6 +584,7 @@ static AstNode *parse_var_decl(Parser *p, bool is_const, bool is_volatile,
   } while (match(p, TOKEN_COMMA));
 
   if (match(p, TOKEN_EQUAL) || match(p, TOKEN_COLON_EQUAL)) {
+    skip_newlines(p);
     AstNode *init = parse_expr(p);
     if (!init)
       return NULL;
@@ -465,6 +630,10 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
   Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected type name");
   if (p->panic_mode)
     return NULL;
+  AstNode *generic_params =
+      check(p, TOKEN_LT) ? parse_generic_params(p) : NULL;
+  if (p->panic_mode)
+    return NULL;
   expect(p, TOKEN_EQUAL, "expected '=' after type name");
   if (p->panic_mode)
     return NULL;
@@ -474,6 +643,7 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
     AstNode *arms = parse_variant_decl(p, is_pub);
     AstNode *vn =
         ast_new_variant_decl(p->arena, is_pub, name_tok.str_val.ptr, arms);
+    vn->as.variant_decl.generic_params = generic_params;
     vn->line = t.line;
     vn->col = t.column;
     return vn;
@@ -481,6 +651,8 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
 
   AstNode *fields = NULL, *ftail = NULL;
   bool braced = match(p, TOKEN_LBRACE);
+  if (braced)
+    skip_newlines(p);
   while (!check(p, TOKEN_EOF)) {
     if (braced && check(p, TOKEN_RBRACE))
       break;
@@ -514,7 +686,16 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
       ftail->next = fd;
       ftail = fd;
     }
-    if (!match(p, TOKEN_COMMA))
+    bool separated_by_newline = braced &&
+                                (uint32_t)p->current.line > p->prev_line;
+    if (match(p, TOKEN_COMMA)) {
+      if (braced)
+        skip_newlines(p);
+      continue;
+    }
+    if (separated_by_newline)
+      continue;
+    if (!braced || !check(p, TOKEN_RBRACE))
       break;
   }
 
@@ -527,6 +708,7 @@ static AstNode *parse_type_decl(Parser *p, bool is_pub, Attr *attrs) {
   // collect attrs that were on the type itself (parsed before this call)
   AstNode *n =
       ast_new_type_decl(p->arena, is_pub, name_tok.str_val.ptr, fields, attrs);
+  n->as.type_decl.generic_params = generic_params;
   n->line = t.line;
   n->col = t.column;
   return n;
@@ -598,6 +780,10 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
     if (p->panic_mode)
       return NULL;
   }
+  AstNode *type_args =
+      check(p, TOKEN_LT) ? parse_type_argument_list(p) : NULL;
+  if (p->panic_mode)
+    return NULL;
 
   expect(p, TOKEN_LBRACE, "expected '{' for method block");
   if (p->panic_mode)
@@ -617,7 +803,9 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
     else if (match(p, TOKEN_FLEX))
       realm = REALM_FLEX;
 
+    p->declaration_depth++;
     AstNode *fn = parse_func_decl(p, false, realm, attrs, true);
+    p->declaration_depth--;
     if (!fn) {
       synchronize(p);
       continue;
@@ -637,6 +825,7 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
 
   AstNode *n = ast_new_method_decl(p->arena, is_pub, type_tok.str_val.ptr,
                                    iface, methods);
+  n->as.method_decl.type_args = type_args;
   n->line = m.line;
   n->col = m.column;
   return n;
@@ -655,9 +844,21 @@ static AstNode *parse_interface_decl(Parser *p, bool is_pub) {
   AstNode *methods = NULL, *mtail = NULL;
   while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
     Attr *attrs = parse_attrs(p);
-    // Functions in interfaces are always signatures, so pass
-    // REALM_INTERFACE_SIG
-    AstNode *fn = parse_func_decl(p, false, REALM_STACK, attrs, false);
+    MemoryRealm realm = REALM_STACK;
+    if (match(p, TOKEN_REGIONAL))
+      realm = REALM_ARENA;
+    else if (match(p, TOKEN_DYNAMIC))
+      realm = REALM_HEAP;
+    else if (match(p, TOKEN_GC))
+      realm = REALM_GC;
+    else if (match(p, TOKEN_FLEX))
+      realm = REALM_FLEX;
+    else if (match(p, TOKEN_STACK))
+      realm = REALM_STACK;
+
+    p->declaration_depth++;
+    AstNode *fn = parse_func_decl(p, false, realm, attrs, false);
+    p->declaration_depth--;
     if (!fn) {
       synchronize(p);
       continue;
@@ -727,11 +928,17 @@ static AstNode *parse_mod_decl(Parser *p, bool is_pub) {
   Token name_tok = expect(p, TOKEN_IDENTIFIER, "expected module name");
   if (p->panic_mode)
     return NULL;
-  expect(p, TOKEN_LBRACE, "expected '{'");
-  if (p->panic_mode)
-    return NULL;
+  if (!match(p, TOKEN_LBRACE)) {
+    AstNode *external =
+        ast_new_mod_decl(p->arena, is_pub, name_tok.str_val.ptr, NULL);
+    external->as.mod_decl.is_external = true;
+    external->line = m.line;
+    external->col = m.column;
+    return external;
+  }
 
   AstNode *decls = NULL, *dtail = NULL;
+  p->declaration_depth++;
   while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
     AstNode *d = parse_decl(p);
     if (!d) {
@@ -747,6 +954,7 @@ static AstNode *parse_mod_decl(Parser *p, bool is_pub) {
     while (dtail->next)
       dtail = dtail->next;
   }
+  p->declaration_depth--;
   expect(p, TOKEN_RBRACE, "expected '}'");
   if (p->panic_mode)
     return NULL;
@@ -785,7 +993,7 @@ static AstNode *parse_use_decl(Parser *p) {
 
 // Spec §12: extern f memset(ptr: *u8, val: i32, len: usize)
 //           extern u64 KERNEL_START
-static AstNode *parse_extern_decl(Parser *p) {
+static AstNode *parse_extern_decl(Parser *p, Attr *attrs) {
   Token e = advance(p); // consume 'extern'
 
   if (check(p, TOKEN_F)) {
@@ -818,6 +1026,7 @@ static AstNode *parse_extern_decl(Parser *p) {
     }
     AstNode *n = ast_new_extern_decl(p->arena, true, name_tok.str_val.ptr,
                                      params, ret_name, ret_type, NULL);
+    n->as.extern_decl.attrs = attrs;
     n->line = e.line;
     n->col = e.column;
     return n;
@@ -831,6 +1040,7 @@ static AstNode *parse_extern_decl(Parser *p) {
       return NULL;
     AstNode *n = ast_new_extern_decl(p->arena, false, name_tok.str_val.ptr,
                                      NULL, NULL, NULL, vtype);
+    n->as.extern_decl.attrs = attrs;
     n->line = e.line;
     n->col = e.column;
     return n;
@@ -843,6 +1053,15 @@ static AstNode *parse_decl(Parser *p) {
   skip_newlines(p);
 
   bool is_pub = match(p, TOKEN_PUB);
+
+  bool starts_function_type =
+      (check(p, TOKEN_F) && peek(p).kind == TOKEN_LPAREN) ||
+      ((check(p, TOKEN_STACK) || check(p, TOKEN_REGIONAL) ||
+        check(p, TOKEN_DYNAMIC) || check(p, TOKEN_GC) ||
+        check(p, TOKEN_FLEX)) &&
+       peek(p).kind == TOKEN_F && p->next2.kind == TOKEN_LPAREN);
+  if (starts_function_type)
+    return parse_var_decl(p, false, false, attrs);
 
   // memory realm → function
   MemoryRealm realm = REALM_STACK;
@@ -864,8 +1083,13 @@ static AstNode *parse_decl(Parser *p) {
     has_realm = true;
   }
 
-  if (check(p, TOKEN_F) || has_realm) {
-    return parse_func_decl(p, is_pub, realm, attrs, true);
+  bool is_move = match(p, TOKEN_MOVE);
+
+  if (check(p, TOKEN_F) || has_realm || is_move) {
+    AstNode *function = parse_func_decl(p, is_pub, realm, attrs, true);
+    if (function)
+      function->as.func_decl.is_move = is_move;
+    return function;
   }
   if (check(p, TOKEN_TYPE)) {
     return parse_type_decl(p, is_pub, attrs);
@@ -881,7 +1105,7 @@ static AstNode *parse_decl(Parser *p) {
   if (check(p, TOKEN_USE))
     return parse_use_decl(p);
   if (check(p, TOKEN_EXTERN))
-    return parse_extern_decl(p);
+    return parse_extern_decl(p, attrs);
 
   // Variable declarations with attributes: #[section(".data")] const i32 x = 5
   if (is_var_decl_lookahead(p)) {
@@ -1330,63 +1554,186 @@ static AstNode *parse_unsafe_block(Parser *p) {
   return n;
 }
 
+typedef struct {
+  Lexer lexer;
+  Token buffered[3];
+  Token streamed;
+  unsigned position;
+} TypeLookahead;
+
+static Token type_lookahead_current(TypeLookahead *lookahead) {
+  return lookahead->position < 3 ? lookahead->buffered[lookahead->position]
+                                 : lookahead->streamed;
+}
+
+static void type_lookahead_advance(TypeLookahead *lookahead) {
+  lookahead->position++;
+  if (lookahead->position >= 3)
+    lookahead->streamed = lexer_next_token(&lookahead->lexer);
+}
+
+static bool type_lookahead_consume_gt(TypeLookahead *lookahead) {
+  Token *current = lookahead->position < 3
+                       ? &lookahead->buffered[lookahead->position]
+                       : &lookahead->streamed;
+  if (current->kind == TOKEN_GT) {
+    type_lookahead_advance(lookahead);
+    return true;
+  }
+  if (current->kind != TOKEN_SHR)
+    return false;
+  current->kind = TOKEN_GT;
+  current->start++;
+  current->length = 1;
+  current->column++;
+  return true;
+}
+
+static bool scan_type_lookahead(TypeLookahead *lookahead, unsigned depth) {
+  if (depth > 64)
+    return false;
+  Token token = type_lookahead_current(lookahead);
+
+  if (token.kind == TOKEN_STACK || token.kind == TOKEN_REGIONAL ||
+      token.kind == TOKEN_DYNAMIC || token.kind == TOKEN_GC ||
+      token.kind == TOKEN_FLEX) {
+    type_lookahead_advance(lookahead);
+    token = type_lookahead_current(lookahead);
+  }
+  if (token.kind == TOKEN_F) {
+    type_lookahead_advance(lookahead);
+    if (type_lookahead_current(lookahead).kind != TOKEN_LPAREN)
+      return false;
+    type_lookahead_advance(lookahead);
+    if (type_lookahead_current(lookahead).kind != TOKEN_RPAREN) {
+      do {
+        if (!scan_type_lookahead(lookahead, depth + 1))
+          return false;
+        token = type_lookahead_current(lookahead);
+        if (token.kind != TOKEN_COMMA)
+          break;
+        type_lookahead_advance(lookahead);
+      } while (true);
+    }
+    if (type_lookahead_current(lookahead).kind != TOKEN_RPAREN)
+      return false;
+    type_lookahead_advance(lookahead);
+    if (type_lookahead_current(lookahead).kind != TOKEN_ARROW)
+      return false;
+    type_lookahead_advance(lookahead);
+    return scan_type_lookahead(lookahead, depth + 1);
+  }
+
+  if (token.kind == TOKEN_QUESTION) {
+    type_lookahead_advance(lookahead);
+    if (type_lookahead_current(lookahead).kind != TOKEN_STAR)
+      return false;
+    type_lookahead_advance(lookahead);
+    return scan_type_lookahead(lookahead, depth + 1);
+  }
+  if (token.kind == TOKEN_STAR || token.kind == TOKEN_BANG) {
+    type_lookahead_advance(lookahead);
+    return scan_type_lookahead(lookahead, depth + 1);
+  }
+  if (token.kind == TOKEN_LBRACKET) {
+    type_lookahead_advance(lookahead);
+    if (type_lookahead_current(lookahead).kind == TOKEN_RBRACKET) {
+      type_lookahead_advance(lookahead);
+      if (type_lookahead_current(lookahead).kind == TOKEN_CONST)
+        type_lookahead_advance(lookahead);
+      return scan_type_lookahead(lookahead, depth + 1);
+    }
+    unsigned brackets = 1;
+    while (brackets > 0) {
+      token = type_lookahead_current(lookahead);
+      if (token.kind == TOKEN_EOF)
+        return false;
+      if (token.kind == TOKEN_LBRACKET)
+        brackets++;
+      else if (token.kind == TOKEN_RBRACKET)
+        brackets--;
+      type_lookahead_advance(lookahead);
+    }
+    return scan_type_lookahead(lookahead, depth + 1);
+  }
+  if (token.kind == TOKEN_LPAREN) {
+    type_lookahead_advance(lookahead);
+    if (type_lookahead_current(lookahead).kind != TOKEN_RPAREN) {
+      do {
+        if (!scan_type_lookahead(lookahead, depth + 1))
+          return false;
+        token = type_lookahead_current(lookahead);
+        if (token.kind != TOKEN_COMMA)
+          break;
+        type_lookahead_advance(lookahead);
+      } while (true);
+    }
+    if (type_lookahead_current(lookahead).kind != TOKEN_RPAREN)
+      return false;
+    type_lookahead_advance(lookahead);
+    return true;
+  }
+  if (token.kind != TOKEN_IDENTIFIER && !is_type_keyword(token.kind))
+    return false;
+  bool named = token.kind == TOKEN_IDENTIFIER;
+  type_lookahead_advance(lookahead);
+  if (named && type_lookahead_current(lookahead).kind == TOKEN_DOT) {
+    type_lookahead_advance(lookahead);
+    if (type_lookahead_current(lookahead).kind != TOKEN_IDENTIFIER)
+      return false;
+    type_lookahead_advance(lookahead);
+  }
+  if (type_lookahead_current(lookahead).kind == TOKEN_LT) {
+    type_lookahead_advance(lookahead);
+    do {
+      if (!scan_type_lookahead(lookahead, depth + 1))
+        return false;
+      token = type_lookahead_current(lookahead);
+      if (token.kind != TOKEN_COMMA)
+        break;
+      type_lookahead_advance(lookahead);
+    } while (true);
+    if (!type_lookahead_consume_gt(lookahead))
+      return false;
+  }
+  return true;
+}
+
+static bool is_generic_call_lookahead(Parser *p) {
+  if (!check(p, TOKEN_LT))
+    return false;
+  TypeLookahead lookahead = {
+      .lexer = *p->lexer,
+      .buffered = {p->current, p->next, p->next2},
+      .position = 0,
+  };
+  type_lookahead_advance(&lookahead);
+  do {
+    if (!scan_type_lookahead(&lookahead, 0))
+      return false;
+    Token token = type_lookahead_current(&lookahead);
+    if (token.kind != TOKEN_COMMA)
+      break;
+    type_lookahead_advance(&lookahead);
+  } while (true);
+  if (!type_lookahead_consume_gt(&lookahead))
+    return false;
+  return type_lookahead_current(&lookahead).kind == TOKEN_LPAREN;
+}
+
 static bool is_var_decl_lookahead(Parser *p) {
-  if (check(p, TOKEN_CONST) || check(p, TOKEN_VOLATILE) ||
-      is_type_keyword(p->current.kind))
+  if (check(p, TOKEN_CONST) || check(p, TOKEN_VOLATILE))
     return true;
-  if (check(p, TOKEN_IDENTIFIER) &&
-      (peek(p).kind == TOKEN_IDENTIFIER || peek(p).kind == TOKEN_COLON_EQUAL))
+  if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_COLON_EQUAL)
     return true;
-  // Qualified type: Module.Type var
-  if (check(p, TOKEN_IDENTIFIER) && peek(p).kind == TOKEN_DOT &&
-      p->next2.kind == TOKEN_IDENTIFIER) {
-    // Need to check if there's a variable name after the type
-    // Use lookahead lexer to check what comes after Module.Type
-    Lexer l = *p->lexer;
-    Token t = p->next2;       // Type name
-    t = lexer_next_token(&l); // Should be the variable name
-    if (t.kind == TOKEN_IDENTIFIER)
-      return true;
-  }
-  if (check(p, TOKEN_STAR) || check(p, TOKEN_BANG)) {
-    if (is_type_keyword(p->next.kind))
-      return true;
-    if (p->next.kind == TOKEN_IDENTIFIER) {
-      // *IDENT IDENT -> decl (e.g. *Node n)
-      // *IDENT , -> multi-var decl (e.g. *Node n, m = ...)
-      // *IDENT = -> expr
-      // *IDENT . -> expr
-      return p->next2.kind == TOKEN_IDENTIFIER || p->next2.kind == TOKEN_COMMA;
-    }
-  }
 
-  if (check(p, TOKEN_LBRACKET)) {
-    // Array type: [N]T name or [N]Type name
-    // Check if next is int literal or identifier (the size), and next2 is ]
-    if ((p->next.kind == TOKEN_INT_LITERAL ||
-         p->next.kind == TOKEN_IDENTIFIER) &&
-        p->next2.kind == TOKEN_RBRACKET) {
-      return true;
-    }
-  }
-
-  if (check(p, TOKEN_LPAREN)) {
-    // Tuple type: (T, U) name
-    // Use lookahead lexer to find the closing )
-    Lexer l = *p->lexer;
-    Token t = p->next;
-    int depth = 1;
-    while (t.kind != TOKEN_EOF && depth > 0) {
-      if (t.kind == TOKEN_LPAREN)
-        depth++;
-      else if (t.kind == TOKEN_RPAREN)
-        depth--;
-      t = lexer_next_token(&l);
-    }
-    // After closing paren, what follows?
-    return t.kind == TOKEN_IDENTIFIER;
-  }
-  return false;
+  TypeLookahead lookahead = {
+      .lexer = *p->lexer,
+      .buffered = {p->current, p->next, p->next2},
+      .position = 0,
+  };
+  return scan_type_lookahead(&lookahead, 0) &&
+         type_lookahead_current(&lookahead).kind == TOKEN_IDENTIFIER;
 }
 
 // Top-level statement dispatcher
@@ -1395,7 +1742,9 @@ static AstNode *parse_stmt(Parser *p) {
   if (check(p, TOKEN_RETURN)) {
     Token r = advance(p);
     AstNode *val = NULL;
-    if (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF))
+    if ((uint32_t)p->current.line == (uint32_t)r.line &&
+        !check(p, TOKEN_RBRACE) &&
+        !check(p, TOKEN_EOF))
       val = parse_expr(p);
     AstNode *n = ast_new_return_stmt(p->arena, val);
     n->line = r.line;
@@ -1432,7 +1781,9 @@ static AstNode *parse_stmt(Parser *p) {
   if (check(p, TOKEN_LBRACE))
     return parse_block(p);
   // declarations or expression statements
-  if (check(p, TOKEN_PUB) || check(p, TOKEN_F) || check(p, TOKEN_TYPE) ||
+  if (check(p, TOKEN_PUB) ||
+      (check(p, TOKEN_F) && peek(p).kind != TOKEN_LPAREN) ||
+      check(p, TOKEN_MOVE) || check(p, TOKEN_TYPE) ||
       check(p, TOKEN_ERROR) || check(p, TOKEN_MOD) ||
       check(p, TOKEN_USE) || check(p, TOKEN_EXTERN) || check(p, TOKEN_HASH) ||
       check(p, TOKEN_REGIONAL) || check(p, TOKEN_DYNAMIC) ||
@@ -1456,9 +1807,9 @@ static AstNode *parse_assign(Parser *p) {
   if (!left)
     return NULL;
 
-  skip_newlines(p);
-  if (check(p, TOKEN_EQUAL)) {
+  if (check(p, TOKEN_EQUAL) && !starts_new_line(p)) {
     Token eq = advance(p);
+    skip_newlines(p);
     AstNode *value = parse_assign(p); // recursive — right-associative
     if (!value)
       return NULL;
@@ -1472,7 +1823,6 @@ static AstNode *parse_assign(Parser *p) {
 }
 
 static AstNode *parse_expr(Parser *p) {
-  skip_newlines(p);
   return parse_assign(p);
 }
 
@@ -1483,6 +1833,7 @@ static AstNode *parse_catch(Parser *p) {
 
   while (check(p, TOKEN_CATCH)) {
     Token catch_tok = advance(p);
+    skip_newlines(p);
 
     const char *err_name = NULL;
     AstNode *handler = NULL;
@@ -1584,7 +1935,8 @@ static AstNode *parse_primary(Parser *p) {
   }
   if (check(p, TOKEN_STRING_LITERAL)) {
     Token tok = advance(p);
-    AstNode *n = ast_new_string_literal(p->arena, tok.str_val.ptr);
+    AstNode *n = ast_new_string_literal(p->arena, tok.str_val.ptr,
+                                        tok.str_val.len);
     n->line = tok.line;
     n->col = tok.column;
     return n;
@@ -1606,6 +1958,13 @@ static AstNode *parse_primary(Parser *p) {
   if (check(p, TOKEN_FALSE)) {
     Token tok = advance(p);
     AstNode *n = ast_new_bool_literal(p->arena, false);
+    n->line = tok.line;
+    n->col = tok.column;
+    return n;
+  }
+  if (check(p, TOKEN_NULL)) {
+    Token tok = advance(p);
+    AstNode *n = ast_new_null_literal(p->arena);
     n->line = tok.line;
     n->col = tok.column;
     return n;
@@ -1644,7 +2003,8 @@ static AstNode *parse_primary(Parser *p) {
       if (!p->panic_mode)
         output = reg.str_val.ptr;
     }
-    AstNode *n = ast_new_asm_expr(p->arena, code.str_val.ptr, output);
+    AstNode *n = ast_new_asm_expr(p->arena, code.str_val.ptr,
+                                  code.str_val.len, output);
     n->line = asm_tok.line;
     n->col = asm_tok.column;
     return n;
@@ -1867,6 +2227,11 @@ static AstNode *parse_primary(Parser *p) {
     return n;
   }
 
+  if (check(p, TOKEN_INVALID)) {
+    parser_error(p, "invalid token or malformed UTF-8/escape sequence");
+    return NULL;
+  }
+
   parser_error(p, "expected an expression");
   return NULL;
 }
@@ -1877,10 +2242,29 @@ static AstNode *parse_postfix(Parser *p) {
     return NULL;
 
   while (true) {
+    if (is_generic_call_lookahead(p)) {
+      AstNode *type_args = parse_type_argument_list(p);
+      if (!type_args)
+        return NULL;
+      Token open =
+          expect(p, TOKEN_LPAREN, "expected '(' after generic arguments");
+      if (p->panic_mode)
+        return NULL;
+      skip_newlines(p);
+      AstNode *args = parse_arg_list(p);
+      expect(p, TOKEN_RPAREN, "expected ')' after arguments");
+      if (p->panic_mode)
+        return NULL;
+      AstNode *n = ast_new_call(p->arena, left, args);
+      n->as.call.type_args = type_args;
+      n->line = open.line;
+      n->col = open.column;
+      left = n;
+
     // ── call: foo(a, b) — Spec §4 ─────────────────────────────────────
     // Note: No line check for calls to allow multi-line function calls
-    if (check(p, TOKEN_LPAREN)) {
-      if ((uint32_t)p->current.line > p->prev_line)
+    } else if (check(p, TOKEN_LPAREN)) {
+      if (starts_new_line(p))
         break;
       Token open = advance(p);
       skip_newlines(p);
@@ -1895,7 +2279,7 @@ static AstNode *parse_postfix(Parser *p) {
 
       // ── index: arr[0] — Spec §3 ───────────────────────────────────────
     } else if (check(p, TOKEN_LBRACKET)) {
-      if ((uint32_t)p->current.line > p->prev_line)
+      if (starts_new_line(p))
         break;
       Token open = advance(p);
       AstNode *index = parse_expr(p);
@@ -1911,6 +2295,8 @@ static AstNode *parse_postfix(Parser *p) {
 
       // ── field: foo.bar — Spec §7 ──────────────────────────────────────
     } else if (check(p, TOKEN_DOT)) {
+      if (starts_new_line(p))
+        break;
       Token dot = advance(p);
       Token field =
           expect(p, TOKEN_IDENTIFIER, "expected field name after '.'");
@@ -1923,7 +2309,10 @@ static AstNode *parse_postfix(Parser *p) {
 
       // ── range: 0..10 or 0..=10 — Spec §6 ─────────────────────────────
     } else if (check(p, TOKEN_RANGE)) {
+      if (starts_new_line(p))
+        break;
       Token range_tok = advance(p);
+      skip_newlines(p);
       AstNode *end = parse_additive(p); // range binds tighter than comparison
       if (!end)
         return NULL;
@@ -1933,7 +2322,10 @@ static AstNode *parse_postfix(Parser *p) {
       left = n;
 
     } else if (check(p, TOKEN_RANGE_INC)) {
+      if (starts_new_line(p))
+        break;
       Token range_tok = advance(p);
+      skip_newlines(p);
       AstNode *end = parse_additive(p);
       if (!end)
         return NULL;
@@ -1954,8 +2346,9 @@ static AstNode *parse_cast(Parser *p) {
   if (!expr)
     return NULL;
 
-  while (check(p, TOKEN_AS)) {
+  while (check(p, TOKEN_AS) && !starts_new_line(p)) {
     Token as_tok = advance(p);
+    skip_newlines(p);
     AstNode *target = parse_type_expr(p);
     if (!target)
       return NULL;
@@ -1971,6 +2364,7 @@ static AstNode *parse_unary(Parser *p) {
   if (check(p, TOKEN_BANG) || check(p, TOKEN_MINUS) || check(p, TOKEN_TILDE) ||
       check(p, TOKEN_AMP) || check(p, TOKEN_STAR)) {
     Token op = advance(p);
+    skip_newlines(p);
     AstNode *right = parse_unary(p);
     if (!right)
       return NULL;
@@ -1989,9 +2383,10 @@ static AstNode *parse_multiplicative(Parser *p) {
 
   while (check(p, TOKEN_STAR) || check(p, TOKEN_SLASH) ||
          check(p, TOKEN_PERCENT)) {
-    if ((uint32_t)p->current.line > p->prev_line)
+    if (starts_new_line(p))
       break;
     Token op = advance(p);
+    skip_newlines(p);
     AstNode *right = parse_unary(p);
     if (!right)
       return NULL;
@@ -2009,9 +2404,10 @@ static AstNode *parse_additive(Parser *p) {
     return NULL;
 
   while (check(p, TOKEN_PLUS) || check(p, TOKEN_MINUS)) {
-    if ((uint32_t)p->current.line > p->prev_line)
+    if (starts_new_line(p))
       break;
     Token op = advance(p);
+    skip_newlines(p);
     AstNode *right = parse_multiplicative(p);
     if (!right)
       return NULL;
@@ -2030,9 +2426,10 @@ static AstNode *parse_bitwise(Parser *p) {
 
   while (check(p, TOKEN_AMP) || check(p, TOKEN_CARET) || check(p, TOKEN_PIPE) ||
          check(p, TOKEN_SHL) || check(p, TOKEN_SHR)) {
-    if ((uint32_t)p->current.line > p->prev_line)
+    if (starts_new_line(p))
       break;
     Token op = advance(p);
+    skip_newlines(p);
     AstNode *right = parse_additive(p);
     if (!right)
       return NULL;
@@ -2051,9 +2448,10 @@ static AstNode *parse_comparison(Parser *p) {
 
   while (check(p, TOKEN_LT) || check(p, TOKEN_LT_EQ) || check(p, TOKEN_GT) ||
          check(p, TOKEN_GT_EQ)) {
-    if ((uint32_t)p->current.line > p->prev_line)
+    if (starts_new_line(p))
       break;
     Token op = advance(p);
+    skip_newlines(p);
     AstNode *right = parse_bitwise(p);
     if (!right)
       return NULL;
@@ -2066,13 +2464,13 @@ static AstNode *parse_comparison(Parser *p) {
 }
 
 static AstNode *parse_equality(Parser *p) {
-  skip_newlines(p);
   AstNode *left = parse_comparison(p);
   if (!left)
     return NULL;
 
-  skip_newlines(p);
   while (check(p, TOKEN_EQ_EQ) || check(p, TOKEN_BANG_EQ)) {
+    if (starts_new_line(p))
+      break;
     Token op = advance(p);
     skip_newlines(p);
     AstNode *right = parse_comparison(p);
@@ -2082,19 +2480,18 @@ static AstNode *parse_equality(Parser *p) {
     n->line = op.line;
     n->col = op.column;
     left = n;
-    skip_newlines(p);
   }
   return left;
 }
 
 static AstNode *parse_logical_and(Parser *p) {
-  skip_newlines(p);
   AstNode *left = parse_equality(p);
   if (!left)
     return NULL;
 
-  skip_newlines(p);
   while (check(p, TOKEN_AND)) {
+    if (starts_new_line(p))
+      break;
     Token op = advance(p);
     skip_newlines(p);
     AstNode *right = parse_equality(p);
@@ -2104,19 +2501,18 @@ static AstNode *parse_logical_and(Parser *p) {
     n->line = op.line;
     n->col = op.column;
     left = n;
-    skip_newlines(p);
   }
   return left;
 }
 
 static AstNode *parse_logical_or(Parser *p) {
-  skip_newlines(p);
   AstNode *left = parse_logical_and(p);
   if (!left)
     return NULL;
 
-  skip_newlines(p);
   while (check(p, TOKEN_OR)) {
+    if (starts_new_line(p))
+      break;
     Token op = advance(p);
     skip_newlines(p);
     AstNode *right = parse_logical_and(p);
@@ -2126,7 +2522,6 @@ static AstNode *parse_logical_or(Parser *p) {
     n->line = op.line;
     n->col = op.column;
     left = n;
-    skip_newlines(p);
   }
   return left;
 }
@@ -2134,6 +2529,7 @@ static AstNode *parse_logical_or(Parser *p) {
 static AstNode *parse_try(Parser *p) {
   if (check(p, TOKEN_TRY)) {
     Token try_tok = advance(p);
+    skip_newlines(p);
     AstNode *expr = parse_try(p); // recursive — handles try try foo()
     if (!expr)
       return NULL;
@@ -2181,5 +2577,5 @@ static AstNode *parse_arg_list(Parser *p) {
     }
   }
 
-  return head; // NULL means empty arg list fuck it
+  return head;
 }

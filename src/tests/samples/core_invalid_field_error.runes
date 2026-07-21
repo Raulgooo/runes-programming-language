@@ -1,0 +1,6 @@
+-- EXPECT FAIL: has no field or method
+
+f main() {
+    i32 value = 7
+    print(value.missing)
+}

@@ -1,0 +1,2 @@
+-- EXPECT FAIL: Unknown type 'Missing'
+f consume(value: Missing) {}

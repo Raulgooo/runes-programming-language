@@ -1,0 +1,5 @@
+mod values
+
+f main() {
+    print(values.answer())
+}

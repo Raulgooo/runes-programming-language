@@ -1,0 +1,10 @@
+-- EXPECT FAIL: has an incompatible signature
+interface Value {
+    f get(self) = result: i32
+}
+
+type Item = { value: i32 }
+
+method Value for Item {
+    f get(self: i32) = result: i32 { result = self }
+}

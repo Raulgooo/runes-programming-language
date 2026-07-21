@@ -12,6 +12,7 @@ void lexer_init(Lexer *L, const char *source, StrTab *strtab) {
   L->start = source;
   L->line = 1;
   L->column = 1;
+  L->start_line = 1;
   L->start_column = 1;
   L->strtab = strtab;
 }
@@ -61,8 +62,8 @@ static Token make_token(Lexer *L, TokenKind kind) {
   token.kind = kind;
   token.start = L->start;
   token.length = (size_t)(L->current - L->start);
-  token.line = L->line;
-  token.column = L->column - (int)token.length;
+  token.line = L->start_line;
+  token.column = L->start_column;
   return token;
 }
 
@@ -72,8 +73,8 @@ static Token error_token(Lexer *L) {
   token.kind = TOKEN_INVALID;
   token.start = L->start;
   token.length = (size_t)(L->current - L->start);
-  token.line = L->line;
-  token.column = L->column - (int)token.length;
+  token.line = L->start_line;
+  token.column = L->start_column;
   return token;
 }
 
@@ -259,10 +260,14 @@ static TokenKind identifier_kind(Lexer *L) {
       case 'e':
         return check_keyword(L, 2, 4, "thod", TOKEN_METHOD);
       case 'o':
-        return check_keyword(L, 2, 1, "d", TOKEN_MOD);
+        if (L->current - L->start > 2 && L->start[2] == 'd')
+          return check_keyword(L, 3, 0, "", TOKEN_MOD);
+        return check_keyword(L, 2, 2, "ve", TOKEN_MOVE);
       }
     }
     break;
+  case 'n':
+    return check_keyword(L, 1, 3, "ull", TOKEN_NULL);
   case 'p':
     if (L->current - L->start > 1) {
       switch (L->start[1]) {
@@ -497,13 +502,125 @@ static uint32_t decode_escape(const char **p) {
   }
 }
 
+static int hex_value(char value) {
+  if (value >= '0' && value <= '9')
+    return value - '0';
+  if (value >= 'a' && value <= 'f')
+    return value - 'a' + 10;
+  if (value >= 'A' && value <= 'F')
+    return value - 'A' + 10;
+  return -1;
+}
+
+static bool append_utf8(uint32_t scalar, char *output, size_t capacity,
+                        size_t *length) {
+  if (scalar > 0x10ffff || (scalar >= 0xd800 && scalar <= 0xdfff))
+    return false;
+  size_t needed = scalar <= 0x7f   ? 1
+                  : scalar <= 0x7ff ? 2
+                  : scalar <= 0xffff ? 3
+                                     : 4;
+  if (*length > capacity - needed)
+    return false;
+  if (needed == 1) {
+    output[(*length)++] = (char)scalar;
+  } else if (needed == 2) {
+    output[(*length)++] = (char)(0xc0 | (scalar >> 6));
+    output[(*length)++] = (char)(0x80 | (scalar & 0x3f));
+  } else if (needed == 3) {
+    output[(*length)++] = (char)(0xe0 | (scalar >> 12));
+    output[(*length)++] = (char)(0x80 | ((scalar >> 6) & 0x3f));
+    output[(*length)++] = (char)(0x80 | (scalar & 0x3f));
+  } else {
+    output[(*length)++] = (char)(0xf0 | (scalar >> 18));
+    output[(*length)++] = (char)(0x80 | ((scalar >> 12) & 0x3f));
+    output[(*length)++] = (char)(0x80 | ((scalar >> 6) & 0x3f));
+    output[(*length)++] = (char)(0x80 | (scalar & 0x3f));
+  }
+  return true;
+}
+
+static bool valid_utf8_bytes(const char *data, size_t length) {
+  size_t index = 0;
+  while (index < length) {
+    const unsigned char *bytes = (const unsigned char *)data + index;
+    unsigned char first = bytes[0];
+    size_t width;
+    uint32_t scalar;
+    uint32_t minimum;
+    if (first <= 0x7f) {
+      index++;
+      continue;
+    } else if (first >= 0xc2 && first <= 0xdf) {
+      width = 2;
+      scalar = first & 0x1f;
+      minimum = 0x80;
+    } else if (first >= 0xe0 && first <= 0xef) {
+      width = 3;
+      scalar = first & 0x0f;
+      minimum = 0x800;
+    } else if (first >= 0xf0 && first <= 0xf4) {
+      width = 4;
+      scalar = first & 0x07;
+      minimum = 0x10000;
+    } else {
+      return false;
+    }
+    if (length - index < width)
+      return false;
+    for (size_t i = 1; i < width; i++) {
+      if ((bytes[i] & 0xc0) != 0x80)
+        return false;
+      scalar = (scalar << 6) | (bytes[i] & 0x3f);
+    }
+    if (scalar < minimum || scalar > 0x10ffff ||
+        (scalar >= 0xd800 && scalar <= 0xdfff))
+      return false;
+    index += width;
+  }
+  return true;
+}
+
+static bool decode_one_utf8(const char *data, size_t available,
+                            size_t *width, uint32_t *scalar) {
+  if (!available)
+    return false;
+  const unsigned char *bytes = (const unsigned char *)data;
+  unsigned char first = bytes[0];
+  uint32_t minimum;
+  if (first <= 0x7f) {
+    *width = 1;
+    *scalar = first;
+    return true;
+  } else if (first >= 0xc2 && first <= 0xdf) {
+    *width = 2;
+    *scalar = first & 0x1f;
+    minimum = 0x80;
+  } else if (first >= 0xe0 && first <= 0xef) {
+    *width = 3;
+    *scalar = first & 0x0f;
+    minimum = 0x800;
+  } else if (first >= 0xf0 && first <= 0xf4) {
+    *width = 4;
+    *scalar = first & 0x07;
+    minimum = 0x10000;
+  } else {
+    return false;
+  }
+  if (available < *width)
+    return false;
+  for (size_t i = 1; i < *width; i++) {
+    if ((bytes[i] & 0xc0) != 0x80)
+      return false;
+    *scalar = (*scalar << 6) | (bytes[i] & 0x3f);
+  }
+  return *scalar >= minimum && *scalar <= 0x10ffff &&
+         !(*scalar >= 0xd800 && *scalar <= 0xdfff);
+}
+
 static Token string_lit(Lexer *L) {
   // L->start points at the opening '"'; current is one past it
   while (peek(L) != '"' && !is_at_end(L)) {
-    if (peek(L) == '\n') {
-      L->line++;
-      L->column = 1;
-    }
     if (peek(L) == '\\')
       advance(L); // skip backslash; next advance handles the escaped char
     advance(L);
@@ -515,12 +632,66 @@ static Token string_lit(Lexer *L) {
   advance(L); // closing '"'
   Token tok = make_token(L, TOKEN_STRING_LITERAL);
 
-  // Intern the string content (excluding quotes)
+  // Decode escapes before interning so length remains authoritative even for
+  // embedded NUL bytes.
   if (L->strtab) {
-    const char *inner = L->start + 1;                       // skip opening '"'
-    size_t inner_len = (size_t)(L->current - L->start - 2); // strip both '"'
-    tok.str_val.ptr = strtab_intern(L->strtab, inner, inner_len);
-    tok.str_val.len = inner_len;
+    const char *inner = L->start + 1;
+    size_t inner_len = (size_t)(L->current - L->start - 2);
+    char *decoded = malloc(inner_len + 1);
+    if (!decoded)
+      return error_token(L);
+    size_t used = 0;
+    bool valid = true;
+    for (size_t i = 0; i < inner_len && valid; i++) {
+      unsigned char value = (unsigned char)inner[i];
+      if (value != '\\') {
+        decoded[used++] = (char)value;
+        continue;
+      }
+      if (++i >= inner_len) {
+        valid = false;
+        break;
+      }
+      switch (inner[i]) {
+      case 'n': decoded[used++] = '\n'; break;
+      case 'r': decoded[used++] = '\r'; break;
+      case 't': decoded[used++] = '\t'; break;
+      case '0': decoded[used++] = '\0'; break;
+      case '\\': decoded[used++] = '\\'; break;
+      case '"': decoded[used++] = '"'; break;
+      case '\'': decoded[used++] = '\''; break;
+      case 'u': {
+        uint32_t scalar = 0;
+        if (i + 4 >= inner_len) {
+          valid = false;
+          break;
+        }
+        for (int digit = 0; digit < 4; digit++) {
+          int hex = hex_value(inner[++i]);
+          if (hex < 0) {
+            valid = false;
+            break;
+          }
+          scalar = (scalar << 4) | (uint32_t)hex;
+        }
+        if (valid)
+          valid = append_utf8(scalar, decoded, inner_len, &used);
+        break;
+      }
+      default:
+        valid = false;
+        break;
+      }
+    }
+    valid = valid && valid_utf8_bytes(decoded, used);
+    if (!valid) {
+      free(decoded);
+      return error_token(L);
+    }
+    decoded[used] = '\0';
+    tok.str_val.ptr = strtab_intern(L->strtab, decoded, used);
+    tok.str_val.len = used;
+    free(decoded);
   }
   return tok;
 }
@@ -531,14 +702,33 @@ static Token char_literal(Lexer *L) {
 
   if (peek(L) == '\\') {
     advance(L); // consume backslash
+    char escape = peek(L);
+    if (escape != 'n' && escape != 't' && escape != 'r' && escape != '\\' &&
+        escape != '\'' && escape != '"' && escape != '0' && escape != 'u')
+      return error_token(L);
+    if (escape == 'u')
+      for (int i = 1; i <= 4; i++)
+        if (hex_value(L->current[i]) < 0)
+          return error_token(L);
     const char *p = L->current;
     cp = decode_escape(&p);
     // advance L->current to where p ended up
     while (L->current < p)
       advance(L);
   } else {
-    cp = (uint32_t)(unsigned char)advance(L);
+    size_t available = 0;
+    while (available < 4 && L->current[available] &&
+           L->current[available] != '\'')
+      available++;
+    size_t width = 0;
+    if (!decode_one_utf8(L->current, available, &width, &cp))
+      return error_token(L);
+    for (size_t i = 0; i < width; i++)
+      advance(L);
   }
+
+  if (cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff))
+    return error_token(L);
 
   if (peek(L) != '\'')
     return error_token(L);
@@ -554,6 +744,7 @@ static Token char_literal(Lexer *L) {
 static Token token_next(Lexer *L) {
   skip_whitespace_and_comments(L);
   L->start = L->current;
+  L->start_line = L->line;
   L->start_column = L->column;
 
   if (is_at_end(L))
@@ -593,6 +784,8 @@ static Token token_next(Lexer *L) {
     return make_token(L, TOKEN_PIPE);
   case '#':
     return make_token(L, TOKEN_HASH);
+  case '?':
+    return make_token(L, TOKEN_QUESTION);
   case '~':
     return make_token(L, TOKEN_TILDE);
   case '^':
@@ -733,6 +926,8 @@ const char *token_kind_to_string(TokenKind kind) {
     return "extern";
   case TOKEN_VOLATILE:
     return "volatile";
+  case TOKEN_MOVE:
+    return "move";
   case TOKEN_PROMOTE:
     return "promote";
   case TOKEN_SIZEOF:
@@ -747,6 +942,8 @@ const char *token_kind_to_string(TokenKind kind) {
     return "true";
   case TOKEN_FALSE:
     return "false";
+  case TOKEN_NULL:
+    return "null";
   case TOKEN_I8:
     return "i8";
   case TOKEN_I16:
@@ -815,6 +1012,8 @@ const char *token_kind_to_string(TokenKind kind) {
     return "|";
   case TOKEN_HASH:
     return "#";
+  case TOKEN_QUESTION:
+    return "?";
   case TOKEN_PLUS:
     return "+";
   case TOKEN_MINUS:

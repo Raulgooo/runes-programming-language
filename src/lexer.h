@@ -47,6 +47,7 @@ typedef enum {
   TOKEN_ASM,
   TOKEN_EXTERN,
   TOKEN_VOLATILE,
+  TOKEN_MOVE,
   TOKEN_PROMOTE,
   TOKEN_SIZEOF,
   TOKEN_ALIGNOF,
@@ -54,6 +55,7 @@ typedef enum {
   TOKEN_AS,
   TOKEN_TRUE,
   TOKEN_FALSE,
+  TOKEN_NULL,
   /* Primitive Types */
   TOKEN_I8,
   TOKEN_I16,
@@ -91,6 +93,7 @@ typedef enum {
   TOKEN_RANGE_INC,   /* ..= */
   TOKEN_PIPE,        /* | */
   TOKEN_HASH,        /* # */
+  TOKEN_QUESTION,    /* ? */
 
   /* Operators */
   TOKEN_PLUS,    /* + */
@@ -136,6 +139,7 @@ typedef struct {
   const char *start;
   int line;
   int column;
+  int start_line;
   int start_column;
   StrTab *strtab; /* string-interning table, NULL → no interning */
 } Lexer;

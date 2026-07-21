@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Pointer-related casts require an unsafe block
+f from_address(address: usize) = result: *u8 {
+    result = address as *u8
+}

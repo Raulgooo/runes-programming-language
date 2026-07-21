@@ -1,0 +1,4 @@
+f main() {
+    i8 value = 64
+    print(value << 1)
+}

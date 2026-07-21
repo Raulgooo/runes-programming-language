@@ -1,0 +1,9 @@
+-- EXPECT FAIL: Pointer to stack storage cannot escape a function
+type Handler = { callback: f(i32) -> i32 }
+
+f invalid(base: i32) = result: Handler {
+    f add(value: i32) = answer: i32 {
+        answer = base + value
+    }
+    result = Handler(callback: add)
+}

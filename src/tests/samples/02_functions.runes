@@ -9,7 +9,9 @@ type Token = { kind: i32 }
 type PageTable = { entries: [512]u64 }
 type Task = { id: i32, name: str, state: i32 }
 
+#[safe]
 extern f tokenize(source: str) = result: *Token
+#[safe]
 extern f task_queue_push(task: Task)
 
 mod scheduler {
@@ -56,11 +58,11 @@ f clamp(val: i32, lo: i32, hi: i32) = r: i32 {
 
 -- Pointer parameter
 f zero_byte(p: *u8) {
-    *p = 0
+    unsafe { *p = 0 }
 }
 
 f read_byte(p: *u8) = r: u8 {
-    r = *p
+    unsafe { r = *p }
 }
 
 -- ─────────────────────────────────────────────
@@ -70,7 +72,7 @@ f read_byte(p: *u8) = r: u8 {
 stack f fast_hash(data: *u8, len: usize) = r: u64 {
     r = 0
     for (0..len) |i| {
-        r = r ^ ((*(data + i)) as u64)
+        unsafe { r = r ^ ((*(data + i)) as u64) }
         r = r * 0x9e3779b97f4a7c15
     }
 }
@@ -105,7 +107,7 @@ dynamic f init_driver(name: str) = r: i32 {
 
     if validate(name) {
         *Config c = load_config(name)
-        r = c.id
+        unsafe { r = c.id }
     } else {
         r = -1
     }
@@ -122,13 +124,15 @@ regional f make_page_table() = t: PageTable {
 -- regional f may only nest f
 regional f build_tables() {
     f zero(p: *u8) {
-        *p = 0
+        unsafe { *p = 0 }
     }
 
     PageTable pml4 = PageTable(entries: [])
     PageTable pdpt = PageTable(entries: [])
-    zero((&pml4) as *u8)
-    zero((&pdpt) as *u8)
+    unsafe {
+        zero((&pml4) as *u8)
+        zero((&pdpt) as *u8)
+    }
 }
 
 -- promote out of regional into dynamic
@@ -145,7 +149,7 @@ regional f build_promoted() = r: (*PageTable, *PageTable) {
 
 -- promote out of regional into gc
 regional f build_gc() = r: *Node {
-    Node n = Node(val: 99, next: 0 as *Node)
+    Node n = Node(val: 99, next: null)
     r = promote(&n) as gc
 }
 
@@ -182,14 +186,18 @@ gc f run_pipeline(src: str) = r: i32 {
 
 flex f make_node(val: i32) = r: *Node {
     r = alloc(sizeof(Node))
-    r.val = val
-    r.next = 0 as *Node
+    unsafe {
+        r.val = val
+        r.next = null
+    }
 }
 
 flex f copy_str(s: str) = r: *u8 {
     r = alloc(s.len + 1)
-    memcpy(r, s.ptr, s.len)
-    *(r + s.len) = 0
+    unsafe {
+        memcpy(r, s.ptr, s.len)
+        *(r + s.len) = 0
+    }
 }
 
 -- ─────────────────────────────────────────────
@@ -226,7 +234,7 @@ pub dynamic f kernel_main() {
     regional f setup_paging() = r: !void {
         PageTable pml4 = PageTable.new()
         PageTable pdpt = PageTable.new()
-        try pml4.map(0xFFFF800000000000, (&pdpt) as u64, 0x3)
+        unsafe { try pml4.map(0xFFFF800000000000, (&pdpt) as u64, 0x3) }
     }
 
     setup_paging() catch |e| { return }

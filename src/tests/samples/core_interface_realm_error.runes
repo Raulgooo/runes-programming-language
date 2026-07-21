@@ -1,0 +1,12 @@
+-- EXPECT FAIL: Interface method 'get' has an incompatible signature
+interface Value {
+    gc f get(self) = result: i32
+}
+
+type Item = { value: i32 }
+
+method Value for Item {
+    f get(self) = result: i32 {
+        result = self.value
+    }
+}

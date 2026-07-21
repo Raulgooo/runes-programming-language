@@ -1,0 +1,3 @@
+-- EXPECT FAIL: Unsupported calling convention
+#[callconv("fastcall")]
+f answer() {}

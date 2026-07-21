@@ -74,6 +74,10 @@
           "named": true
         },
         {
+          "type": "null",
+          "named": true
+        },
+        {
           "type": "operator",
           "named": true
         },
@@ -174,6 +178,10 @@
     "named": false
   },
   {
+    "type": "<<",
+    "named": false
+  },
+  {
     "type": "<=",
     "named": false
   },
@@ -191,6 +199,14 @@
   },
   {
     "type": ">=",
+    "named": false
+  },
+  {
+    "type": ">>",
+    "named": false
+  },
+  {
+    "type": "?",
     "named": false
   },
   {
@@ -219,6 +235,10 @@
   },
   {
     "type": "^",
+    "named": false
+  },
+  {
+    "type": "alignof",
     "named": false
   },
   {
@@ -370,8 +390,12 @@
     "named": false
   },
   {
-    "type": "not",
+    "type": "move",
     "named": false
+  },
+  {
+    "type": "null",
+    "named": true
   },
   {
     "type": "or",
@@ -395,6 +419,10 @@
   },
   {
     "type": "self",
+    "named": false
+  },
+  {
+    "type": "sizeof",
     "named": false
   },
   {

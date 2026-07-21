@@ -1,18 +1,28 @@
 #include "arena.h"
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-static size_t align_up(size_t n, size_t align) {
-  return (n + align - 1) & ~(align - 1);
+static bool is_power_of_two(size_t value) {
+  return value != 0 && (value & (value - 1)) == 0;
 }
 
-static ArenaBlock *block_new(size_t min_size) {
-  size_t size = min_size > ARENA_BLOCK_SIZE ? min_size : ARENA_BLOCK_SIZE;
+static bool align_up(uintptr_t value, size_t align, uintptr_t *result) {
+  if (!is_power_of_two(align) || value > UINTPTR_MAX - (align - 1))
+    return false;
+  *result = (value + align - 1) & ~(uintptr_t)(align - 1);
+  return true;
+}
+
+static ArenaBlock *block_new(size_t min_size, size_t block_size) {
+  size_t size = min_size > block_size ? min_size : block_size;
+  if (size > SIZE_MAX - sizeof(ArenaBlock))
+    return NULL;
   ArenaBlock *b = malloc(sizeof(ArenaBlock) + size);
   if (!b)
     return NULL;
@@ -26,12 +36,45 @@ static ArenaBlock *block_new(size_t min_size) {
 // Lifecycle
 // ─────────────────────────────────────────────────────────────────────────────
 
-void arena_init(Arena *a) {
-  a->first = block_new(ARENA_BLOCK_SIZE);
+bool arena_init_with_block_size(Arena *a, size_t block_size) {
+  if (!a || block_size == 0)
+    return false;
+  memset(a, 0, sizeof(*a));
+  a->block_size = block_size;
+  a->first = block_new(block_size, block_size);
   a->current = a->first;
+  return a->first != NULL;
+}
+
+bool arena_init(Arena *a) {
+  return arena_init_with_block_size(a, ARENA_BLOCK_SIZE);
+}
+
+Arena *arena_create_child(Arena *parent) {
+  if (!parent || !parent->first)
+    return NULL;
+  Arena *child = malloc(sizeof(*child));
+  if (!child || !arena_init_with_block_size(child, parent->block_size)) {
+    free(child);
+    return NULL;
+  }
+  child->parent = parent;
+  child->next_sibling = parent->first_child;
+  parent->first_child = child;
+  return child;
 }
 
 void arena_destroy(Arena *a) {
+  if (!a)
+    return;
+  Arena *child = a->first_child;
+  while (child) {
+    Arena *next = child->next_sibling;
+    child->parent = NULL;
+    arena_destroy(child);
+    free(child);
+    child = next;
+  }
   ArenaBlock *b = a->first;
   while (b) {
     ArenaBlock *next = b->next;
@@ -40,6 +83,18 @@ void arena_destroy(Arena *a) {
   }
   a->first = NULL;
   a->current = NULL;
+  a->first_child = NULL;
+  a->bytes_allocated = 0;
+
+  if (a->parent) {
+    Arena **link = &a->parent->first_child;
+    while (*link && *link != a)
+      link = &(*link)->next_sibling;
+    if (*link == a)
+      *link = a->next_sibling;
+  }
+  a->parent = NULL;
+  a->next_sibling = NULL;
 }
 
 void arena_reset(Arena *a) {
@@ -51,6 +106,7 @@ void arena_reset(Arena *a) {
     b = b->next;
   }
   a->current = a->first;
+  a->bytes_allocated = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,6 +114,8 @@ void arena_reset(Arena *a) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void *arena_alloc_aligned(Arena *a, size_t size, size_t align) {
+  if (!a || !a->current || !is_power_of_two(align))
+    return NULL;
   if (size == 0)
     size = 1;
 
@@ -67,10 +125,15 @@ void *arena_alloc_aligned(Arena *a, size_t size, size_t align) {
   // normal forward allocation.
   ArenaBlock *b = a->current;
   while (b) {
-    char *aligned = (char *)align_up((uintptr_t)b->ptr, align);
-    if (aligned + size <= b->end) {
+    uintptr_t aligned_value;
+    if (!align_up((uintptr_t)b->ptr, align, &aligned_value))
+      return NULL;
+    char *aligned = (char *)aligned_value;
+    if (aligned <= b->end && size <= (size_t)(b->end - aligned)) {
       a->current = b;
       b->ptr = aligned + size;
+      if (a->bytes_allocated <= SIZE_MAX - size)
+        a->bytes_allocated += size;
       memset(aligned, 0, size);
       return aligned;
     }
@@ -79,7 +142,9 @@ void *arena_alloc_aligned(Arena *a, size_t size, size_t align) {
 
   // No existing block fits. Allocate a fresh one and splice it in after
   // current so we don't lose the rest of the chain.
-  ArenaBlock *fresh = block_new(size + align);
+  if (size > SIZE_MAX - align)
+    return NULL;
+  ArenaBlock *fresh = block_new(size + align, a->block_size);
   if (!fresh)
     return NULL;
 
@@ -87,10 +152,34 @@ void *arena_alloc_aligned(Arena *a, size_t size, size_t align) {
   a->current->next = fresh;
   a->current = fresh;
 
-  char *aligned = (char *)align_up((uintptr_t)fresh->ptr, align);
+  uintptr_t aligned_value;
+  if (!align_up((uintptr_t)fresh->ptr, align, &aligned_value)) {
+    a->current = a->first;
+    return NULL;
+  }
+  char *aligned = (char *)aligned_value;
   fresh->ptr = aligned + size;
+  a->bytes_allocated += size;
   memset(aligned, 0, size);
   return aligned;
+}
+
+bool arena_owns(const Arena *a, const void *pointer) {
+  if (!a || !pointer)
+    return false;
+  uintptr_t address = (uintptr_t)pointer;
+  for (const ArenaBlock *block = a->first; block; block = block->next) {
+    uintptr_t begin = (uintptr_t)block->data;
+    uintptr_t end = (uintptr_t)block->ptr;
+    if (address >= begin && address < end)
+      return true;
+  }
+  for (const Arena *child = a->first_child; child;
+       child = child->next_sibling) {
+    if (arena_owns(child, pointer))
+      return true;
+  }
+  return false;
 }
 
 void *arena_alloc(Arena *a, size_t size) {
@@ -124,6 +213,8 @@ char *arena_strndup(Arena *a, const char *s, size_t n) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 ArenaSnapshot arena_snapshot(const Arena *a) {
+  if (!a || !a->current)
+    return (ArenaSnapshot){0};
   return (ArenaSnapshot){
       .block = a->current,
       .ptr = a->current->ptr,
@@ -131,6 +222,8 @@ ArenaSnapshot arena_snapshot(const Arena *a) {
 }
 
 void arena_restore(Arena *a, ArenaSnapshot snap) {
+  if (!a || !snap.block)
+    return;
   // Rewind the saved block to its saved cursor position.
   snap.block->ptr = snap.ptr;
 

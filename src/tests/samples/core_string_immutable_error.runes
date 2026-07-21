@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Cannot assign through an immutable string
+f main() {
+    str value = "abc"
+    value[0] = 65
+}

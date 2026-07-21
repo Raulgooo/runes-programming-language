@@ -1,0 +1,9 @@
+-- EXPECT FAIL: cannot infer type argument 'T'
+f make<T>() = result: T {
+    T value
+    result = value
+}
+
+f main() {
+    print(make())
+}

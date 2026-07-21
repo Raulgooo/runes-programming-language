@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Cannot nest arena function inside flex realm
+flex f generic_allocator() {
+    regional f realm_specific() {}
+}

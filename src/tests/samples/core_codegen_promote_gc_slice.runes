@@ -1,0 +1,30 @@
+extern f alloc(size: usize) = result: *void
+extern f runes_gc_collect()
+extern f runes_gc_debug_object_count() = result: usize
+
+type Node = { value: i32 }
+type NodeRef = { node: *Node }
+type Views = { nodes: []NodeRef }
+
+regional f promoted_views() = result: *Views {
+    unsafe {
+        *Node node = alloc(sizeof(Node)) as *Node
+        node.value = 42
+        *NodeRef backing = alloc(2 * sizeof(NodeRef)) as *NodeRef
+        backing[0].node = node
+        backing[1].node = node
+        *Views views = alloc(sizeof(Views)) as *Views
+        views.nodes = slice(backing, 2)
+        result = promote(views) as gc
+    }
+}
+
+f main() {
+    *Views views = promoted_views()
+    runes_gc_collect()
+    unsafe {
+        print(views.nodes[0].node == views.nodes[1].node, " ",
+              views.nodes[0].node.value, " ",
+              runes_gc_debug_object_count())
+    }
+}

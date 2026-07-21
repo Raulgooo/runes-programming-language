@@ -1,0 +1,32 @@
+interface Summing {
+    f sum(self, values: []const i32) = result: i32
+}
+
+type Calculator = { bias: i32 }
+
+f sum_with_bias(bias: i32, values: []const i32) = result: i32 {
+    result = bias
+    for (values) |value| {
+        result = result + value
+    }
+}
+
+method Calculator {
+    f sum(self, values: []const i32) = result: i32 {
+        result = sum_with_bias(self.bias, values)
+    }
+}
+
+method Summing for Calculator {
+    f sum(self, values: []const i32) = result: i32 {
+        result = sum_with_bias(self.bias, values)
+    }
+}
+
+f main() {
+    Calculator calculator = Calculator(bias: 2)
+    [3]i32 values = [10, 20, 30]
+    []i32 view = values
+    Summing dispatched = calculator
+    print(calculator.sum(values), " ", dispatched.sum(view))
+}

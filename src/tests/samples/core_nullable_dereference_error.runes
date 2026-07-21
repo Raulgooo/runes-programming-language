@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Cannot dereference a nullable pointer
+f read(pointer: ?*i32) = result: i32 {
+    unsafe { result = *pointer }
+}

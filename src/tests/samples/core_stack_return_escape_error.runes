@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Pointer to stack storage cannot escape a function
+f stack_pointer() = result: *i32 {
+    i32 local = 42
+    result = &local
+}

@@ -1,0 +1,8 @@
+-- EXPECT FAIL: Variable initializer does not match declared type
+error ReadError = {
+    | Failed
+}
+
+f main() {
+    u32 code = error.ReadError.Failed
+}

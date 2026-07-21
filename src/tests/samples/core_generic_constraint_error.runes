@@ -1,0 +1,17 @@
+-- EXPECT FAIL: does not satisfy exact interface constraint
+interface Value {
+    f get(self) = result: i32
+}
+
+type Missing = {
+    value: i32
+}
+
+f read<T: Value>(value: T) = result: i32 {
+    result = value.get()
+}
+
+f main() {
+    Missing value = Missing(value: 42)
+    print(read<Missing>(value))
+}

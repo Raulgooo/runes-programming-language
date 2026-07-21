@@ -1,0 +1,8 @@
+-- EXPECT FAIL: Module has no member 'missing'
+mod tools {
+    pub f present() {}
+}
+
+f main() {
+    tools.missing()
+}

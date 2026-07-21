@@ -1,0 +1,27 @@
+extern f alloc(size: usize) = result: *void
+extern f runes_gc_collect()
+extern f runes_gc_debug_object_count() = result: usize
+
+type Cell = { value: i32 }
+
+?*Cell retained = null
+
+flex f make_cell(value: i32) = result: *Cell {
+    unsafe {
+        result = alloc(sizeof(Cell)) as *Cell
+        result.value = value
+    }
+}
+
+gc f create() = result: *Cell {
+    result = make_cell(77)
+    runes_gc_collect()
+}
+
+f main() {
+    retained = create()
+    runes_gc_collect()
+    unsafe {
+        print(unwrap(retained).value, " ", runes_gc_debug_object_count())
+    }
+}

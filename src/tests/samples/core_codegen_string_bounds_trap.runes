@@ -1,0 +1,5 @@
+f main() {
+    str value = "abc"
+    usize index = 3
+    print(value[index])
+}

@@ -53,9 +53,9 @@ i32 middle = nums[2]
 u8  alpha  = rgba[3]
 
 -- Raw pointer declaration
-*u8  raw_buf = 0 as *u8
-*u64 table   = 0xFFFF000000000000 as *u64
+?*u8 raw_buf = null
+extern *u64 table
 
 -- Volatile pointer
-volatile *u32 uart = 0x10000000 as *u32
-volatile *u8  pic  = 0xFEC00000 as *u8
+extern *u32 uart
+extern *u8 pic

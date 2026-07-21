@@ -1,0 +1,10 @@
+-- EXPECT FAIL: GC function reference arguments must have GC-stable storage
+type Cell = { value: i32 }
+
+gc f retain(cell: *Cell) {
+}
+
+f main() {
+    Cell local = Cell(value: 42)
+    retain(&local)
+}

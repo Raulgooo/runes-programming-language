@@ -1,0 +1,36 @@
+extern f alloc(size: usize) = result: *void
+extern f raw_alloc(size: usize) = result: *void
+extern f raw_free(pointer: *void)
+
+type Node = { value: i32, next: ?*Node, alias: ?*Node, external: *i32 }
+
+regional f promoted_cycle() = result: *Node {
+    unsafe {
+        *Node root = alloc(sizeof(Node)) as *Node
+        *Node child = alloc(sizeof(Node)) as *Node
+        *i32 external = raw_alloc(sizeof(i32)) as *i32
+        *external = 99
+
+        root.value = 1
+        root.next = child
+        root.alias = child
+        root.external = external
+        child.value = 2
+        child.next = root
+        child.alias = null
+        child.external = external
+
+        result = promote(root) as dynamic
+    }
+}
+
+f main() {
+    unsafe {
+        *Node root = promoted_cycle()
+        *Node child = unwrap(root.next)
+        print(root.next == root.alias, " ", unwrap(child.next) == root, " ", *root.external, " ", root.value + child.value)
+        raw_free(child)
+        raw_free(root.external)
+        raw_free(root)
+    }
+}

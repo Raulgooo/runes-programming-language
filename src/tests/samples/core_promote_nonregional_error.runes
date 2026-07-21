@@ -1,0 +1,7 @@
+-- EXPECT FAIL: promote is only available inside a regional function
+type Value = { number: i32 }
+
+dynamic f invalid_promotion() = result: *Value {
+    Value local = Value(number: 42)
+    result = promote(&local) as dynamic
+}

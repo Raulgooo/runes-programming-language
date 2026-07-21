@@ -1,0 +1,8 @@
+-- EXPECT FAIL: expects 1 type argument(s), got 2
+f identity<T>(value: T) = result: T {
+    result = value
+}
+
+f main() {
+    print(identity<i32, bool>(42))
+}

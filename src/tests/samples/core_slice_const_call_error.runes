@@ -1,0 +1,9 @@
+-- EXPECT FAIL: Cannot create a mutable slice from constant storage
+f mutate(values: []i32) {
+    values[0] = 9
+}
+
+f main() {
+    const [2]i32 values = [1, 2]
+    mutate(values)
+}

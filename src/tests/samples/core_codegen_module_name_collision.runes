@@ -1,0 +1,19 @@
+mod a_b {
+    pub mod c {
+        pub f value() = result: i32 {
+            result = 20
+        }
+    }
+}
+
+mod a {
+    pub mod b_c {
+        pub f value() = result: i32 {
+            result = 22
+        }
+    }
+}
+
+f main() {
+    print(a_b.c.value(), " ", a.b_c.value())
+}

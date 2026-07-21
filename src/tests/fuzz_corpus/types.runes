@@ -1,0 +1,6 @@
+type Point = { x: i32, y: i32 }
+type Maybe = | Some(i32) | None
+
+f choose(point: Point) = result: Maybe {
+    result = if point.x == point.y { Some(point.x) } else { None }
+}

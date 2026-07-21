@@ -55,8 +55,8 @@ To inspect the generated C:
 
 ## 4. Use arrays and pointers
 
-Runes v0.1 uses fixed arrays and raw pointers. Dynamic containers are ordinary
-structs containing a pointer, length, and capacity.
+Runes v0.1 has fixed arrays, non-owning slices, and raw pointers. Owning dynamic
+containers remain user-library types.
 
 ```runes
 f sum(values: [4]i32) = result: i32 {
@@ -95,8 +95,9 @@ flags after `--`:
 ./runec build app.runes -o build/app -- -lpthread
 ```
 
-The current module system is semantic; source files must still be listed on the
-command line because filesystem module discovery is not implemented yet.
+External modules are discovered relative to the declaring file. `mod parser`
+loads exactly one of `parser.runes` or `parser/mod.runes`; supplying both is an
+error. You can still list independent root files explicitly.
 
 ## 6. Useful compiler commands
 

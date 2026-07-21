@@ -13,5 +13,5 @@ f classify(value: i32) = result: str {
 
 f main() {
     i32 chosen = if selector > 1 { 40 + 2 } else { 0 }
-    print(global_label, classify(-1), chosen)
+    print(global_label, " ", classify(-1), " ", chosen)
 }

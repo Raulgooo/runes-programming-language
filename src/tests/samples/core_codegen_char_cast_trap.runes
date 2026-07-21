@@ -1,0 +1,4 @@
+f main() {
+    u32 surrogate = 0xd800
+    print(surrogate as char)
+}

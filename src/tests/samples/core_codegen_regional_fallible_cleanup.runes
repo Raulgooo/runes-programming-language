@@ -1,0 +1,24 @@
+extern f alloc(size: usize) = result: *void
+extern f runes_debug_live_arena_scopes() = result: usize
+extern f runes_debug_live_arena_roots() = result: usize
+
+error ScopeError = { | Failed }
+
+regional f inner(fail: bool) = result: !i32 {
+    unsafe {
+        *i32 value = alloc(sizeof(i32)) as *i32
+        *value = 42
+        if fail { return error.ScopeError.Failed }
+        result = *value
+    }
+}
+
+regional f outer(fail: bool) = result: !i32 {
+    result = try inner(fail)
+}
+
+f main() {
+    i32 success = outer(false) catch -1
+    i32 failure = outer(true) catch -1
+    print(success, " ", failure, " ", runes_debug_live_arena_scopes(), " ", runes_debug_live_arena_roots())
+}

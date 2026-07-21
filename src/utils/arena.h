@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tunables
@@ -13,7 +14,7 @@
 #endif
 
 #ifndef ARENA_ALIGN
-#define ARENA_ALIGN (sizeof(void *)) // natural pointer alignment
+#define ARENA_ALIGN (_Alignof(max_align_t))
 #endif
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,9 +32,14 @@ typedef struct ArenaBlock {
 // Arena
 // ─────────────────────────────────────────────────────────────────────────────
 
-typedef struct {
+typedef struct Arena {
   ArenaBlock *first;
   ArenaBlock *current;
+  struct Arena *parent;
+  struct Arena *first_child;
+  struct Arena *next_sibling;
+  size_t block_size;
+  size_t bytes_allocated;
 } Arena;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,9 +61,12 @@ typedef struct {
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Lifecycle
-void arena_init(Arena *a);
+bool arena_init(Arena *a);
+bool arena_init_with_block_size(Arena *a, size_t block_size);
+Arena *arena_create_child(Arena *parent);
 void arena_destroy(Arena *a);
 void arena_reset(Arena *a); // rewind everything, keep block chain alive
+bool arena_owns(const Arena *a, const void *pointer);
 
 // Allocation
 void *arena_alloc(Arena *a, size_t size);

@@ -1,0 +1,12 @@
+-- EXPECT FAIL: Duplicate method 'value' for type 'Choice'
+type Choice =
+    | First
+    | Second
+
+method Choice {
+    f value(self) = result: i32 { result = 1 }
+}
+
+method Choice {
+    f value(self) = result: i32 { result = 2 }
+}

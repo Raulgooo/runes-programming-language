@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Cannot call gc function from stack realm
+gc f managed() {}
+
+f invalid() {
+    managed()
+}

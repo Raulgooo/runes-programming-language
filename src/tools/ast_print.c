@@ -7,6 +7,39 @@ static void indent(int level) {
     printf("  ");
 }
 
+static void print_string_bytes(const char *value, size_t length) {
+  if (!value) {
+    fputs("(null)", stdout);
+    return;
+  }
+  for (size_t i = 0; i < length; i++) {
+    unsigned char byte = (unsigned char)value[i];
+    switch (byte) {
+    case '\\':
+      fputs("\\\\", stdout);
+      break;
+    case '"':
+      fputs("\\\"", stdout);
+      break;
+    case '\n':
+      fputs("\\n", stdout);
+      break;
+    case '\r':
+      fputs("\\r", stdout);
+      break;
+    case '\t':
+      fputs("\\t", stdout);
+      break;
+    default:
+      if (byte >= 0x20 && byte <= 0x7e)
+        fputc(byte, stdout);
+      else
+        printf("\\x%02x", byte);
+      break;
+    }
+  }
+}
+
 static const char *realm_to_string(MemoryRealm realm) {
   switch (realm) {
   case REALM_STACK:
@@ -36,10 +69,14 @@ static const char *type_kind_to_string(TypeKind kind) {
     return "pointer";
   case TYPE_ARRAY:
     return "array";
+  case TYPE_SLICE:
+    return "slice";
   case TYPE_FALLIBLE:
     return "fallible";
   case TYPE_TUPLE:
     return "tuple";
+  case TYPE_FUNCTION:
+    return "function";
   default:
     return "unknown";
   }
@@ -54,7 +91,10 @@ static void print_attrs(Attr *attrs, int level) {
       printf("(");
       // For now, only simple literal args are common in attributes
       if (a->arg->kind == AST_STRING_LITERAL) {
-        printf("\"%s\"", a->arg->as.string_literal.value);
+        fputc('"', stdout);
+        print_string_bytes(a->arg->as.string_literal.value,
+                           a->arg->as.string_literal.length);
+        fputc('"', stdout);
       } else if (a->arg->kind == AST_INT_LITERAL) {
         printf("%llu", a->arg->as.int_literal.value);
       } else {
@@ -87,6 +127,11 @@ void ast_print_ext(AstNode *node, int level) {
            realm_to_string(node->as.func_decl.realm),
            node->as.func_decl.is_pub ? "true" : "false",
            node->as.func_decl.is_main ? "true" : "false");
+    if (node->as.func_decl.generic_params) {
+      indent(level + 1);
+      printf("GenericParams:\n");
+      ast_print_ext(node->as.func_decl.generic_params, level + 2);
+    }
     if (node->as.func_decl.params) {
       indent(level + 1);
       printf("Params:\n");
@@ -133,6 +178,8 @@ void ast_print_ext(AstNode *node, int level) {
     printf("TypeDecl name='%s' is_pub=%s\n",
            node->as.type_decl.name ? node->as.type_decl.name : "(null)",
            node->as.type_decl.is_pub ? "true" : "false");
+    if (node->as.type_decl.generic_params)
+      ast_print_ext(node->as.type_decl.generic_params, level + 1);
     ast_print_ext(node->as.type_decl.fields, level + 1);
     break;
 
@@ -140,6 +187,8 @@ void ast_print_ext(AstNode *node, int level) {
     printf("VariantDecl name='%s' is_pub=%s\n",
            node->as.variant_decl.name ? node->as.variant_decl.name : "(null)",
            node->as.variant_decl.is_pub ? "true" : "false");
+    if (node->as.variant_decl.generic_params)
+      ast_print_ext(node->as.variant_decl.generic_params, level + 1);
     ast_print_ext(node->as.variant_decl.arms, level + 1);
     break;
 
@@ -170,6 +219,8 @@ void ast_print_ext(AstNode *node, int level) {
            node->as.method_decl.iface_name ? node->as.method_decl.iface_name
                                            : "(null)",
            node->as.method_decl.is_pub ? "true" : "false");
+    if (node->as.method_decl.type_args)
+      ast_print_ext(node->as.method_decl.type_args, level + 1);
     ast_print_ext(node->as.method_decl.methods, level + 1);
     break;
 
@@ -250,9 +301,10 @@ void ast_print_ext(AstNode *node, int level) {
     break;
 
   case AST_STRING_LITERAL:
-    printf("StringLiteral value=\"%s\"\n", node->as.string_literal.value
-                                               ? node->as.string_literal.value
-                                               : "(null)");
+    fputs("StringLiteral value=\"", stdout);
+    print_string_bytes(node->as.string_literal.value,
+                       node->as.string_literal.length);
+    fputs("\"\n", stdout);
     break;
 
   case AST_BOOL_LITERAL:
@@ -286,6 +338,11 @@ void ast_print_ext(AstNode *node, int level) {
     if (node->as.type_expr.elems) {
       ast_print_ext(node->as.type_expr.elems, level + 1);
     }
+    if (node->as.type_expr.type_args) {
+      indent(level + 1);
+      printf("TypeArgs:\n");
+      ast_print_ext(node->as.type_expr.type_args, level + 2);
+    }
     break;
 
   case AST_CALL_EXPR:
@@ -293,6 +350,11 @@ void ast_print_ext(AstNode *node, int level) {
     indent(level + 1);
     printf("Callee:\n");
     ast_print_ext(node->as.call.callee, level + 2);
+    if (node->as.call.type_args) {
+      indent(level + 1);
+      printf("TypeArgs:\n");
+      ast_print_ext(node->as.call.type_args, level + 2);
+    }
     if (node->as.call.args) {
       indent(level + 1);
       printf("Args:\n");
@@ -523,8 +585,10 @@ void ast_print_ext(AstNode *node, int level) {
     break;
 
   case AST_ASM_EXPR:
-    printf("AsmExpr code='%s' output='%s'\n",
-           node->as.asm_expr.code ? node->as.asm_expr.code : "(null)",
+    fputs("AsmExpr code='", stdout);
+    print_string_bytes(node->as.asm_expr.code,
+                       node->as.asm_expr.code_length);
+    printf("' output='%s'\n",
            node->as.asm_expr.output ? node->as.asm_expr.output : "(none)");
     break;
 

@@ -1,0 +1,19 @@
+extern f alloc(size: usize) = result: *void
+
+regional f child_value() = result: *i32 {
+    unsafe {
+        result = alloc(sizeof(i32)) as *i32
+        *result = 42
+    }
+}
+
+regional f parent_value(leave_early: bool) = result: i32 {
+    *i32 child = child_value()
+    unsafe { result = *child }
+    if leave_early { return result }
+    result = result + 1
+}
+
+f main() {
+    print(parent_value(true), " ", parent_value(false))
+}

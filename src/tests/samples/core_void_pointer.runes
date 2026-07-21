@@ -3,5 +3,5 @@ extern f allocate(size: usize) = result: *void
 type Entry = { value: i32 }
 
 f allocate_entry() = result: *Entry {
-    result = allocate(sizeof(Entry))
+    unsafe { result = allocate(sizeof(Entry)) }
 }

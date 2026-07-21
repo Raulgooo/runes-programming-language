@@ -1,3 +1,4 @@
+#[safe]
 extern f abs(value: i32) = result: i32
 
 f main() {

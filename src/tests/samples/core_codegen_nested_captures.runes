@@ -1,0 +1,39 @@
+f accumulate(start: i32) = result: i32 {
+    i32 total = start
+
+    f add(delta: i32) {
+        total = total + delta
+    }
+
+    add(2)
+    add(3)
+    result = total
+}
+
+f transitive(value: i32) = result: i32 {
+    f leaf() = answer: i32 {
+        answer = value
+    }
+
+    f middle() = answer: i32 {
+        answer = leaf()
+    }
+
+    result = middle()
+}
+
+f loop_captures() = result: i32 {
+    [3]i32 values = [4, 5, 6]
+    i32 total = 0
+    for (values) |value, index| {
+        f include() {
+            total = total + value + (index as i32)
+        }
+        include()
+    }
+    result = total
+}
+
+f main() {
+    print(accumulate(10), " ", transitive(42), " ", loop_captures())
+}

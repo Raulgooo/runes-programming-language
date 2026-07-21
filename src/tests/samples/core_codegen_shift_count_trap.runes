@@ -1,0 +1,5 @@
+f main() {
+    u8 value = 1
+    u64 count = 4294967296
+    print(value << count)
+}

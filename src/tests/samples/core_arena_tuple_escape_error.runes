@@ -1,0 +1,10 @@
+-- EXPECT FAIL: Arena-backed value cannot escape its regional call tree
+extern f alloc(size: usize) = result: *void
+
+regional f arena_pair() = result: (*u8, i32) {
+    unsafe { result = (alloc(1) as *u8, 42) }
+}
+
+f main() {
+    (*u8, i32) dangling = arena_pair()
+}

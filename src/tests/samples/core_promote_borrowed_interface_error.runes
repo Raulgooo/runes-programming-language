@@ -1,0 +1,16 @@
+-- EXPECT FAIL: Promotion cannot make borrowed pointers outlive their owner
+type Value = { number: i32 }
+
+interface Readable {
+    f read(self) = result: i32
+}
+
+method Readable for Value {
+    f read(self) = result: i32 { result = self.number }
+}
+
+regional f invalid() = result: *Readable {
+    Value value = Value(number: 42)
+    Readable readable = value
+    result = promote(&readable) as dynamic
+}

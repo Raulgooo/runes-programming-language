@@ -1,0 +1,23 @@
+extern f raw_alloc(size: usize) = result: *void
+extern f raw_free(pointer: *void)
+
+type Node = { value: i32 }
+
+f main() {
+    unsafe {
+        **Node slots = raw_alloc(2 * sizeof(*Node)) as **Node
+        *Node node = raw_alloc(sizeof(Node)) as *Node
+        node.value = 42
+        slots[0] = node
+        slots[1] = node
+
+        *?*Node optional_slot = raw_alloc(sizeof(?*Node)) as *?*Node
+        *optional_slot = node
+        print(slots[0].value, " ", unwrap(*optional_slot).value, " ",
+              slots[0] == slots[1])
+
+        raw_free(optional_slot)
+        raw_free(node)
+        raw_free(slots)
+    }
+}

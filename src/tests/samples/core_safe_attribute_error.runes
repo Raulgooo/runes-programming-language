@@ -1,0 +1,7 @@
+-- EXPECT FAIL: #[safe] is a marker for extern functions
+#[safe]
+f answer() = result: i32 {
+    result = 42
+}
+
+f main() {}

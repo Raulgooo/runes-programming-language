@@ -5,6 +5,8 @@ regional f promoted_value() = result: *i32 {
 
 f main() {
     *i32 value = promoted_value()
-    *value = *value + 1
-    print(*value)
+    unsafe {
+        *value = *value + 1
+        print(*value)
+    }
 }

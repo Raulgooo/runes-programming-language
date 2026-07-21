@@ -13,7 +13,82 @@ void typechecker_init(TypeChecker *tc, Arena *arena, TypeContext *tctx,
   tc->expected_ret = NULL;
   tc->current_realm = REALM_MAIN;
   tc->loop_depth = 0;
+  tc->unsafe_depth = 0;
   tc->function_depth = 0;
+  tc->function_parent_scopes = NULL;
+  tc->function_nodes = NULL;
+  tc->function_scope_capacity = 0;
+}
+
+static bool push_function_context(TypeChecker *tc, Scope *scope,
+                                  AstNode *function) {
+  if (tc->function_depth == tc->function_scope_capacity) {
+    int capacity = tc->function_scope_capacity
+                       ? tc->function_scope_capacity * 2
+                       : 16;
+    Scope **scopes = ARENA_ALLOC_N(tc->arena, Scope *, capacity);
+    AstNode **functions = ARENA_ALLOC_N(tc->arena, AstNode *, capacity);
+    if (tc->function_parent_scopes && tc->function_depth > 0)
+      memcpy(scopes, tc->function_parent_scopes,
+             sizeof(Scope *) * (size_t)tc->function_depth);
+    if (tc->function_nodes && tc->function_depth > 0)
+      memcpy(functions, tc->function_nodes,
+             sizeof(AstNode *) * (size_t)tc->function_depth);
+    tc->function_parent_scopes = scopes;
+    tc->function_nodes = functions;
+    tc->function_scope_capacity = capacity;
+  }
+  function->as.func_decl.lexical_parent =
+      tc->function_depth ? tc->function_nodes[tc->function_depth - 1] : NULL;
+  tc->function_parent_scopes[tc->function_depth] = scope;
+  tc->function_nodes[tc->function_depth++] = function;
+  return true;
+}
+
+static void append_unique_function_node(TypeChecker *tc, AstNode ***items,
+                                        int *count, AstNode *node) {
+  for (int i = 0; i < *count; i++)
+    if ((*items)[i] == node)
+      return;
+  AstNode **grown = ARENA_ALLOC_N(tc->arena, AstNode *, *count + 1);
+  if (*items && *count)
+    memcpy(grown, *items, sizeof(AstNode *) * (size_t)*count);
+  grown[(*count)++] = node;
+  *items = grown;
+}
+
+static void add_capture(TypeChecker *tc, AstNode *function,
+                        AstNode *declaration, const char *name, Type *type) {
+  for (int i = 0; i < function->as.func_decl.capture_count; i++)
+    if (function->as.func_decl.captures[i] == declaration &&
+        strcmp(function->as.func_decl.capture_names[i], name) == 0)
+      return;
+  int count = function->as.func_decl.capture_count;
+  AstNode **declarations = ARENA_ALLOC_N(tc->arena, AstNode *, count + 1);
+  const char **names = ARENA_ALLOC_N(tc->arena, const char *, count + 1);
+  Type **types = ARENA_ALLOC_N(tc->arena, Type *, count + 1);
+  if (count) {
+    memcpy(declarations, function->as.func_decl.captures,
+           sizeof(AstNode *) * (size_t)count);
+    memcpy(names, function->as.func_decl.capture_names,
+           sizeof(const char *) * (size_t)count);
+    memcpy(types, function->as.func_decl.capture_types,
+           sizeof(Type *) * (size_t)count);
+  }
+  declarations[count] = declaration;
+  names[count] = name;
+  types[count] = type;
+  function->as.func_decl.captures = declarations;
+  function->as.func_decl.capture_names = names;
+  function->as.func_decl.capture_types = types;
+  function->as.func_decl.capture_count = count + 1;
+}
+
+static void add_closure_call(TypeChecker *tc, AstNode *function,
+                             AstNode *callee) {
+  append_unique_function_node(tc, &function->as.func_decl.closure_calls,
+                              &function->as.func_decl.closure_call_count,
+                              callee);
 }
 
 void typechecker_error(TypeChecker *tc, uint32_t line, uint32_t col,
@@ -59,6 +134,7 @@ static const char *type_display_name(Type *t) {
     case TY_PRIMITIVE: return t->as.primitive.name;
     case TY_POINTER:   return "pointer";
     case TY_ARRAY:     return "array";
+    case TY_SLICE:     return t->as.slice.readonly ? "read-only slice" : "slice";
     case TY_TUPLE:     return "tuple";
     case TY_FUNCTION:  return "function";
     case TY_FALLIBLE:  return "fallible";
@@ -66,6 +142,7 @@ static const char *type_display_name(Type *t) {
     case TY_VARIANT:   return t->as.variant.name ? t->as.variant.name : "variant";
     case TY_INTERFACE: return t->as.interface_t.name ? t->as.interface_t.name : "interface";
     case TY_ERROR:     return t->as.error_t.name ? t->as.error_t.name : "error";
+    case TY_NULL:      return "null";
     case TY_UNKNOWN:   return "<unknown>";
     case TY_INFER_ERROR: return "<error>";
   }
@@ -97,6 +174,14 @@ static const char *declaration_name(AstNode *node) {
   }
 }
 
+static bool has_exact_self_receiver(AstNode *method) {
+  if (!method || method->kind != AST_FUNC_DECL)
+    return false;
+  AstNode *receiver = method->as.func_decl.params;
+  return receiver && strcmp(receiver->as.param.name, "self") == 0 &&
+         receiver->as.param.type == NULL;
+}
+
 static AstNode *find_declaration(AstNode *declarations, const char *name) {
   for (AstNode *decl = declarations; decl; decl = decl->next) {
     const char *candidate = declaration_name(decl);
@@ -104,6 +189,35 @@ static AstNode *find_declaration(AstNode *declarations, const char *name) {
       return decl;
   }
   return NULL;
+}
+
+static bool declaration_defines_type(AstNode *decl) {
+  return decl &&
+         (decl->kind == AST_TYPE_DECL || decl->kind == AST_VARIANT_DECL ||
+          decl->kind == AST_INTERFACE_DECL || decl->kind == AST_ERROR_DECL);
+}
+
+static bool declaration_is_pub(AstNode *decl) {
+  if (!decl)
+    return false;
+  switch (decl->kind) {
+  case AST_FUNC_DECL:
+    return decl->as.func_decl.is_pub;
+  case AST_TYPE_DECL:
+    return decl->as.type_decl.is_pub;
+  case AST_VARIANT_DECL:
+    return decl->as.variant_decl.is_pub;
+  case AST_INTERFACE_DECL:
+    return decl->as.interface_decl.is_pub;
+  case AST_ERROR_DECL:
+    return decl->as.error_decl.is_pub;
+  case AST_MOD_DECL:
+    return decl->as.mod_decl.is_pub;
+  case AST_EXTERN_DECL:
+    return true;
+  default:
+    return false;
+  }
 }
 
 static AstNode *qualified_declaration(TypeChecker *tc, AstNode *expr) {
@@ -119,8 +233,9 @@ static AstNode *qualified_declaration(TypeChecker *tc, AstNode *expr) {
   AstNode *container = qualified_declaration(tc, expr->as.field.target);
   if (!container || container->kind != AST_MOD_DECL)
     return NULL;
-  return find_declaration(container->as.mod_decl.declarations,
-                          expr->as.field.field);
+  AstNode *member = find_declaration(container->as.mod_decl.declarations,
+                                     expr->as.field.field);
+  return declaration_is_pub(member) ? member : NULL;
 }
 
 static AstNode *use_target_declaration(TypeChecker *tc, AstNode *path) {
@@ -141,16 +256,14 @@ static AstNode *use_target_declaration(TypeChecker *tc, AstNode *path) {
 // ── Phase 3 helpers ──────────────────────────────────────────────────────────
 
 static bool is_realm_nesting_legal(MemoryRealm outer, MemoryRealm inner) {
-  // MAIN and HEAP can nest anything; FLEX inherits caller so allows anything
-  if (outer == REALM_MAIN || outer == REALM_HEAP || outer == REALM_FLEX)
+  if (outer == REALM_MAIN || outer == REALM_HEAP)
     return true;
-  // STACK always nests inside anything
-  if (inner == REALM_STACK)
+  if (inner == REALM_STACK || inner == REALM_FLEX)
     return true;
-  // GC can nest GC
+  if (outer == REALM_ARENA && inner == REALM_ARENA)
+    return true;
   if (outer == REALM_GC && inner == REALM_GC)
     return true;
-  // STACK and ARENA can only nest STACK (handled above)
   return false;
 }
 
@@ -170,6 +283,23 @@ static MemoryStrategy realm_to_strategy(MemoryRealm realm) {
     return STRATEGY_STACK;
   }
   return STRATEGY_STACK;
+}
+
+static MemoryRealm strategy_to_realm(MemoryStrategy strategy) {
+  switch (strategy) {
+  case STRATEGY_STACK:
+  case STRATEGY_EXPLICIT:
+    return REALM_STACK;
+  case STRATEGY_REGIONAL:
+    return REALM_ARENA;
+  case STRATEGY_DYNAMIC:
+    return REALM_HEAP;
+  case STRATEGY_GC:
+    return REALM_GC;
+  case STRATEGY_FLEX:
+    return REALM_FLEX;
+  }
+  return REALM_STACK;
 }
 
 static const char *realm_name(MemoryRealm r) {
@@ -581,12 +711,22 @@ Type *typechecker_resolve_type_expr(TypeChecker *tc, AstNode *node) {
     case TYPE_QUALIFIED: {
       Symbol *module = symbol_table_lookup(tc->st, node->as.type_expr.module);
       if (!module || module->kind != SYM_MOD || !module->node ||
-          module->node->kind != AST_MOD_DECL)
-        return tc->tctx->type_unknown;
+          module->node->kind != AST_MOD_DECL) {
+        typechecker_error(tc, node->line, node->col,
+                          "Unknown module '%s' in qualified type",
+                          node->as.type_expr.module);
+        return tc->tctx->type_error;
+      }
       AstNode *decl = find_declaration(
           module->node->as.mod_decl.declarations, node->as.type_expr.name);
-      return decl && decl->resolved_type ? decl->resolved_type
-                                         : tc->tctx->type_unknown;
+      if (!declaration_defines_type(decl) || !declaration_is_pub(decl) ||
+          !decl->resolved_type) {
+        typechecker_error(tc, node->line, node->col,
+                          "Unknown type '%s.%s'", node->as.type_expr.module,
+                          node->as.type_expr.name);
+        return tc->tctx->type_error;
+      }
+      return decl->resolved_type;
     }
     case TYPE_NAMED: {
       const char *name = node->as.type_expr.name;
@@ -622,14 +762,25 @@ Type *typechecker_resolve_type_expr(TypeChecker *tc, AstNode *node) {
         return tc->tctx->type_void;
 
       Symbol *sym = symbol_table_lookup(tc->st, name);
-      if (sym && sym->type)
+      if (sym && sym->kind == SYM_TYPE && sym->type)
         return sym->type;
 
-      return tc->tctx->type_unknown;
+      if (sym)
+        typechecker_error(tc, node->line, node->col,
+                          "'%s' does not name a type", name);
+      else
+        typechecker_error(tc, node->line, node->col, "Unknown type '%s'",
+                          name);
+      return tc->tctx->type_error;
     }
     case TYPE_PTR:
-      return type_new_pointer(tc->tctx, typechecker_resolve_type_expr(
-                                            tc, node->as.type_expr.inner));
+      return node->as.type_expr.nullable
+                 ? type_new_nullable_pointer(
+                       tc->tctx, typechecker_resolve_type_expr(
+                                     tc, node->as.type_expr.inner))
+                 : type_new_pointer(tc->tctx,
+                                    typechecker_resolve_type_expr(
+                                        tc, node->as.type_expr.inner));
     case TYPE_ARRAY: {
       if (!node->as.type_expr.size ||
           node->as.type_expr.size->kind != AST_INT_LITERAL) {
@@ -648,6 +799,11 @@ Type *typechecker_resolve_type_expr(TypeChecker *tc, AstNode *node) {
                                 tc, node->as.type_expr.inner),
                             size);
     }
+    case TYPE_SLICE:
+      return type_new_slice(tc->tctx,
+                            typechecker_resolve_type_expr(
+                                tc, node->as.type_expr.inner),
+                            node->as.type_expr.readonly);
     case TYPE_FALLIBLE:
       return type_new_fallible(tc->tctx, typechecker_resolve_type_expr(
                                              tc, node->as.type_expr.inner));
@@ -662,6 +818,21 @@ Type *typechecker_resolve_type_expr(TypeChecker *tc, AstNode *node) {
       for (int i = 0; i < count; i++, elem = elem->next)
         elements[i] = typechecker_resolve_type_expr(tc, elem);
       return type_new_tuple(tc->tctx, elements, count);
+    }
+    case TYPE_FUNCTION: {
+      int count = 0;
+      for (AstNode *parameter = node->as.type_expr.elems; parameter;
+           parameter = parameter->next)
+        count++;
+      Type **parameters =
+          count ? arena_alloc(tc->arena, sizeof(Type *) * (size_t)count) : NULL;
+      AstNode *parameter = node->as.type_expr.elems;
+      for (int i = 0; i < count; i++, parameter = parameter->next)
+        parameters[i] = typechecker_resolve_type_expr(tc, parameter);
+      return type_new_function(
+          tc->tctx, parameters, count,
+          typechecker_resolve_type_expr(tc, node->as.type_expr.inner),
+          realm_to_strategy(node->as.type_expr.realm), false);
     }
     }
   }
@@ -689,8 +860,10 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
         sym = symbol_table_lookup_local(tc->st, decl->as.type_decl.name);
       }
       if (sym) {
-        sym->type =
-            type_new_struct(tc->tctx, decl->as.type_decl.name, NULL, NULL, 0);
+        sym->type = decl->resolved_type
+                        ? decl->resolved_type
+                        : type_new_struct(tc->tctx, decl->as.type_decl.name,
+                                          NULL, NULL, 0);
         decl->resolved_type = sym->type;
       }
     } else if (decl->kind == AST_VARIANT_DECL) {
@@ -706,8 +879,11 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
                                         decl->as.variant_decl.name);
       }
       if (sym) {
-        sym->type = type_new_variant(tc->tctx, decl->as.variant_decl.name, NULL,
-                                     NULL, 0);
+        sym->type = decl->resolved_type
+                        ? decl->resolved_type
+                        : type_new_variant(tc->tctx,
+                                           decl->as.variant_decl.name, NULL,
+                                           NULL, 0);
         decl->resolved_type = sym->type;
       }
     } else if (decl->kind == AST_INTERFACE_DECL) {
@@ -723,9 +899,11 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
                                         decl->as.interface_decl.name);
       }
       if (sym) {
-        sym->type = type_new_interface(tc->tctx,
-                                       decl->as.interface_decl.name,
-                                       NULL, NULL, 0);
+        sym->type = decl->resolved_type
+                        ? decl->resolved_type
+                        : type_new_interface(tc->tctx,
+                                             decl->as.interface_decl.name,
+                                             NULL, NULL, 0);
         decl->resolved_type = sym->type;
       }
     } else if (decl->kind == AST_ERROR_DECL) {
@@ -740,11 +918,26 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
         sym = symbol_table_lookup_local(tc->st, decl->as.error_decl.name);
       }
       if (sym) {
-        sym->type = type_new_error(tc->tctx, decl->as.error_decl.name, NULL, 0);
+        sym->type = decl->resolved_type
+                        ? decl->resolved_type
+                        : type_new_error(tc->tctx, decl->as.error_decl.name,
+                                         NULL, 0);
         decl->resolved_type = sym->type;
       }
     }
     decl = decl->next;
+  }
+
+  // Qualified types may be referenced by earlier top-level declarations.
+  // Populate module declaration nodes before resolving function and extern
+  // signatures so `module.Type` supports the same forward-reference behavior
+  // as top-level nominal types.
+  for (decl = decl_head; decl; decl = decl->next) {
+    if (decl->kind != AST_MOD_DECL)
+      continue;
+    symbol_table_push(tc->st);
+    typechecker_collect_decls(tc, decl->as.mod_decl.declarations);
+    symbol_table_pop(tc->st);
   }
 
   // Pass 1.5: Populate Type fields (now that all type objects exist)
@@ -832,6 +1025,20 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
         AstNode *m = decl->as.interface_decl.methods;
         for (int i = 0; i < count; i++, m = m->next) {
           names[i] = m->as.func_decl.name;
+          if (!has_exact_self_receiver(m)) {
+            typechecker_error(tc, m->line, m->col,
+                              "Interface method '%s' must have an untyped "
+                              "self receiver as its first parameter",
+                              m->as.func_decl.name);
+          }
+          for (int prior = 0; prior < i; prior++) {
+            if (strcmp(names[prior], names[i]) == 0) {
+              typechecker_error(tc, m->line, m->col,
+                                "Duplicate interface method '%s'",
+                                m->as.func_decl.name);
+              break;
+            }
+          }
           int param_count = 0;
           for (AstNode *p = m->as.func_decl.params; p; p = p->next)
             param_count++;
@@ -849,8 +1056,9 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
                                                             p->as.param.type);
           Type *ret = typechecker_resolve_type_expr(
               tc, m->as.func_decl.ret_type);
-          methods[i] = type_new_function(tc->tctx, params, param_count, ret,
-                                         STRATEGY_STACK, true);
+          methods[i] = type_new_function(
+              tc->tctx, params, param_count, ret,
+              realm_to_strategy(m->as.func_decl.realm), true);
           m->resolved_type = methods[i];
         }
         sym->type->as.interface_t.method_names = names;
@@ -867,8 +1075,17 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
         const char **variants =
             arena_alloc(tc->arena, sizeof(char *) * (size_t)variant_count);
         AstNode *v = decl->as.error_decl.variants;
-        for (int i = 0; i < variant_count; i++, v = v->next)
+        for (int i = 0; i < variant_count; i++, v = v->next) {
           variants[i] = v->as.identifier.name;
+          for (int prior = 0; prior < i; prior++) {
+            if (strcmp(variants[prior], variants[i]) == 0) {
+              typechecker_error(tc, v->line, v->col,
+                                "Duplicate member '%s' in error set '%s'",
+                                variants[i], decl->as.error_decl.name);
+              break;
+            }
+          }
+        }
         sym->type->as.error_t.variants = variants;
         sym->type->as.error_t.variant_count = variant_count;
       }
@@ -957,16 +1174,23 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
         decl->resolved_type = sym->type;
       }
     } else if (decl->kind == AST_METHOD_DECL) {
+      if (decl->resolved_type) {
+        decl = decl->next;
+        continue;
+      }
       Symbol *type_sym =
           symbol_table_lookup(tc->st, decl->as.method_decl.type_name);
       if (type_sym && type_sym->type) {
         Type *t = type_sym->type;
+        decl->resolved_type = t;
         AstNode *method_node = decl->as.method_decl.methods;
         while (method_node) {
           if (method_node->kind == AST_FUNC_DECL) {
             Method *m = arena_alloc(tc->arena, sizeof(Method));
             m->name = method_node->as.func_decl.name;
+            m->interface_name = decl->as.method_decl.iface_name;
             m->node = method_node;
+            m->next = NULL;
             Type *ret_t = typechecker_resolve_type_expr(
                 tc, method_node->as.func_decl.ret_type);
             int param_c = 0;
@@ -990,10 +1214,36 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
                 tc->tctx, ptypes, param_c, ret_t,
                 realm_to_strategy(method_node->as.func_decl.realm), true);
             method_node->resolved_type = m->type;
-            if (t->kind == TY_STRUCT) {
+            bool interface_impl = decl->as.method_decl.iface_name != NULL;
+            if (t->kind == TY_STRUCT && !interface_impl) {
+              Method *existing = t->as.struct_t.methods;
+              while (existing &&
+                     (existing->interface_name ||
+                      strcmp(existing->name, m->name) != 0))
+                existing = existing->next;
+              if (existing) {
+                typechecker_error(tc, method_node->line, method_node->col,
+                                  "Duplicate method '%s' for type '%s'",
+                                  m->name, t->as.struct_t.name);
+                method_node = method_node->next;
+                continue;
+              }
               m->next = t->as.struct_t.methods;
               t->as.struct_t.methods = m;
-            } else if (t->kind == TY_VARIANT) {
+            } else if (t->kind == TY_STRUCT && interface_impl) {
+              m->next = t->as.struct_t.methods;
+              t->as.struct_t.methods = m;
+            } else if (t->kind == TY_VARIANT && !interface_impl) {
+              Method *existing = t->as.variant.methods;
+              while (existing && strcmp(existing->name, m->name) != 0)
+                existing = existing->next;
+              if (existing) {
+                typechecker_error(tc, method_node->line, method_node->col,
+                                  "Duplicate method '%s' for type '%s'",
+                                  m->name, t->as.variant.name);
+                method_node = method_node->next;
+                continue;
+              }
               m->next = t->as.variant.methods;
               t->as.variant.methods = m;
             }
@@ -1011,35 +1261,74 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
                               decl->as.method_decl.iface_name);
           } else {
             Type *iface = iface_sym->type;
+            for (int implemented = 0;
+                 implemented < t->as.struct_t.interface_count;
+                 implemented++) {
+              if (strcmp(t->as.struct_t.interface_names[implemented],
+                         iface->as.interface_t.name) == 0) {
+                typechecker_error(tc, decl->line, decl->col,
+                                  "Duplicate implementation of interface '%s' "
+                                  "for type '%s'",
+                                  iface->as.interface_t.name,
+                                  t->as.struct_t.name);
+                valid = false;
+                break;
+              }
+            }
             for (int i = 0; i < iface->as.interface_t.method_count; i++) {
-              Method *method = t->as.struct_t.methods;
-              while (method &&
-                     strcmp(method->name,
+              AstNode *method_node = decl->as.method_decl.methods;
+              while (method_node &&
+                     strcmp(method_node->as.func_decl.name,
                             iface->as.interface_t.method_names[i]) != 0)
-                method = method->next;
+                method_node = method_node->next;
               Type *required = iface->as.interface_t.method_types[i];
-              if (!method || method->type->as.function.param_count !=
-                                 required->as.function.param_count ||
-                  !type_equals(method->type->as.function.ret,
+              Type *actual = method_node ? method_node->resolved_type : NULL;
+              if (!has_exact_self_receiver(method_node) || !actual ||
+                  actual->kind != TY_FUNCTION ||
+                  required->kind != TY_FUNCTION ||
+                  actual->as.function.strategy !=
+                      required->as.function.strategy ||
+                  actual->as.function.param_count !=
+                      required->as.function.param_count ||
+                  !type_equals(actual->as.function.ret,
                                required->as.function.ret)) {
                 typechecker_error(tc, decl->line, decl->col,
-                                  "Interface implementation has a missing or "
-                                  "incompatible method");
+                                  "Interface method '%s' has an incompatible "
+                                  "signature",
+                                  iface->as.interface_t.method_names[i]);
                 valid = false;
                 break;
               }
               for (int p = 1; p < required->as.function.param_count; p++) {
-                if (!type_equals(method->type->as.function.params[p],
+                if (!type_equals(actual->as.function.params[p],
                                  required->as.function.params[p])) {
                   typechecker_error(
                       tc, decl->line, decl->col,
-                      "Interface implementation has an incompatible method");
+                      "Interface method '%s' has an incompatible signature",
+                      iface->as.interface_t.method_names[i]);
                   valid = false;
                   break;
                 }
               }
               if (!valid)
                 break;
+            }
+            for (AstNode *method_node = decl->as.method_decl.methods;
+                 valid && method_node; method_node = method_node->next) {
+              bool declared = false;
+              for (int i = 0; i < iface->as.interface_t.method_count; i++)
+                if (strcmp(method_node->as.func_decl.name,
+                           iface->as.interface_t.method_names[i]) == 0) {
+                  declared = true;
+                  break;
+                }
+              if (!declared) {
+                typechecker_error(tc, method_node->line, method_node->col,
+                                  "Method '%s' is not declared by interface '%s'",
+                                  method_node->as.func_decl.name,
+                                  iface->as.interface_t.name);
+                valid = false;
+              }
             }
           }
           if (valid) {
@@ -1069,18 +1358,92 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node);
 
 static void validate_systems_attrs(TypeChecker *tc, AstNode *node,
                                    Attr *attrs) {
-  Attr *a = attrs;
-  while (a) {
-    if (strcmp(a->name, "section") == 0 || strcmp(a->name, "link_name") == 0) {
+  for (Attr *a = attrs; a; a = a->next) {
+    for (Attr *earlier = attrs; earlier != a; earlier = earlier->next) {
+      if (strcmp(earlier->name, a->name) == 0) {
+        typechecker_error(tc, node->line, node->col,
+                          "Duplicate #[%s] attribute", a->name);
+        break;
+      }
+    }
+    bool function = node->kind == AST_FUNC_DECL;
+    bool external_function = node->kind == AST_EXTERN_DECL &&
+                             node->as.extern_decl.is_func;
+    bool variable = node->kind == AST_VAR_DECL;
+    bool structure = node->kind == AST_TYPE_DECL;
+    if (strcmp(a->name, "section") == 0 ||
+        strcmp(a->name, "link_name") == 0) {
+      if (!(function || variable ||
+            (external_function && strcmp(a->name, "link_name") == 0))) {
+        typechecker_error(tc, node->line, node->col,
+                          "#[%s] is not valid on this declaration", a->name);
+      }
       if (!a->arg || a->arg->kind != AST_STRING_LITERAL) {
         typechecker_error(tc, node->line, node->col,
                           "#[%s] attribute requires a string argument",
                           a->name);
-      }
-    } else if (strcmp(a->name, "interrupt") == 0) {
-      if (node->kind != AST_FUNC_DECL && node->kind != AST_EXTERN_DECL) {
+      } else if (memchr(a->arg->as.string_literal.value, '\0',
+                        a->arg->as.string_literal.length)) {
         typechecker_error(tc, node->line, node->col,
-                          "#[interrupt] can only be applied to functions");
+                          "#[%s] attribute cannot contain NUL bytes",
+                          a->name);
+      } else if (a->arg->as.string_literal.length == 0) {
+        typechecker_error(tc, node->line, node->col,
+                          "#[%s] attribute cannot be empty", a->name);
+      }
+      if (function && node->as.func_decl.is_main &&
+          strcmp(a->name, "link_name") == 0)
+        typechecker_error(tc, node->line, node->col,
+                          "#[link_name] cannot be applied to main");
+    } else if (strcmp(a->name, "callconv") == 0) {
+      if (!(function || external_function))
+        typechecker_error(tc, node->line, node->col,
+                          "#[callconv] can only be applied to functions");
+      if (!a->arg || a->arg->kind != AST_STRING_LITERAL) {
+        typechecker_error(tc, node->line, node->col,
+                          "#[callconv] requires a string argument");
+      } else {
+        const char *value = a->arg->as.string_literal.value;
+        size_t length = a->arg->as.string_literal.length;
+        if (!((length == 6 && memcmp(value, "sysv64", 6) == 0) ||
+              (length == 5 && memcmp(value, "win64", 5) == 0)))
+          typechecker_error(tc, node->line, node->col,
+                            "Unsupported calling convention; expected "
+                            "'sysv64' or 'win64'");
+      }
+    } else if (strcmp(a->name, "align") == 0) {
+      if (!(variable || structure))
+        typechecker_error(tc, node->line, node->col,
+                          "#[align] is only valid on storage and structs");
+      if (!a->arg || a->arg->kind != AST_INT_LITERAL) {
+        typechecker_error(tc, node->line, node->col,
+                          "#[align] requires an integer argument");
+      } else {
+        unsigned long long value = a->arg->as.int_literal.value;
+        if (!value || (value & (value - 1)) != 0)
+          typechecker_error(tc, node->line, node->col,
+                            "Alignment must be a non-zero power of 2");
+        else if (value > (1ULL << 28))
+          typechecker_error(tc, node->line, node->col,
+                            "Alignment exceeds the v0.1 C backend maximum");
+      }
+    } else if (strcmp(a->name, "packed") == 0) {
+      if (!structure || a->arg)
+        typechecker_error(tc, node->line, node->col,
+                          "#[packed] is a marker for struct declarations");
+    } else if (strcmp(a->name, "repr") == 0) {
+      if (!structure || !a->arg || a->arg->kind != AST_IDENTIFIER ||
+          strcmp(a->arg->as.identifier.name, "C") != 0)
+        typechecker_error(tc, node->line, node->col,
+                          "v0.1 supports only #[repr(C)] on structs");
+    } else if (strcmp(a->name, "safe") == 0) {
+      if (!external_function || a->arg)
+        typechecker_error(tc, node->line, node->col,
+                          "#[safe] is a marker for extern functions");
+    } else if (strcmp(a->name, "interrupt") == 0) {
+      if (!(function || external_function) || a->arg) {
+        typechecker_error(tc, node->line, node->col,
+                          "#[interrupt] is a marker for functions");
       } else {
         bool has_params = false;
         bool has_ret = false;
@@ -1097,9 +1460,34 @@ static void validate_systems_attrs(TypeChecker *tc, AstNode *node,
               "#[interrupt] function must have no parameters and no returns");
         }
       }
+    } else {
+      typechecker_error(tc, node->line, node->col,
+                        "Unknown attribute '#[%s]'", a->name);
     }
-    a = a->next;
   }
+}
+
+static bool is_compiler_lowered_extern(const char *name) {
+  return strcmp(name, "memset") == 0 || strcmp(name, "memcpy") == 0 ||
+         strcmp(name, "memcmp") == 0 || strcmp(name, "memmove") == 0 ||
+         strcmp(name, "sqrt") == 0 || strcmp(name, "alloc") == 0 ||
+         strcmp(name, "raw_alloc") == 0 ||
+         strcmp(name, "raw_alloc_aligned") == 0 ||
+         strcmp(name, "raw_free") == 0;
+}
+
+static bool has_attr_named(Attr *attrs, const char *name) {
+  for (Attr *attr = attrs; attr; attr = attr->next)
+    if (strcmp(attr->name, name) == 0)
+      return true;
+  return false;
+}
+
+static bool has_non_safe_attr(Attr *attrs) {
+  for (Attr *attr = attrs; attr; attr = attr->next)
+    if (strcmp(attr->name, "safe") != 0)
+      return true;
+  return false;
 }
 
 static bool is_assignable_expr(AstNode *expr) {
@@ -1110,12 +1498,164 @@ static bool is_assignable_expr(AstNode *expr) {
          (expr->kind == AST_UNARY_EXPR && expr->as.unary.op == TOKEN_STAR);
 }
 
+static bool expression_is_readonly_storage(AstNode *expr) {
+  if (!expr)
+    return false;
+  if (expr->kind == AST_IDENTIFIER && expr->resolved_decl &&
+      expr->resolved_decl->kind == AST_VAR_DECL)
+    return expr->resolved_decl->as.var_decl.is_const;
+  if (expr->kind == AST_FIELD_EXPR)
+    return expression_is_readonly_storage(expr->as.field.target);
+  if (expr->kind == AST_INDEX_EXPR)
+    return expression_is_readonly_storage(expr->as.index.target);
+  return false;
+}
+
+static bool invalid_mutable_slice_coercion(Type *target, AstNode *value) {
+  return target && target->kind == TY_SLICE && !target->as.slice.readonly &&
+         value && value->resolved_type && value->resolved_type->kind == TY_ARRAY &&
+         expression_is_readonly_storage(value);
+}
+
+static bool expression_has_stable_address(AstNode *expr) {
+  if (!expr)
+    return false;
+  if (expr->kind == AST_IDENTIFIER)
+    return true;
+  if (expr->kind == AST_UNARY_EXPR && expr->as.unary.op == TOKEN_STAR)
+    return true;
+  if (expr->kind == AST_FIELD_EXPR) {
+    Type *owner = expr->as.field.target->resolved_type;
+    return (owner && owner->kind == TY_POINTER) ||
+           expression_has_stable_address(expr->as.field.target);
+  }
+  if (expr->kind == AST_INDEX_EXPR) {
+    Type *owner = expr->as.index.target->resolved_type;
+    return (owner && (owner->kind == TY_POINTER || owner->kind == TY_SLICE)) ||
+           expression_has_stable_address(expr->as.index.target);
+  }
+  return false;
+}
+
+static void validate_slice_coercion(TypeChecker *tc, Type *target,
+                                    AstNode *value, unsigned line,
+                                    unsigned column) {
+  if (!target || target->kind != TY_SLICE || !value ||
+      !value->resolved_type || value->resolved_type->kind != TY_ARRAY)
+    return;
+  if (invalid_mutable_slice_coercion(target, value))
+    typechecker_error(tc, line, column,
+                      "Cannot create a mutable slice from constant storage");
+  if (!expression_has_stable_address(value))
+    typechecker_error(tc, line, column,
+                      "Cannot create a slice from a temporary array");
+}
+
 static bool is_integer_literal_expr(AstNode *expr) {
   return expr &&
          (expr->kind == AST_INT_LITERAL ||
           (expr->kind == AST_UNARY_EXPR && expr->as.unary.op == TOKEN_MINUS &&
            expr->as.unary.expr &&
            expr->as.unary.expr->kind == AST_INT_LITERAL));
+}
+
+static bool is_float_literal_expr(AstNode *expr) {
+  return expr &&
+         (expr->kind == AST_FLOAT_LITERAL ||
+          (expr->kind == AST_UNARY_EXPR && expr->as.unary.op == TOKEN_MINUS &&
+           expr->as.unary.expr &&
+           expr->as.unary.expr->kind == AST_FLOAT_LITERAL));
+}
+
+static bool validate_integer_literal_range(TypeChecker *tc, AstNode *expr,
+                                           Type *target) {
+  if (!is_integer_literal_expr(expr) || !type_is_integer(target))
+    return true;
+
+  const NumericTypeInfo *info =
+      get_numeric_info(target->as.primitive.name);
+  bool negative = expr->kind == AST_UNARY_EXPR;
+  unsigned long long magnitude =
+      negative ? expr->as.unary.expr->as.int_literal.value
+               : expr->as.int_literal.value;
+  bool overflow;
+  if (negative) {
+    unsigned long long max_negative =
+        info->is_signed ? 1ULL << (info->bit_width - 1) : 0;
+    overflow = !info->is_signed || magnitude > max_negative;
+  } else {
+    overflow = magnitude > info->max_val;
+  }
+  if (!overflow)
+    return true;
+
+  typechecker_error(tc, expr->line, expr->col,
+                    "Integer literal overflow for type '%s'", info->name);
+  return false;
+}
+
+static bool validate_float_literal_range(TypeChecker *tc, AstNode *expr,
+                                         Type *target) {
+  if (!is_float_literal_expr(expr) || !type_is_float(target) ||
+      strcmp(target->as.primitive.name, "f32") != 0)
+    return true;
+  double value = expr->kind == AST_FLOAT_LITERAL
+                     ? expr->as.float_literal.value
+                     : -expr->as.unary.expr->as.float_literal.value;
+  if (value <= 3.40282347e38 && value >= -3.40282347e38)
+    return true;
+  typechecker_error(tc, expr->line, expr->col,
+                    "Float literal overflow for f32");
+  return false;
+}
+
+static bool validate_contextual_literal(TypeChecker *tc, AstNode *expr,
+                                        Type *target) {
+  return validate_integer_literal_range(tc, expr, target) &&
+         validate_float_literal_range(tc, expr, target);
+}
+
+static bool value_is_assignable(TypeChecker *tc, Type *target, AstNode *value,
+                                Type *source) {
+  if (target && target->kind == TY_ARRAY && value &&
+      value->kind == AST_ARRAY_LITERAL) {
+    size_t count = 0;
+    bool compatible = true;
+    for (AstNode *element = value->as.array_literal.elems; element;
+         element = element->next) {
+      Type *element_type = typechecker_infer_expr(tc, element);
+      if (!value_is_assignable(tc, target->as.array.inner, element,
+                               element_type))
+        compatible = false;
+      count++;
+    }
+    return compatible && (count == 0 || count == target->as.array.size);
+  }
+  if (is_integer_literal_expr(value) && type_is_integer(target)) {
+    validate_integer_literal_range(tc, value, target);
+    return true;
+  }
+  if (is_float_literal_expr(value) && type_is_float(target)) {
+    validate_float_literal_range(tc, value, target);
+    return true;
+  }
+  return type_is_assignable(target, source);
+}
+
+static bool values_are_compatible(TypeChecker *tc, AstNode *left,
+                                  Type *left_type, AstNode *right,
+                                  Type *right_type) {
+  return value_is_assignable(tc, left_type, right, right_type) ||
+         value_is_assignable(tc, right_type, left, left_type);
+}
+
+static AstNode *value_branch_expression(AstNode *branch) {
+  if (!branch || branch->kind != AST_BLOCK)
+    return branch;
+  AstNode *last = branch->as.block.statements;
+  while (last && last->next)
+    last = last->next;
+  return last;
 }
 
 static Type *typechecker_infer_value_branch(TypeChecker *tc, AstNode *branch) {
@@ -1165,6 +1705,9 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
   case AST_CHAR_LITERAL:
     inferred = tc->tctx->type_char;
     break;
+  case AST_NULL_LITERAL:
+    inferred = tc->tctx->type_null;
+    break;
   case AST_ARRAY_LITERAL:
     if (!expr->as.array_literal.elems) {
       inferred = type_new_array(tc->tctx, tc->tctx->type_unknown, 0);
@@ -1200,13 +1743,18 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         Scope *outermost_parent = tc->function_parent_scopes[0];
         if (scope_is_between(symbol_scope, current_parent,
                              outermost_parent)) {
-          typechecker_error(
-              tc, expr->line, expr->col,
-              "Nested functions cannot capture enclosing variable '%s'",
-              expr->as.identifier.name);
-          inferred = tc->tctx->type_error;
-          break;
+          add_capture(tc, tc->function_nodes[tc->function_depth - 1],
+                      sym->node, expr->as.identifier.name, sym->type);
         }
+      }
+      if (tc->function_depth > 1 && sym->kind == SYM_FUNC && sym->node &&
+          sym->node->kind == AST_FUNC_DECL &&
+          sym->node->as.func_decl.lexical_parent) {
+        AstNode *current = tc->function_nodes[tc->function_depth - 1];
+        if (current != sym->node &&
+            current != sym->node->as.func_decl.lexical_parent)
+          add_capture(tc, current, sym->node, expr->as.identifier.name,
+                      sym->type);
       }
       expr->resolved_decl = sym->node;
       inferred = sym->type;
@@ -1230,11 +1778,26 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     case TOKEN_MINUS:
     case TOKEN_STAR:
     case TOKEN_SLASH:
-    case TOKEN_PERCENT:
+    case TOKEN_PERCENT: {
+      Type *operation_type = lty;
       if (type_is_resolved(lty) && type_is_resolved(rty)) {
         bool left_ptr = lty->kind == TY_POINTER;
         bool right_ptr = rty->kind == TY_POINTER;
         if (left_ptr || right_ptr) {
+          Type *pointer_type = left_ptr ? lty : rty;
+          if (pointer_type->as.pointer.nullable) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Pointer arithmetic is not allowed on nullable "
+                              "pointers");
+            inferred = tc->tctx->type_error;
+            break;
+          }
+          if (tc->unsafe_depth == 0) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Pointer arithmetic requires an unsafe block");
+            inferred = tc->tctx->type_error;
+            break;
+          }
           bool valid_pointer_arithmetic =
               (expr->as.binary.op == TOKEN_PLUS &&
                ((left_ptr && type_is_integer(rty)) ||
@@ -1272,17 +1835,35 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
             break;
           }
           if (!type_equals(lty, rty)) {
-            // D-04: Strict type checking for binary expressions
-            // Allow literal coercion: if either operand is a literal,
-            // it can adapt to the other's type (e.g., u64 * 0x...)
-            bool has_literal =
-                (expr->as.binary.left->kind == AST_INT_LITERAL ||
-                 expr->as.binary.left->kind == AST_FLOAT_LITERAL ||
-                 expr->as.binary.right->kind == AST_INT_LITERAL ||
-                 expr->as.binary.right->kind == AST_FLOAT_LITERAL);
-            if (!has_literal) {
-              const NumericTypeInfo *linfo = get_numeric_info(lty->as.primitive.name);
-              const NumericTypeInfo *rinfo = get_numeric_info(rty->as.primitive.name);
+            bool left_literal = is_integer_literal_expr(expr->as.binary.left) ||
+                                is_float_literal_expr(expr->as.binary.left);
+            bool right_literal =
+                is_integer_literal_expr(expr->as.binary.right) ||
+                is_float_literal_expr(expr->as.binary.right);
+            const NumericTypeInfo *linfo =
+                get_numeric_info(lty->as.primitive.name);
+            const NumericTypeInfo *rinfo =
+                get_numeric_info(rty->as.primitive.name);
+            bool can_adapt_left =
+                left_literal && !right_literal && linfo && rinfo &&
+                linfo->is_float == rinfo->is_float;
+            bool can_adapt_right =
+                right_literal && !left_literal && linfo && rinfo &&
+                linfo->is_float == rinfo->is_float;
+            if (can_adapt_left) {
+              if (!validate_contextual_literal(tc, expr->as.binary.left,
+                                               rty)) {
+                inferred = tc->tctx->type_error;
+                break;
+              }
+              operation_type = rty;
+            } else if (can_adapt_right) {
+              if (!validate_contextual_literal(tc, expr->as.binary.right,
+                                               lty)) {
+                inferred = tc->tctx->type_error;
+                break;
+              }
+            } else {
               if (linfo && rinfo && linfo->is_signed == rinfo->is_signed && linfo->is_float == rinfo->is_float) {
                 // Same family: suggest widening to the higher-rank type
                 const char *wider = linfo->rank >= rinfo->rank ? lty->as.primitive.name : rty->as.primitive.name;
@@ -1319,11 +1900,44 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
           }
         }
       }
-      inferred = lty;
+      inferred = operation_type;
       break;
+    }
     case TOKEN_AMP:
     case TOKEN_PIPE:
-    case TOKEN_CARET:
+    case TOKEN_CARET: {
+      Type *operation_type = lty;
+      if (type_is_resolved(lty) && type_is_resolved(rty) &&
+          (!type_is_integer(lty) || !type_is_integer(rty))) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Bitwise operators require integer operands");
+        inferred = tc->tctx->type_error;
+      } else if (type_is_resolved(lty) && type_is_resolved(rty) &&
+                 !type_equals(lty, rty)) {
+        bool left_literal = is_integer_literal_expr(expr->as.binary.left);
+        bool right_literal = is_integer_literal_expr(expr->as.binary.right);
+        if (left_literal && !right_literal &&
+            validate_contextual_literal(tc, expr->as.binary.left, rty)) {
+          operation_type = rty;
+          inferred = operation_type;
+        } else if (right_literal && !left_literal &&
+                   validate_contextual_literal(tc, expr->as.binary.right,
+                                               lty)) {
+          inferred = operation_type;
+        } else if ((left_literal && !right_literal) ||
+                   (right_literal && !left_literal)) {
+          inferred = tc->tctx->type_error;
+        } else {
+          typechecker_error(tc, expr->line, expr->col,
+                            "Bitwise operands must have exactly matching "
+                            "types; use an explicit cast");
+          inferred = tc->tctx->type_error;
+        }
+      } else {
+        inferred = operation_type;
+      }
+      break;
+    }
     case TOKEN_SHL:
     case TOKEN_SHR:
       if (type_is_resolved(lty) && type_is_resolved(rty) &&
@@ -1345,14 +1959,6 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         if (!type_is_comparable(lty, rty)) {
           typechecker_error(tc, expr->line, expr->col,
                             "Comparison type mismatch");
-        } else if (lty->kind == TY_PRIMITIVE &&
-                   rty->kind == TY_PRIMITIVE &&
-                   strcmp(lty->as.primitive.name, "str") == 0 &&
-                   strcmp(rty->as.primitive.name, "str") == 0 &&
-                   expr->as.binary.op != TOKEN_EQ_EQ &&
-                   expr->as.binary.op != TOKEN_BANG_EQ) {
-          typechecker_error(tc, expr->line, expr->col,
-                            "String comparison supports only == and !=");
         }
       }
       inferred = tc->tctx->type_bool;
@@ -1394,8 +2000,30 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     }
     Type *lty = typechecker_infer_expr(tc, expr->as.assign.target);
     Type *rty = typechecker_infer_expr(tc, expr->as.assign.value);
+    validate_slice_coercion(tc, lty, expr->as.assign.value, expr->line,
+                            expr->col);
+    if (expr->as.assign.target->kind == AST_INDEX_EXPR &&
+        expr->as.assign.target->as.index.target->resolved_type &&
+        expr->as.assign.target->as.index.target->resolved_type->kind ==
+            TY_SLICE &&
+        expr->as.assign.target->as.index.target->resolved_type->as.slice
+            .readonly) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Cannot assign through a read-only slice");
+    }
+    if (expr->as.assign.target->kind == AST_INDEX_EXPR &&
+        expr->as.assign.target->as.index.target->resolved_type &&
+        expr->as.assign.target->as.index.target->resolved_type->kind ==
+            TY_PRIMITIVE &&
+        strcmp(expr->as.assign.target->as.index.target->resolved_type
+                   ->as.primitive.name,
+               "str") == 0) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Cannot assign through an immutable string");
+    }
     if (type_is_resolved(lty) && type_is_resolved(rty)) {
-      bool assignable = type_is_assignable(lty, rty);
+      bool assignable =
+          value_is_assignable(tc, lty, expr->as.assign.value, rty);
       if (!assignable && expr->as.assign.value->kind == AST_ERROR_EXPR &&
           expr->as.assign.target->kind == AST_IDENTIFIER) {
         Symbol *target = symbol_table_lookup(
@@ -1422,8 +2050,9 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         if (target && target->node && target->node->kind == AST_FUNC_DECL &&
             target->node->resolved_type &&
             target->node->resolved_type->kind == TY_FUNCTION) {
-          assignable = type_is_assignable(
-              target->node->resolved_type->as.function.ret, rty);
+          assignable = value_is_assignable(
+              tc, target->node->resolved_type->as.function.ret,
+              expr->as.assign.value, rty);
         }
       }
       if (!assignable) {
@@ -1462,6 +2091,67 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       inferred = tc->tctx->type_void;
       break;
     }
+    if (expr->as.call.callee->kind == AST_IDENTIFIER &&
+        strcmp(expr->as.call.callee->as.identifier.name, "unwrap") == 0) {
+      AstNode *arg = expr->as.call.args;
+      if (!arg || arg->next) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "unwrap requires exactly one argument");
+        for (; arg; arg = arg->next)
+          typechecker_infer_expr(tc, arg);
+        inferred = tc->tctx->type_error;
+        break;
+      }
+      Type *arg_t = typechecker_infer_expr(tc, arg);
+      if (!type_is_resolved(arg_t)) {
+        inferred = tc->tctx->type_error;
+      } else if (arg_t->kind != TY_POINTER ||
+                 !arg_t->as.pointer.nullable) {
+        typechecker_error(tc, arg->line, arg->col,
+                          "unwrap requires a nullable pointer");
+        inferred = tc->tctx->type_error;
+      } else {
+        inferred = type_new_pointer(tc->tctx, arg_t->as.pointer.inner);
+      }
+      break;
+    }
+    if (expr->as.call.callee->kind == AST_IDENTIFIER &&
+        (strcmp(expr->as.call.callee->as.identifier.name, "slice") == 0 ||
+         strcmp(expr->as.call.callee->as.identifier.name,
+                "const_slice") == 0)) {
+      bool readonly = strcmp(expr->as.call.callee->as.identifier.name,
+                             "const_slice") == 0;
+      AstNode *pointer = expr->as.call.args;
+      AstNode *length = pointer ? pointer->next : NULL;
+      if (!pointer || !length || length->next) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "%s requires exactly a pointer and a length",
+                          readonly ? "const_slice" : "slice");
+        for (AstNode *arg = pointer; arg; arg = arg->next)
+          typechecker_infer_expr(tc, arg);
+        inferred = tc->tctx->type_error;
+        break;
+      }
+      Type *pointer_type = typechecker_infer_expr(tc, pointer);
+      Type *length_type = typechecker_infer_expr(tc, length);
+      if (tc->unsafe_depth == 0)
+        typechecker_error(tc, expr->line, expr->col,
+                          "Raw slice construction requires an unsafe block");
+      if (type_is_resolved(pointer_type) &&
+          (pointer_type->kind != TY_POINTER ||
+           pointer_type->as.pointer.nullable)) {
+        typechecker_error(tc, pointer->line, pointer->col,
+                          "Slice construction requires a non-null pointer");
+        inferred = tc->tctx->type_error;
+      } else if (type_is_resolved(pointer_type)) {
+        inferred = type_new_slice(tc->tctx, pointer_type->as.pointer.inner,
+                                  readonly);
+      }
+      if (type_is_resolved(length_type) && !type_is_integer(length_type))
+        typechecker_error(tc, length->line, length->col,
+                          "Slice length must be an integer");
+      break;
+    }
 
     Type *callee_t = NULL;
     if (expr->as.call.callee->kind == AST_FIELD_EXPR) {
@@ -1476,6 +2166,44 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       callee_t = typechecker_infer_expr(tc, expr->as.call.callee);
     if (callee_t->kind == TY_FUNCTION) {
       inferred = callee_t->as.function.ret;
+
+      AstNode *called_declaration = expr->as.call.callee->resolved_decl;
+      if (called_declaration && called_declaration->kind == AST_EXTERN_DECL &&
+          tc->unsafe_depth == 0 &&
+          !is_compiler_lowered_extern(
+              called_declaration->as.extern_decl.name) &&
+          !has_attr_named(called_declaration->as.extern_decl.attrs, "safe") &&
+          strncmp(called_declaration->as.extern_decl.name, "runes_", 6) != 0) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Foreign function call requires an unsafe block");
+      }
+
+      MemoryRealm callee_realm =
+          strategy_to_realm(callee_t->as.function.strategy);
+      if (!is_realm_nesting_legal(tc->current_realm, callee_realm)) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Cannot call %s function from %s realm",
+                          realm_name(callee_realm),
+                          realm_name(tc->current_realm));
+      }
+
+      if (expr->as.call.callee->kind == AST_IDENTIFIER &&
+          strcmp(expr->as.call.callee->as.identifier.name,
+                 "runes_gc_collect") == 0 &&
+          tc->current_realm != REALM_MAIN &&
+          tc->current_realm != REALM_HEAP &&
+          tc->current_realm != REALM_GC) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "GC collection is not available in a %s function",
+                          realm_name(tc->current_realm));
+      }
+
+      if (expr->as.call.callee->kind == AST_IDENTIFIER &&
+          strcmp(expr->as.call.callee->as.identifier.name, "alloc") == 0 &&
+          tc->current_realm == REALM_STACK) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "alloc is not available in a stack function");
+      }
 
       AstNode *arg = expr->as.call.args;
       int param_start = 0;
@@ -1529,7 +2257,8 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         Type *arg_ty = typechecker_infer_expr(tc, arg);
         Type *param_ty = callee_t->as.function.params[param_idx];
         if (type_is_resolved(param_ty) && type_is_resolved(arg_ty)) {
-          if (!type_is_assignable(param_ty, arg_ty)) {
+          validate_slice_coercion(tc, param_ty, arg, arg->line, arg->col);
+          if (!value_is_assignable(tc, param_ty, arg, arg_ty)) {
             typechecker_error(tc, arg->line, arg->col,
                               "Argument type mismatch in function call");
           }
@@ -1557,8 +2286,13 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
             if (strcmp(callee_t->as.struct_t.field_names[i], name) == 0) {
               found = true;
               field_provided[i] = true;
-              if (!type_is_assignable(callee_t->as.struct_t.field_types[i],
-                                      val_t)) {
+              validate_slice_coercion(tc,
+                                      callee_t->as.struct_t.field_types[i],
+                                      arg->as.named_arg.value, arg->line,
+                                      arg->col);
+              if (!value_is_assignable(
+                      tc, callee_t->as.struct_t.field_types[i],
+                      arg->as.named_arg.value, val_t)) {
                 typechecker_error(tc, arg->line, arg->col,
                                   "Type mismatch for field '%s'", name);
               }
@@ -1638,9 +2372,12 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
               for (int j = 0;
                    j < expected_payload->as.tuple.count && a; j++) {
                 Type *arg_t = typechecker_infer_expr(tc, a);
+                validate_slice_coercion(
+                    tc, expected_payload->as.tuple.elems[j], a, a->line,
+                    a->col);
                 if (type_is_resolved(arg_t) &&
-                    !type_is_assignable(
-                        expected_payload->as.tuple.elems[j], arg_t)) {
+                    !value_is_assignable(
+                        tc, expected_payload->as.tuple.elems[j], a, arg_t)) {
                   typechecker_error(tc, a->line, a->col,
                       "Variant arm '%s' expects payload type %s, got %s",
                       arm_name,
@@ -1663,9 +2400,14 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
               if (actual_count >= 1) {
                 Type *arg_t = typechecker_infer_expr(tc,
                                                      expr->as.call.args);
+                validate_slice_coercion(tc, expected_payload,
+                                        expr->as.call.args,
+                                        expr->as.call.args->line,
+                                        expr->as.call.args->col);
                 if (type_is_resolved(arg_t) &&
                     type_is_resolved(expected_payload) &&
-                    !type_is_assignable(expected_payload, arg_t)) {
+                    !value_is_assignable(tc, expected_payload,
+                                         expr->as.call.args, arg_t)) {
                   typechecker_error(tc, expr->as.call.args->line,
                       expr->as.call.args->col,
                       "Variant arm '%s' expects payload type %s, got %s",
@@ -1690,25 +2432,81 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
                         "Cannot call non-function type");
       inferred = tc->tctx->type_error;
     }
+    if (tc->function_depth > 0 && expr->as.call.callee->resolved_decl &&
+        expr->as.call.callee->resolved_decl->kind == AST_FUNC_DECL) {
+      AstNode *current = tc->function_nodes[tc->function_depth - 1];
+      AstNode *callee = expr->as.call.callee->resolved_decl;
+      if (!callee->as.func_decl.lexical_parent || current == callee ||
+          current == callee->as.func_decl.lexical_parent)
+        add_closure_call(tc, current, callee);
+    }
     break;
   }
 
   case AST_CAST_EXPR: {
-    typechecker_infer_expr(tc, expr->as.cast.expr);
+    Type *source = typechecker_infer_expr(tc, expr->as.cast.expr);
     inferred = typechecker_resolve_type_expr(tc, expr->as.cast.target_type);
+    bool source_char = source && source->kind == TY_PRIMITIVE &&
+                       strcmp(source->as.primitive.name, "char") == 0;
+    bool target_char = inferred && inferred->kind == TY_PRIMITIVE &&
+                       strcmp(inferred->as.primitive.name, "char") == 0;
+    if (target_char && !source_char && !type_is_integer(source)) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Only an integer may be cast to char");
+      inferred = tc->tctx->type_error;
+      break;
+    }
+    if (source_char && !target_char && !type_is_integer(inferred)) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "char may only be cast to an integer type");
+      inferred = tc->tctx->type_error;
+      break;
+    }
+    bool source_pointer = source && source->kind == TY_POINTER;
+    bool target_pointer = inferred && inferred->kind == TY_POINTER;
+    if (source && source->kind == TY_NULL) {
+      if (!target_pointer || !inferred->as.pointer.nullable) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "null may only be cast to a nullable pointer type");
+        inferred = tc->tctx->type_error;
+      }
+      break;
+    }
+    if (target_pointer && !inferred->as.pointer.nullable &&
+        expr->as.cast.expr->kind == AST_INT_LITERAL &&
+        expr->as.cast.expr->as.int_literal.value == 0) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Non-null pointer cannot be constructed from zero; "
+                        "use null with ?*T");
+      inferred = tc->tctx->type_error;
+      break;
+    }
+    bool safe_pointer_widening =
+        source_pointer && target_pointer && !source->as.pointer.nullable &&
+        inferred->as.pointer.nullable &&
+        type_equals(source->as.pointer.inner, inferred->as.pointer.inner);
+    if ((source_pointer || target_pointer) &&
+        !type_equals(source, inferred) && !safe_pointer_widening &&
+        tc->unsafe_depth == 0) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Pointer-related casts require an unsafe block");
+      inferred = tc->tctx->type_error;
+    }
     break;
   }
 
   case AST_SIZEOF_EXPR:
     if (expr->as.sizeof_expr.type) {
-      typechecker_resolve_type_expr(tc, expr->as.sizeof_expr.type);
+      expr->as.sizeof_expr.type->resolved_type =
+          typechecker_resolve_type_expr(tc, expr->as.sizeof_expr.type);
     }
     inferred = tc->tctx->type_usize;
     break;
 
   case AST_ALIGNOF_EXPR:
     if (expr->as.alignof_expr.type) {
-      typechecker_resolve_type_expr(tc, expr->as.alignof_expr.type);
+      expr->as.alignof_expr.type->resolved_type =
+          typechecker_resolve_type_expr(tc, expr->as.alignof_expr.type);
     }
     inferred = tc->tctx->type_usize;
     break;
@@ -1719,7 +2517,17 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       if (expr->as.unary.op == TOKEN_STAR) {
         // Dereference: *p
         if (inner_t->kind == TY_POINTER) {
-          inferred = inner_t->as.pointer.inner;
+          if (inner_t->as.pointer.nullable) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Cannot dereference a nullable pointer");
+            inferred = tc->tctx->type_error;
+          } else if (tc->unsafe_depth == 0) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Pointer dereference requires an unsafe block");
+            inferred = tc->tctx->type_error;
+          } else {
+            inferred = inner_t->as.pointer.inner;
+          }
         } else {
           typechecker_error(tc, expr->line, expr->col,
                             "Cannot dereference non-pointer type");
@@ -1781,8 +2589,28 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
                           expr->as.index.index->col,
                           "Array index is out of bounds");
       }
+    } else if (target_t->kind == TY_SLICE) {
+      if (expr->as.index.index->kind == AST_RANGE_EXPR)
+        inferred = target_t;
+      else
+        inferred = target_t->as.slice.inner;
     } else if (target_t->kind == TY_POINTER) {
-      inferred = target_t->as.pointer.inner;
+      if (target_t->as.pointer.nullable) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Cannot index a nullable pointer");
+        inferred = tc->tctx->type_error;
+      } else if (tc->unsafe_depth == 0) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Pointer indexing requires an unsafe block");
+        inferred = tc->tctx->type_error;
+      } else {
+        inferred = target_t->as.pointer.inner;
+      }
+    } else if (target_t->kind == TY_PRIMITIVE &&
+               strcmp(target_t->as.primitive.name, "str") == 0) {
+      inferred = expr->as.index.index->kind == AST_RANGE_EXPR
+                     ? target_t
+                     : tc->tctx->type_u8;
     } else if (type_is_resolved(target_t)) {
       typechecker_error(tc, expr->line, expr->col,
                         "Cannot index non-array type");
@@ -1811,8 +2639,9 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         typechecker_error(tc, expr->line, expr->col,
                           "Range bounds must be integers");
         inferred = tc->tctx->type_error;
-      } else if (!type_is_assignable(start_t, end_t) &&
-                 !type_is_assignable(end_t, start_t)) {
+      } else if (!values_are_compatible(tc, expr->as.range_expr.start,
+                                        start_t, expr->as.range_expr.end,
+                                        end_t)) {
         typechecker_error(tc, expr->line, expr->col,
                           "Range bounds must have compatible types");
         inferred = tc->tctx->type_error;
@@ -1839,6 +2668,15 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       }
     }
 
+    AstNode *qualified_container =
+        qualified_declaration(tc, expr->as.field.target);
+    if (qualified_container && qualified_container->kind == AST_MOD_DECL) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Module has no member '%s'", expr->as.field.field);
+      inferred = tc->tctx->type_error;
+      break;
+    }
+
     Type *target_t = typechecker_infer_expr(tc, expr->as.field.target);
     const char *fname = expr->as.field.field;
 
@@ -1851,9 +2689,6 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
             tc->st, expr->as.field.target->as.identifier.name);
         if (s && s->kind == SYM_MOD)
           is_mod = true;
-      } else if (expr->as.field.target->kind == AST_FIELD_EXPR) {
-        // Nested module path
-        is_mod = true; // Assume unknown field on unknown target is a path
       }
 
       if (is_mod) {
@@ -1866,6 +2701,18 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     if (target_t->kind == TY_POINTER &&
         target_t->as.pointer.inner->kind == TY_STRUCT) {
       // Auto-dereference field access: p.x where p is *Struct
+      if (target_t->as.pointer.nullable) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Cannot access a field through a nullable pointer");
+        inferred = tc->tctx->type_error;
+        break;
+      }
+      if (tc->unsafe_depth == 0) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Pointer field access requires an unsafe block");
+        inferred = tc->tctx->type_error;
+        break;
+      }
       base_t = target_t->as.pointer.inner;
     }
 
@@ -1879,15 +2726,40 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         }
       }
       if (!found) {
-        // Look for methods
+        // Inherent methods take precedence over interface implementations.
         Method *m = base_t->as.struct_t.methods;
         while (m) {
-          if (strcmp(m->name, fname) == 0) {
+          if (!m->interface_name && strcmp(m->name, fname) == 0) {
             inferred = m->type;
+            expr->resolved_decl = m->node;
             found = true;
             break;
           }
           m = m->next;
+        }
+      }
+
+      if (!found) {
+        Method *selected = NULL;
+        for (Method *m = base_t->as.struct_t.methods; m; m = m->next) {
+          if (!m->interface_name || strcmp(m->name, fname) != 0)
+            continue;
+          if (selected) {
+            typechecker_error(tc, expr->line, expr->col,
+                              "Method '%s' is ambiguous across interface "
+                              "implementations",
+                              fname);
+            inferred = tc->tctx->type_error;
+            found = true;
+            selected = NULL;
+            break;
+          }
+          selected = m;
+        }
+        if (selected) {
+          inferred = selected->type;
+          expr->resolved_decl = selected->node;
+          found = true;
         }
       }
 
@@ -1920,6 +2792,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         while (m) {
           if (strcmp(m->name, fname) == 0) {
             inferred = m->type;
+            expr->resolved_decl = m->node;
             found = true;
             break;
           }
@@ -1950,7 +2823,13 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     } else if (base_t->kind == TY_PRIMITIVE &&
                strcmp(base_t->as.primitive.name, "str") == 0) {
       if (strcmp(fname, "ptr") == 0) {
-        inferred = type_new_pointer(tc->tctx, tc->tctx->type_u8);
+        if (tc->unsafe_depth == 0) {
+          typechecker_error(tc, expr->line, expr->col,
+                            "String pointer access requires an unsafe block");
+          inferred = tc->tctx->type_error;
+        } else {
+          inferred = type_new_pointer(tc->tctx, tc->tctx->type_u8);
+        }
       } else if (strcmp(fname, "len") == 0) {
         inferred = tc->tctx->type_usize;
       } else {
@@ -1966,12 +2845,27 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
                           "Unknown property '%s' on array", fname);
         inferred = tc->tctx->type_error;
       }
+    } else if (base_t->kind == TY_SLICE) {
+      if (strcmp(fname, "len") == 0) {
+        inferred = tc->tctx->type_usize;
+      } else if (strcmp(fname, "ptr") == 0) {
+        if (base_t->as.slice.readonly) {
+          typechecker_error(tc, expr->line, expr->col,
+                            "Read-only slice pointers require explicit FFI conversion");
+          inferred = tc->tctx->type_error;
+        } else {
+          inferred = type_new_pointer(tc->tctx, base_t->as.slice.inner);
+        }
+      } else {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Unknown property '%s' on slice", fname);
+        inferred = tc->tctx->type_error;
+      }
     } else if (type_is_resolved(base_t)) {
-      // Be lenient with unknown fields on non-struct types for now if they
-      // might be methods/properties we haven't implemented yet.
-      // But for v0.1 we only error if we are sure it's not a struct.
-      // Actually, many tests use this for mock objects.
-      inferred = tc->tctx->type_unknown;
+      typechecker_error(tc, expr->line, expr->col,
+                        "Type '%s' has no field or method '%s'",
+                        type_display_name(base_t), fname);
+      inferred = tc->tctx->type_error;
     }
     break;
   }
@@ -2056,7 +2950,8 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
           inferred = handler_t;
         } else if (type_is_resolved(handler_t) &&
                    type_is_resolved(success_t)) {
-          if (!type_is_assignable(success_t, handler_t)) {
+          if (!value_is_assignable(tc, success_t,
+                                   expr->as.catch_expr.handler, handler_t)) {
             typechecker_error(
                 tc, expr->as.catch_expr.handler->line,
                 expr->as.catch_expr.handler->col,
@@ -2086,11 +2981,18 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       typechecker_error(tc, expr->line, expr->col,
                         "promote requires a pointer to the value being copied");
       inferred = tc->tctx->type_error;
+    } else if (type_is_resolved(inner_t) && inner_t->kind == TY_POINTER &&
+               inner_t->as.pointer.inner->kind == TY_PRIMITIVE &&
+               strcmp(inner_t->as.pointer.inner->as.primitive.name,
+                      "void") == 0) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "promote requires a pointer to a sized value");
+      inferred = tc->tctx->type_error;
     }
 
-    if (tc->current_realm == REALM_STACK) {
+    if (tc->current_realm != REALM_ARENA) {
       typechecker_error(tc, expr->line, expr->col,
-                        "Cannot promote from a pure stack function");
+                        "promote is only available inside a regional function");
     }
 
     MemoryRealm target = expr->as.promote.target;
@@ -2119,9 +3021,13 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     }
     Type *else_type =
         typechecker_infer_value_branch(tc, expr->as.if_stmt.else_branch);
+    AstNode *then_value =
+        value_branch_expression(expr->as.if_stmt.then_branch);
+    AstNode *else_value =
+        value_branch_expression(expr->as.if_stmt.else_branch);
     if (type_is_resolved(then_type) && type_is_resolved(else_type) &&
-        !type_is_assignable(then_type, else_type) &&
-        !type_is_assignable(else_type, then_type)) {
+        !values_are_compatible(tc, then_value, then_type, else_value,
+                               else_type)) {
       typechecker_error(tc, expr->line, expr->col,
                         "If branches produce incompatible types");
       inferred = tc->tctx->type_error;
@@ -2136,6 +3042,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
   case AST_MATCH_STMT: {
     Type *subject_t = typechecker_infer_expr(tc, expr->as.match_stmt.subject);
     Type *first_arm_t = NULL;
+    AstNode *first_arm_value = NULL;
 
     AstNode *arm = expr->as.match_stmt.arms;
     while (arm) {
@@ -2166,10 +3073,13 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
           body_t = typechecker_infer_expr(tc, arm->as.match_arm.body);
         }
 
+        AstNode *body_value = value_branch_expression(arm->as.match_arm.body);
         if (!first_arm_t && type_is_resolved(body_t)) {
           first_arm_t = body_t;
+          first_arm_value = body_value;
         } else if (first_arm_t && type_is_resolved(body_t)) {
-          if (!type_is_assignable(first_arm_t, body_t)) {
+          if (!values_are_compatible(tc, first_arm_value, first_arm_t,
+                                     body_value, body_t)) {
             typechecker_error(
                 tc, arm->line, arm->col,
                 "Match arm type is incompatible with previous arms");
@@ -2266,6 +3176,17 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
     break;
   }
 
+  case AST_EXTERN_DECL:
+    if (node->as.extern_decl.attrs)
+      validate_systems_attrs(tc, node, node->as.extern_decl.attrs);
+    if (has_non_safe_attr(node->as.extern_decl.attrs) &&
+        is_compiler_lowered_extern(node->as.extern_decl.name))
+      typechecker_error(tc, node->line, node->col,
+                        "Attributes are not allowed on compiler-lowered extern "
+                        "'%s'",
+                        node->as.extern_decl.name);
+    break;
+
   case AST_MOD_DECL: {
     symbol_table_push(tc->st);
     typechecker_collect_decls(tc, node->as.mod_decl.declarations);
@@ -2277,8 +3198,27 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   }
 
   case AST_FUNC_DECL: {
+    if (node->as.func_decl.attrs)
+      validate_systems_attrs(tc, node, node->as.func_decl.attrs);
+    if (node->as.func_decl.is_move && tc->function_depth == 0) {
+      typechecker_error(tc, node->line, node->col,
+                        "'move f' is only valid for nested functions");
+    }
+    if (node->as.func_decl.is_main) {
+      if (node->as.func_decl.params)
+        typechecker_error(tc, node->line, node->col,
+                          "main must not declare parameters");
+      if (node->as.func_decl.ret_type)
+        typechecker_error(tc, node->line, node->col,
+                          "main must not declare a return value");
+      if (node->as.func_decl.generic_params)
+        typechecker_error(tc, node->line, node->col,
+                          "main must not be generic");
+    }
     // Phase 3: realm nesting enforcement
     MemoryRealm saved_realm = tc->current_realm;
+    int saved_unsafe_depth = tc->unsafe_depth;
+    tc->unsafe_depth = 0;
     MemoryRealm func_realm = node->as.func_decl.realm;
 
     if (!node->as.func_decl.is_main) {
@@ -2290,14 +3230,9 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
     }
     tc->current_realm = node->as.func_decl.is_main ? REALM_MAIN : func_realm;
 
-    if (tc->function_depth >= 32) {
-      typechecker_error(tc, node->line, node->col,
-                        "Function nesting exceeds compiler limit of 32");
-      break;
-    }
     Scope *function_parent = tc->st->current;
     symbol_table_push(tc->st);
-    tc->function_parent_scopes[tc->function_depth++] = function_parent;
+    push_function_context(tc, function_parent, node);
 
     AstNode *p = node->as.func_decl.params;
     while (p) {
@@ -2306,6 +3241,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       sym.kind = SYM_VAR;
       sym.node = p;
       sym.type = typechecker_resolve_type_expr(tc, p->as.param.type);
+      p->resolved_type = sym.type;
       symbol_table_define(tc->st, sym);
       p = p->next;
     }
@@ -2344,6 +3280,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
 
     tc->expected_ret = saved_expected_ret;
     tc->current_realm = saved_realm;
+    tc->unsafe_depth = saved_unsafe_depth;
     tc->function_depth--;
     symbol_table_pop(tc->st);
     break;
@@ -2369,7 +3306,8 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
           Type *elem_t = typechecker_infer_expr(tc, elem);
           count++;
           if (type_is_resolved(elem_t) &&
-              !type_is_assignable(decl_t->as.array.inner, elem_t)) {
+              !value_is_assignable(tc, decl_t->as.array.inner, elem,
+                                   elem_t)) {
             typechecker_error(tc, elem->line, elem->col,
                               "Array element does not match declared type");
           }
@@ -2387,78 +3325,13 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       }
 
       if (type_is_resolved(decl_t) && type_is_resolved(init_t)) {
-        if (!type_is_assignable(decl_t, init_t)) {
+        validate_slice_coercion(tc, decl_t, node->as.var_decl.init,
+                                node->line, node->col);
+        if (!value_is_assignable(tc, decl_t, node->as.var_decl.init,
+                                 init_t)) {
           typechecker_error(
               tc, node->line, node->col,
               "Variable initializer does not match declared type");
-        } else {
-          // Contextual literal typing with range checking (D-06, D-09)
-          AstNode *init = node->as.var_decl.init;
-          if (decl_t->kind == TY_PRIMITIVE) {
-            const NumericTypeInfo *info = get_numeric_info(decl_t->as.primitive.name);
-            if (info) {
-              bool is_negated_literal = false;
-              unsigned long long lit_val = 0;
-              bool is_int_literal = false;
-              bool is_float_literal = false;
-
-              if (init->kind == AST_INT_LITERAL) {
-                lit_val = init->as.int_literal.value;
-                is_int_literal = true;
-              } else if (init->kind == AST_UNARY_EXPR &&
-                         init->as.unary.op == TOKEN_MINUS &&
-                         init->as.unary.expr->kind == AST_INT_LITERAL) {
-                lit_val = init->as.unary.expr->as.int_literal.value;
-                is_negated_literal = true;
-                is_int_literal = true;
-              } else if (init->kind == AST_FLOAT_LITERAL) {
-                is_float_literal = true;
-              } else if (init->kind == AST_UNARY_EXPR &&
-                         init->as.unary.op == TOKEN_MINUS &&
-                         init->as.unary.expr->kind == AST_FLOAT_LITERAL) {
-                is_float_literal = true;
-              }
-
-              if (is_int_literal && !info->is_float) {
-                bool overflow = false;
-                if (is_negated_literal) {
-                  if (info->is_signed) {
-                    // For signed types: max negative magnitude is 2^(bits-1)
-                    unsigned long long max_neg = 1ULL << (info->bit_width - 1);
-                    overflow = (lit_val > max_neg);
-                  } else {
-                    // Negative value in unsigned type is always overflow
-                    overflow = true;
-                  }
-                } else {
-                  overflow = (lit_val > info->max_val);
-                  // Also check: unsigned literal assigned to signed type must fit in positive range
-                  if (!overflow && info->is_signed) {
-                    overflow = (lit_val > (unsigned long long)info->max_val);
-                  }
-                }
-                if (overflow) {
-                  typechecker_error(tc, init->line, init->col,
-                                    "Integer literal overflow for type '%s'",
-                                    info->name);
-                }
-              } else if (is_float_literal && info->is_float) {
-                // Float range check for f32
-                double val = 0.0;
-                if (init->kind == AST_FLOAT_LITERAL) {
-                  val = init->as.float_literal.value;
-                } else if (init->kind == AST_UNARY_EXPR) {
-                  val = init->as.unary.expr->as.float_literal.value;
-                }
-                if (strcmp(info->name, "f32") == 0) {
-                  if (val > 3.40282347e38 || val < -3.40282347e38) {
-                    typechecker_error(tc, init->line, init->col,
-                                      "Float literal overflow for f32");
-                  }
-                }
-              }
-            }
-          }
         }
       } else if (!type_is_resolved(decl_t)) {
         decl_t = init_t; // inference
@@ -2548,7 +3421,19 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       Type *ret_v = typechecker_infer_expr(tc, node->as.return_stmt.value);
       if (tc->expected_ret && type_is_resolved(tc->expected_ret) &&
           type_is_resolved(ret_v)) {
-        if (!type_is_assignable(tc->expected_ret, ret_v)) {
+        bool returns_fallible_error =
+            tc->expected_ret->kind == TY_FALLIBLE &&
+            node->as.return_stmt.value->kind == AST_ERROR_EXPR;
+        Type *expected = tc->expected_ret->kind == TY_FALLIBLE
+                             ? tc->expected_ret->as.fallible.inner
+                             : tc->expected_ret;
+        if (!returns_fallible_error)
+          validate_slice_coercion(tc, expected,
+                                  node->as.return_stmt.value, node->line,
+                                  node->col);
+        if (!returns_fallible_error &&
+            !value_is_assignable(tc, expected, node->as.return_stmt.value,
+                                 ret_v)) {
           typechecker_error(tc, node->line, node->col, "Return type mismatch");
         }
       }
@@ -2659,9 +3544,19 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       if (node->as.for_stmt.cap_kind == CAPTURE_PTR ||
           node->as.for_stmt.cap_kind == CAPTURE_PTR_INDEXED)
         capture_t = type_new_pointer(tc->tctx, capture_t);
+    } else if (iter_t->kind == TY_SLICE) {
+      capture_t = iter_t->as.slice.inner;
+      if (node->as.for_stmt.cap_kind == CAPTURE_PTR ||
+          node->as.for_stmt.cap_kind == CAPTURE_PTR_INDEXED) {
+        if (iter_t->as.slice.readonly) {
+          typechecker_error(tc, node->line, node->col,
+                            "Cannot mutably capture elements of a read-only slice");
+        }
+        capture_t = type_new_pointer(tc->tctx, capture_t);
+      }
     } else if (type_is_resolved(iter_t)) {
       typechecker_error(tc, node->line, node->col,
-                        "For loop requires a range or fixed array");
+                        "For loop requires a range, fixed array, or slice");
     }
     // Bind capture variable
     if (node->as.for_stmt.cap_value) {
@@ -2695,11 +3590,20 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   }
 
   case AST_UNSAFE_BLOCK: {
+    tc->unsafe_depth++;
     typechecker_check_node(tc, node->as.unsafe_block.body);
+    tc->unsafe_depth--;
     break;
   }
 
   case AST_ASM_EXPR: {
+    if (tc->unsafe_depth == 0)
+      typechecker_error(tc, node->line, node->col,
+                        "Inline assembly requires an unsafe block");
+    if (memchr(node->as.asm_expr.code, '\0',
+               node->as.asm_expr.code_length))
+      typechecker_error(tc, node->line, node->col,
+                        "Inline assembly cannot contain NUL bytes");
     if (node->as.asm_expr.output) {
       Symbol *output = symbol_table_lookup(tc->st, node->as.asm_expr.output);
       if (!output) {
@@ -2734,9 +3638,18 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
   }
 
   case AST_TYPE_DECL: {
+    if (node->as.type_decl.attrs)
+      validate_systems_attrs(tc, node, node->as.type_decl.attrs);
     // 1. Duplicate field names check
     AstNode *f1 = node->as.type_decl.fields;
     while (f1) {
+      if (f1->as.field_decl.attrs) {
+        for (Attr *attr = f1->as.field_decl.attrs; attr; attr = attr->next)
+          typechecker_error(tc, f1->line, f1->col,
+                            "Field attribute '#[%s]' is not supported by the "
+                            "v0.1 C backend",
+                            attr->name);
+      }
       AstNode *f2 = f1->next;
       while (f2) {
         if (strcmp(f1->as.field_decl.name, f2->as.field_decl.name) == 0) {
@@ -2759,21 +3672,6 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       f1 = f1->next;
     }
 
-    // 3. Attribute validation
-    Attr *attr = node->as.type_decl.attrs;
-    while (attr) {
-      if (strcmp(attr->name, "align") == 0) {
-        if (attr->arg && attr->arg->kind == AST_INT_LITERAL) {
-          unsigned long long val = attr->arg->as.int_literal.value;
-          // Power of 2 check
-          if (val == 0 || (val & (val - 1)) != 0) {
-            typechecker_error(tc, attr->arg->line, attr->arg->col,
-                              "Alignment must be a power of 2");
-          }
-        }
-      }
-      attr = attr->next;
-    }
     break;
   }
 
@@ -2802,6 +3700,8 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       AstNode *m_node = node->as.method_decl.methods;
       while (m_node) {
         if (m_node->kind == AST_FUNC_DECL) {
+          if (m_node->as.func_decl.attrs)
+            validate_systems_attrs(tc, m_node, m_node->as.func_decl.attrs);
           const char *mname = m_node->as.func_decl.name;
           for (int i = 0; i < struct_t->as.struct_t.field_count; i++) {
             if (strcmp(struct_t->as.struct_t.field_names[i], mname) == 0) {
@@ -2812,19 +3712,14 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
           }
           // Now check the body of the method
           MemoryRealm saved_realm = tc->current_realm;
+          int saved_unsafe_depth = tc->unsafe_depth;
+          tc->unsafe_depth = 0;
           MemoryRealm func_realm = m_node->as.func_decl.realm;
           tc->current_realm = func_realm;
 
-          if (tc->function_depth >= 32) {
-            typechecker_error(tc, m_node->line, m_node->col,
-                              "Function nesting exceeds compiler limit of 32");
-            tc->current_realm = saved_realm;
-            m_node = m_node->next;
-            continue;
-          }
           Scope *function_parent = tc->st->current;
           symbol_table_push(tc->st);
-          tc->function_parent_scopes[tc->function_depth++] = function_parent;
+          push_function_context(tc, function_parent, m_node);
           // Bind parameters including 'self'
           AstNode *p = m_node->as.func_decl.params;
           while (p) {
@@ -2839,6 +3734,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
               param_sym.type =
                   typechecker_resolve_type_expr(tc, p->as.param.type);
             }
+            p->resolved_type = param_sym.type;
             symbol_table_define(tc->st, param_sym);
             p = p->next;
           }
@@ -2863,6 +3759,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
           }
           tc->expected_ret = saved_expected_ret;
           tc->current_realm = saved_realm;
+          tc->unsafe_depth = saved_unsafe_depth;
           tc->function_depth--;
           symbol_table_pop(tc->st);
         }
@@ -3014,6 +3911,885 @@ static void check_unresolved_types(TypeChecker *tc, AstNode *node) {
   check_unresolved_types(tc, node->next);
 }
 
+static bool type_contains_reference(Type *type, int depth) {
+  if (!type || depth > 32)
+    return false;
+  switch (type->kind) {
+  case TY_POINTER:
+  case TY_INTERFACE:
+  case TY_FUNCTION:
+    return true;
+  case TY_PRIMITIVE:
+    return strcmp(type->as.primitive.name, "str") == 0;
+  case TY_ARRAY:
+    return type_contains_reference(type->as.array.inner, depth + 1);
+  case TY_SLICE:
+    return true;
+  case TY_TUPLE:
+    for (int i = 0; i < type->as.tuple.count; i++)
+      if (type_contains_reference(type->as.tuple.elems[i], depth + 1))
+        return true;
+    return false;
+  case TY_STRUCT:
+    for (int i = 0; i < type->as.struct_t.field_count; i++)
+      if (type_contains_reference(type->as.struct_t.field_types[i], depth + 1))
+        return true;
+    return false;
+  case TY_VARIANT:
+    for (int i = 0; i < type->as.variant.arm_count; i++)
+      if (type_contains_reference(type->as.variant.arm_types[i], depth + 1))
+        return true;
+    return false;
+  case TY_FALLIBLE:
+    return type_contains_reference(type->as.fallible.inner, depth + 1);
+  default:
+    return false;
+  }
+}
+
+static uint32_t provenance_for_realm(MemoryRealm realm) {
+  switch (realm) {
+  case REALM_ARENA:
+    return MEM_PROV_ARENA;
+  case REALM_HEAP:
+  case REALM_MAIN:
+    return MEM_PROV_RAW;
+  case REALM_GC:
+    return MEM_PROV_GC;
+  case REALM_FLEX:
+    return MEM_PROV_INHERITED;
+  case REALM_STACK:
+    return MEM_PROV_BORROWED;
+  }
+  return MEM_PROV_UNKNOWN;
+}
+
+static uint32_t resolve_inherited_provenance(uint32_t provenance,
+                                             MemoryRealm caller_realm) {
+  if (!(provenance & MEM_PROV_INHERITED))
+    return provenance;
+  provenance &= ~MEM_PROV_INHERITED;
+  return provenance | provenance_for_realm(caller_realm);
+}
+
+static uint32_t function_default_provenance(AstNode *function) {
+  if (!function || function->kind != AST_FUNC_DECL ||
+      !function->resolved_type ||
+      function->resolved_type->kind != TY_FUNCTION ||
+      !type_contains_reference(function->resolved_type->as.function.ret, 0))
+    return MEM_PROV_NONE;
+  return provenance_for_realm(function->as.func_decl.realm);
+}
+
+static uint32_t provenance_of_expr(AstNode *expr, MemoryRealm realm);
+static bool is_concrete_interface_conversion(Type *target, AstNode *value);
+static bool is_array_slice_conversion(Type *target, AstNode *value);
+static uint32_t interface_backing_provenance(AstNode *value,
+                                             MemoryRealm realm);
+static uint32_t slice_backing_provenance(AstNode *value,
+                                         MemoryRealm realm);
+
+static uint32_t provenance_of_list(AstNode *node, MemoryRealm realm) {
+  uint32_t result = MEM_PROV_NONE;
+  for (; node; node = node->next)
+    result |= provenance_of_expr(node, realm);
+  return result;
+}
+
+static uint32_t provenance_of_call(AstNode *expr, MemoryRealm realm) {
+  AstNode *callee = expr->as.call.callee;
+  if (callee->kind == AST_IDENTIFIER) {
+    const char *name = callee->as.identifier.name;
+    if (strcmp(name, "alloc") == 0)
+      return provenance_for_realm(realm);
+    if (strcmp(name, "raw_alloc") == 0 ||
+        strcmp(name, "raw_alloc_aligned") == 0)
+      return MEM_PROV_RAW;
+    if (strcmp(name, "unwrap") == 0)
+      return expr->as.call.args
+                 ? provenance_of_expr(expr->as.call.args, realm)
+                 : MEM_PROV_UNKNOWN;
+    if (strcmp(name, "slice") == 0 || strcmp(name, "const_slice") == 0)
+      return expr->as.call.args
+                 ? provenance_of_expr(expr->as.call.args, realm)
+                 : MEM_PROV_UNKNOWN;
+  }
+
+  AstNode *declaration = callee->resolved_decl;
+  if (declaration && declaration->kind == AST_FUNC_DECL) {
+    uint32_t result = declaration->memory_provenance;
+    if (!result)
+      result = function_default_provenance(declaration);
+    return resolve_inherited_provenance(result, realm);
+  }
+  if (declaration && declaration->kind == AST_EXTERN_DECL &&
+      type_contains_reference(expr->resolved_type, 0))
+    return MEM_PROV_EXTERNAL;
+
+  if (expr->resolved_type && expr->resolved_type->kind == TY_STRUCT) {
+    uint32_t result = MEM_PROV_NONE;
+    Type *structure = expr->resolved_type;
+    for (AstNode *arg = expr->as.call.args; arg; arg = arg->next) {
+      AstNode *value = arg->kind == AST_NAMED_ARG ? arg->as.named_arg.value
+                                                  : arg;
+      Type *expected = NULL;
+      if (arg->kind == AST_NAMED_ARG)
+        for (int i = 0; i < structure->as.struct_t.field_count; i++)
+          if (strcmp(structure->as.struct_t.field_names[i],
+                     arg->as.named_arg.name) == 0) {
+            expected = structure->as.struct_t.field_types[i];
+            break;
+          }
+      result |= provenance_of_expr(value, realm);
+      if (is_array_slice_conversion(expected, value))
+        result |= slice_backing_provenance(value, realm);
+      if (is_concrete_interface_conversion(expected, value))
+        result |= interface_backing_provenance(value, realm);
+    }
+    return result;
+  }
+  if (expr->resolved_type && expr->resolved_type->kind == TY_VARIANT) {
+    uint32_t result = MEM_PROV_NONE;
+    Type *variant = expr->resolved_type;
+    const char *arm_name = expr->as.call.callee->kind == AST_FIELD_EXPR
+                               ? expr->as.call.callee->as.field.field
+                               : expr->as.call.callee->kind == AST_IDENTIFIER
+                                     ? expr->as.call.callee->as.identifier.name
+                                     : NULL;
+    Type *payload = NULL;
+    for (int i = 0; arm_name && i < variant->as.variant.arm_count; i++)
+      if (strcmp(variant->as.variant.arm_names[i], arm_name) == 0) {
+        payload = variant->as.variant.arm_types[i];
+        break;
+      }
+    int index = 0;
+    for (AstNode *arg = expr->as.call.args; arg; arg = arg->next, index++) {
+      Type *expected = payload && payload->kind == TY_TUPLE &&
+                               index < payload->as.tuple.count
+                           ? payload->as.tuple.elems[index]
+                           : index == 0 ? payload : NULL;
+      result |= provenance_of_expr(arg, realm);
+      if (is_array_slice_conversion(expected, arg))
+        result |= slice_backing_provenance(arg, realm);
+      if (is_concrete_interface_conversion(expected, arg))
+        result |= interface_backing_provenance(arg, realm);
+    }
+    return result;
+  }
+  if (type_contains_reference(expr->resolved_type, 0))
+    return MEM_PROV_UNKNOWN;
+  return MEM_PROV_NONE;
+}
+
+static uint32_t provenance_of_expr(AstNode *expr, MemoryRealm realm) {
+  if (!expr)
+    return MEM_PROV_NONE;
+  uint32_t result = MEM_PROV_NONE;
+  switch (expr->kind) {
+  case AST_STRING_LITERAL:
+    result = MEM_PROV_EXTERNAL;
+    break;
+  case AST_IDENTIFIER:
+    if (expr->resolved_decl && expr->resolved_decl->kind == AST_FUNC_DECL) {
+      AstNode *closure = expr->resolved_decl;
+      if (closure->as.func_decl.lexical_parent &&
+          closure->as.func_decl.capture_count)
+        result = closure->as.func_decl.is_move
+                     ? provenance_for_realm(
+                           closure->as.func_decl.lexical_parent->as.func_decl
+                               .realm)
+                     : MEM_PROV_STACK | MEM_PROV_BORROWED;
+      else
+        result = MEM_PROV_EXTERNAL;
+    } else {
+      result = expr->resolved_decl ? expr->resolved_decl->memory_provenance
+                                   : MEM_PROV_NONE;
+    }
+    break;
+  case AST_CALL_EXPR:
+    result = provenance_of_call(expr, realm);
+    break;
+  case AST_UNARY_EXPR:
+    if (expr->as.unary.op == TOKEN_AMP) {
+      AstNode *inner = expr->as.unary.expr;
+      if (inner->kind == AST_UNARY_EXPR && inner->as.unary.op == TOKEN_STAR)
+        result = provenance_of_expr(inner->as.unary.expr, realm);
+      else if ((inner->kind == AST_FIELD_EXPR ||
+                inner->kind == AST_INDEX_EXPR) &&
+               inner->resolved_type &&
+               type_contains_reference(inner->resolved_type, 0))
+        result = provenance_of_expr(inner, realm);
+      else {
+        result = MEM_PROV_STACK;
+        if (inner->kind == AST_IDENTIFIER && inner->resolved_decl)
+          result |= inner->resolved_decl->memory_provenance;
+      }
+    } else if (expr->as.unary.op == TOKEN_STAR &&
+               type_contains_reference(expr->resolved_type, 0)) {
+      result = MEM_PROV_UNKNOWN;
+    } else {
+      result = provenance_of_expr(expr->as.unary.expr, realm);
+    }
+    break;
+  case AST_CAST_EXPR:
+    result = provenance_of_expr(expr->as.cast.expr, realm);
+    if (expr->resolved_type && expr->resolved_type->kind == TY_POINTER &&
+        expr->as.cast.expr->resolved_type &&
+        expr->as.cast.expr->resolved_type->kind != TY_POINTER)
+      result = MEM_PROV_EXTERNAL;
+    break;
+  case AST_PROMOTE_EXPR:
+    result = expr->as.promote.target == REALM_GC ? MEM_PROV_GC : MEM_PROV_RAW;
+    break;
+  case AST_TUPLE_EXPR:
+    result = provenance_of_list(expr->as.tuple_expr.elems, realm);
+    break;
+  case AST_ARRAY_LITERAL:
+    result = provenance_of_list(expr->as.array_literal.elems, realm);
+    break;
+  case AST_BINARY_EXPR:
+    if (expr->resolved_type && expr->resolved_type->kind == TY_PRIMITIVE &&
+        strcmp(expr->resolved_type->as.primitive.name, "str") == 0 &&
+        expr->as.binary.op == TOKEN_PLUS)
+      result = provenance_for_realm(realm);
+    else
+      result = provenance_of_expr(expr->as.binary.left, realm) |
+               provenance_of_expr(expr->as.binary.right, realm);
+    break;
+  case AST_NAMED_ARG:
+    result = provenance_of_expr(expr->as.named_arg.value, realm);
+    break;
+  case AST_FIELD_EXPR:
+    if (type_contains_reference(expr->resolved_type, 0))
+      result = provenance_of_expr(expr->as.field.target, realm);
+    break;
+  case AST_INDEX_EXPR:
+    if (type_contains_reference(expr->resolved_type, 0))
+      result = provenance_of_expr(expr->as.index.target, realm);
+    break;
+  case AST_IF_STMT:
+    result = provenance_of_expr(expr->as.if_stmt.then_branch, realm) |
+             provenance_of_expr(expr->as.if_stmt.else_branch, realm);
+    break;
+  case AST_MATCH_STMT:
+    for (AstNode *arm = expr->as.match_stmt.arms; arm; arm = arm->next)
+      result |= provenance_of_expr(arm->as.match_arm.body, realm);
+    break;
+  case AST_BLOCK: {
+    AstNode *last = expr->as.block.statements;
+    while (last && last->next)
+      last = last->next;
+    result = provenance_of_expr(last, realm);
+    break;
+  }
+  case AST_TRY_EXPR:
+    result = provenance_of_expr(expr->as.try_expr.expr, realm);
+    break;
+  case AST_CATCH_EXPR:
+    result = provenance_of_expr(expr->as.catch_expr.expr, realm) |
+             provenance_of_expr(expr->as.catch_expr.handler, realm);
+    break;
+  default:
+    break;
+  }
+  if (expr->resolved_type &&
+      !type_contains_reference(expr->resolved_type, 0))
+    result = MEM_PROV_NONE;
+  expr->memory_provenance = result;
+  return result;
+}
+
+static bool is_concrete_interface_conversion(Type *target, AstNode *value) {
+  return target && target->kind == TY_INTERFACE && value &&
+         value->resolved_type && value->resolved_type->kind != TY_INTERFACE;
+}
+
+static bool is_array_slice_conversion(Type *target, AstNode *value) {
+  return target && target->kind == TY_SLICE && value &&
+         value->resolved_type && value->resolved_type->kind == TY_ARRAY;
+}
+
+static uint32_t slice_backing_provenance(AstNode *value,
+                                         MemoryRealm realm) {
+  if (!value)
+    return MEM_PROV_UNKNOWN;
+  if (value->resolved_type && value->resolved_type->kind == TY_SLICE)
+    return provenance_of_expr(value, realm);
+  if (value->kind == AST_IDENTIFIER && value->resolved_decl &&
+      !value->resolved_decl->enclosing_function)
+    return MEM_PROV_EXTERNAL;
+  if (value->kind == AST_UNARY_EXPR && value->as.unary.op == TOKEN_STAR)
+    return provenance_of_expr(value->as.unary.expr, realm);
+  if (value->kind == AST_FIELD_EXPR || value->kind == AST_INDEX_EXPR) {
+    AstNode *owner = value->kind == AST_FIELD_EXPR
+                         ? value->as.field.target
+                         : value->as.index.target;
+    uint32_t owner_provenance = provenance_of_expr(owner, realm);
+    return owner_provenance ? owner_provenance : MEM_PROV_STACK;
+  }
+  return MEM_PROV_STACK;
+}
+
+static uint32_t interface_backing_provenance(AstNode *value,
+                                             MemoryRealm realm) {
+  if (!value)
+    return MEM_PROV_UNKNOWN;
+  if (value->kind == AST_UNARY_EXPR && value->as.unary.op == TOKEN_STAR)
+    return provenance_of_expr(value->as.unary.expr, realm);
+  if (value->kind == AST_FIELD_EXPR && value->as.field.target->resolved_type &&
+      value->as.field.target->resolved_type->kind == TY_POINTER)
+    return provenance_of_expr(value->as.field.target, realm);
+  if (value->kind == AST_INDEX_EXPR && value->as.index.target->resolved_type &&
+      value->as.index.target->resolved_type->kind == TY_POINTER)
+    return provenance_of_expr(value->as.index.target, realm);
+  if (value->kind == AST_IDENTIFIER && value->resolved_decl &&
+      !value->resolved_decl->enclosing_function)
+    return MEM_PROV_EXTERNAL;
+  return MEM_PROV_BORROWED;
+}
+
+static Type *provenance_function_return_type(AstNode *function) {
+  if (!function || !function->resolved_type ||
+      function->resolved_type->kind != TY_FUNCTION)
+    return NULL;
+  Type *result = function->resolved_type->as.function.ret;
+  return result && result->kind == TY_FALLIBLE ? result->as.fallible.inner
+                                                : result;
+}
+
+static void seed_provenance_owners(AstNode *node, AstNode *function) {
+  for (; node; node = node->next) {
+    node->enclosing_function = function;
+    switch (node->kind) {
+    case AST_FUNC_DECL:
+      node->memory_provenance = function_default_provenance(node);
+      int param_index = 0;
+      for (AstNode *param = node->as.func_decl.params; param;
+           param = param->next) {
+        param->enclosing_function = node;
+        Type *param_type =
+            node->resolved_type && node->resolved_type->kind == TY_FUNCTION &&
+                    param_index < node->resolved_type->as.function.param_count
+                ? node->resolved_type->as.function.params[param_index]
+                : param->resolved_type;
+        param->memory_provenance =
+            type_contains_reference(param_type, 0)
+                ? (node->as.func_decl.realm == REALM_GC && param_type &&
+                           param_type->kind == TY_POINTER
+                       ? MEM_PROV_GC
+                       : MEM_PROV_BORROWED)
+                : MEM_PROV_NONE;
+        param_index++;
+      }
+      seed_provenance_owners(node->as.func_decl.body, node);
+      break;
+    case AST_MOD_DECL:
+      seed_provenance_owners(node->as.mod_decl.declarations, function);
+      break;
+    case AST_METHOD_DECL:
+      seed_provenance_owners(node->as.method_decl.methods, function);
+      break;
+    case AST_BLOCK:
+      seed_provenance_owners(node->as.block.statements, function);
+      break;
+    case AST_IF_STMT:
+      seed_provenance_owners(node->as.if_stmt.then_branch, function);
+      seed_provenance_owners(node->as.if_stmt.else_branch, function);
+      break;
+    case AST_WHILE_STMT:
+      seed_provenance_owners(node->as.while_stmt.body, function);
+      break;
+    case AST_FOR_STMT:
+      seed_provenance_owners(node->as.for_stmt.body, function);
+      break;
+    case AST_LOOP_STMT:
+      seed_provenance_owners(node->as.loop_stmt.body, function);
+      break;
+    case AST_MATCH_STMT:
+      for (AstNode *arm = node->as.match_stmt.arms; arm; arm = arm->next)
+        seed_provenance_owners(arm->as.match_arm.body, function);
+      break;
+    case AST_UNSAFE_BLOCK:
+      seed_provenance_owners(node->as.unsafe_block.body, function);
+      break;
+    default:
+      break;
+    }
+  }
+}
+
+static void analyze_provenance_statements(AstNode *node, AstNode *function,
+                                          MemoryRealm realm) {
+  for (; node; node = node->next) {
+    switch (node->kind) {
+    case AST_VAR_DECL:
+      node->memory_provenance =
+          provenance_of_expr(node->as.var_decl.init, realm);
+      if (is_concrete_interface_conversion(node->resolved_type,
+                                           node->as.var_decl.init))
+        node->memory_provenance |= interface_backing_provenance(
+            node->as.var_decl.init, realm);
+      if (is_array_slice_conversion(node->resolved_type,
+                                    node->as.var_decl.init))
+        node->memory_provenance |=
+            slice_backing_provenance(node->as.var_decl.init, realm);
+      break;
+    case AST_ASSIGN: {
+      uint32_t value = provenance_of_expr(node->as.assign.value, realm);
+      AstNode *target = node->as.assign.target;
+      bool interface_conversion = is_concrete_interface_conversion(
+          target->resolved_type, node->as.assign.value);
+      if (interface_conversion)
+        value |= interface_backing_provenance(node->as.assign.value, realm);
+      if (is_array_slice_conversion(target->resolved_type,
+                                    node->as.assign.value))
+        value |= slice_backing_provenance(node->as.assign.value, realm);
+      if (target->kind == AST_IDENTIFIER && target->resolved_decl)
+        target->resolved_decl->memory_provenance |= value;
+      break;
+    }
+    case AST_RETURN_STMT: {
+      uint32_t value = provenance_of_expr(node->as.return_stmt.value, realm);
+      Type *return_type = provenance_function_return_type(function);
+      if (is_concrete_interface_conversion(
+              return_type, node->as.return_stmt.value))
+        value |= interface_backing_provenance(node->as.return_stmt.value,
+                                              realm);
+      if (is_array_slice_conversion(return_type,
+                                    node->as.return_stmt.value))
+        value |= slice_backing_provenance(node->as.return_stmt.value, realm);
+      function->memory_provenance |= value;
+      break;
+    }
+    case AST_BLOCK:
+      analyze_provenance_statements(node->as.block.statements, function,
+                                    realm);
+      break;
+    case AST_IF_STMT:
+      provenance_of_expr(node->as.if_stmt.condition, realm);
+      analyze_provenance_statements(node->as.if_stmt.then_branch, function,
+                                    realm);
+      analyze_provenance_statements(node->as.if_stmt.else_branch, function,
+                                    realm);
+      break;
+    case AST_WHILE_STMT:
+      provenance_of_expr(node->as.while_stmt.condition, realm);
+      analyze_provenance_statements(node->as.while_stmt.body, function, realm);
+      break;
+    case AST_FOR_STMT:
+      provenance_of_expr(node->as.for_stmt.iter, realm);
+      analyze_provenance_statements(node->as.for_stmt.body, function, realm);
+      break;
+    case AST_LOOP_STMT:
+      analyze_provenance_statements(node->as.loop_stmt.body, function, realm);
+      break;
+    case AST_MATCH_STMT:
+      provenance_of_expr(node->as.match_stmt.subject, realm);
+      for (AstNode *arm = node->as.match_stmt.arms; arm; arm = arm->next)
+        analyze_provenance_statements(arm->as.match_arm.body, function, realm);
+      break;
+    case AST_UNSAFE_BLOCK:
+      analyze_provenance_statements(node->as.unsafe_block.body, function,
+                                    realm);
+      break;
+    case AST_FUNC_DECL:
+      break;
+    default:
+      provenance_of_expr(node, realm);
+      break;
+    }
+  }
+}
+
+static bool analyze_provenance_functions(AstNode *node) {
+  bool changed = false;
+  for (; node; node = node->next) {
+    if (node->kind == AST_FUNC_DECL) {
+      uint32_t before = node->memory_provenance;
+      node->memory_provenance = MEM_PROV_NONE;
+      analyze_provenance_statements(node->as.func_decl.body, node,
+                                    node->as.func_decl.realm);
+      if (!node->memory_provenance)
+        node->memory_provenance = function_default_provenance(node);
+      changed |= before != node->memory_provenance;
+      changed |= analyze_provenance_functions(node->as.func_decl.body);
+    } else if (node->kind == AST_MOD_DECL) {
+      changed |= analyze_provenance_functions(node->as.mod_decl.declarations);
+    } else if (node->kind == AST_METHOD_DECL) {
+      changed |= analyze_provenance_functions(node->as.method_decl.methods);
+    } else if (node->kind == AST_BLOCK) {
+      changed |= analyze_provenance_functions(node->as.block.statements);
+    } else if (node->kind == AST_IF_STMT) {
+      changed |= analyze_provenance_functions(node->as.if_stmt.then_branch);
+      changed |= analyze_provenance_functions(node->as.if_stmt.else_branch);
+    } else if (node->kind == AST_WHILE_STMT) {
+      changed |= analyze_provenance_functions(node->as.while_stmt.body);
+    } else if (node->kind == AST_FOR_STMT) {
+      changed |= analyze_provenance_functions(node->as.for_stmt.body);
+    } else if (node->kind == AST_LOOP_STMT) {
+      changed |= analyze_provenance_functions(node->as.loop_stmt.body);
+    } else if (node->kind == AST_MATCH_STMT) {
+      for (AstNode *arm = node->as.match_stmt.arms; arm; arm = arm->next)
+        changed |= analyze_provenance_functions(arm->as.match_arm.body);
+    } else if (node->kind == AST_UNSAFE_BLOCK) {
+      changed |= analyze_provenance_functions(node->as.unsafe_block.body);
+    }
+  }
+  return changed;
+}
+
+static size_t count_provenance_functions(AstNode *node) {
+  size_t count = 0;
+  for (; node; node = node->next) {
+    if (node->kind == AST_FUNC_DECL) {
+      count++;
+      count += count_provenance_functions(node->as.func_decl.body);
+    } else if (node->kind == AST_MOD_DECL) {
+      count += count_provenance_functions(node->as.mod_decl.declarations);
+    } else if (node->kind == AST_METHOD_DECL) {
+      count += count_provenance_functions(node->as.method_decl.methods);
+    } else if (node->kind == AST_BLOCK) {
+      count += count_provenance_functions(node->as.block.statements);
+    } else if (node->kind == AST_IF_STMT) {
+      count += count_provenance_functions(node->as.if_stmt.then_branch);
+      count += count_provenance_functions(node->as.if_stmt.else_branch);
+    } else if (node->kind == AST_WHILE_STMT) {
+      count += count_provenance_functions(node->as.while_stmt.body);
+    } else if (node->kind == AST_FOR_STMT) {
+      count += count_provenance_functions(node->as.for_stmt.body);
+    } else if (node->kind == AST_LOOP_STMT) {
+      count += count_provenance_functions(node->as.loop_stmt.body);
+    } else if (node->kind == AST_MATCH_STMT) {
+      for (AstNode *arm = node->as.match_stmt.arms; arm; arm = arm->next)
+        count += count_provenance_functions(arm->as.match_arm.body);
+    } else if (node->kind == AST_UNSAFE_BLOCK) {
+      count += count_provenance_functions(node->as.unsafe_block.body);
+    }
+  }
+  return count;
+}
+
+static AstNode *capture_owner(AstNode *declaration) {
+  if (!declaration)
+    return NULL;
+  if (declaration->kind == AST_FUNC_DECL)
+    return declaration->as.func_decl.lexical_parent
+               ? declaration->as.func_decl.lexical_parent
+               : declaration;
+  return declaration->enclosing_function;
+}
+
+static bool propagate_closure_captures(TypeChecker *tc, AstNode *node) {
+  bool changed = false;
+  for (; node; node = node->next) {
+    if (node->kind == AST_FUNC_DECL) {
+      for (int i = 0; i < node->as.func_decl.closure_call_count; i++) {
+        AstNode *callee = node->as.func_decl.closure_calls[i];
+        for (int capture = 0; capture < callee->as.func_decl.capture_count;
+             capture++) {
+          AstNode *declaration = callee->as.func_decl.captures[capture];
+          if (capture_owner(declaration) == node)
+            continue;
+          int before = node->as.func_decl.capture_count;
+          add_capture(tc, node, declaration,
+                      callee->as.func_decl.capture_names[capture],
+                      callee->as.func_decl.capture_types[capture]);
+          changed |= before != node->as.func_decl.capture_count;
+        }
+      }
+      changed |= propagate_closure_captures(tc, node->as.func_decl.body);
+    } else if (node->kind == AST_MOD_DECL) {
+      changed |= propagate_closure_captures(tc,
+                                             node->as.mod_decl.declarations);
+    } else if (node->kind == AST_METHOD_DECL) {
+      changed |= propagate_closure_captures(tc,
+                                             node->as.method_decl.methods);
+    } else if (node->kind == AST_BLOCK) {
+      changed |= propagate_closure_captures(tc, node->as.block.statements);
+    } else if (node->kind == AST_IF_STMT) {
+      changed |= propagate_closure_captures(tc,
+                                             node->as.if_stmt.then_branch);
+      changed |= propagate_closure_captures(tc,
+                                             node->as.if_stmt.else_branch);
+    } else if (node->kind == AST_WHILE_STMT) {
+      changed |= propagate_closure_captures(tc, node->as.while_stmt.body);
+    } else if (node->kind == AST_FOR_STMT) {
+      changed |= propagate_closure_captures(tc, node->as.for_stmt.body);
+    } else if (node->kind == AST_LOOP_STMT) {
+      changed |= propagate_closure_captures(tc, node->as.loop_stmt.body);
+    } else if (node->kind == AST_MATCH_STMT) {
+      for (AstNode *arm = node->as.match_stmt.arms; arm; arm = arm->next)
+        changed |= propagate_closure_captures(tc, arm->as.match_arm.body);
+    } else if (node->kind == AST_UNSAFE_BLOCK) {
+      changed |= propagate_closure_captures(tc,
+                                             node->as.unsafe_block.body);
+    }
+  }
+  return changed;
+}
+
+static uint32_t lvalue_storage_provenance(AstNode *target,
+                                          MemoryRealm realm) {
+  if (!target)
+    return MEM_PROV_UNKNOWN;
+  if (target->kind == AST_UNARY_EXPR && target->as.unary.op == TOKEN_STAR)
+    return provenance_of_expr(target->as.unary.expr, realm);
+  if (target->kind == AST_FIELD_EXPR && target->as.field.target->resolved_type &&
+      target->as.field.target->resolved_type->kind == TY_POINTER)
+    return provenance_of_expr(target->as.field.target, realm);
+  if (target->kind == AST_INDEX_EXPR && target->as.index.target->resolved_type &&
+      target->as.index.target->resolved_type->kind == TY_POINTER)
+    return provenance_of_expr(target->as.index.target, realm);
+  return MEM_PROV_STACK;
+}
+
+static void validate_gc_argument(TypeChecker *tc, AstNode *value,
+                                 Type *parameter, MemoryRealm realm) {
+  if (!value || !parameter || parameter->kind != TY_POINTER)
+    return;
+  uint32_t provenance = provenance_of_expr(value, realm);
+  if (is_array_slice_conversion(parameter, value))
+    provenance |= slice_backing_provenance(value, realm);
+  if (is_concrete_interface_conversion(parameter, value))
+    provenance |= interface_backing_provenance(value, realm);
+  if (provenance & (MEM_PROV_STACK | MEM_PROV_ARENA | MEM_PROV_BORROWED))
+    typechecker_error(tc, value->line, value->col,
+                      "GC function reference arguments must have GC-stable "
+                      "storage");
+}
+
+static void validate_gc_call_arguments(TypeChecker *tc, AstNode *call,
+                                       MemoryRealm realm) {
+  if (!call || call->kind != AST_CALL_EXPR || !call->as.call.callee ||
+      !call->as.call.callee->resolved_type ||
+      call->as.call.callee->resolved_type->kind != TY_FUNCTION)
+    return;
+  Type *function_type = call->as.call.callee->resolved_type;
+  if (function_type->as.function.strategy != STRATEGY_GC)
+    return;
+
+  int parameter = 0;
+  if (function_type->as.function.is_method &&
+      call->as.call.callee->kind == AST_FIELD_EXPR &&
+      function_type->as.function.param_count > 0) {
+    validate_gc_argument(tc, call->as.call.callee->as.field.target,
+                         function_type->as.function.params[0], realm);
+    parameter = 1;
+  }
+  for (AstNode *argument = call->as.call.args;
+       argument && parameter < function_type->as.function.param_count;
+       argument = argument->next, parameter++) {
+    AstNode *value = argument->kind == AST_NAMED_ARG
+                         ? argument->as.named_arg.value
+                         : argument;
+    validate_gc_argument(tc, value,
+                         function_type->as.function.params[parameter], realm);
+  }
+}
+
+static void validate_promotion_sources(TypeChecker *tc, AstNode *expr,
+                                       MemoryRealm realm) {
+  if (!expr)
+    return;
+  if (expr->kind == AST_PROMOTE_EXPR) {
+    uint32_t source = provenance_of_expr(expr->as.promote.expr, realm);
+    uint32_t nested = MEM_PROV_NONE;
+    if (expr->as.promote.expr->kind == AST_UNARY_EXPR &&
+        expr->as.promote.expr->as.unary.op == TOKEN_AMP)
+      nested = provenance_of_expr(expr->as.promote.expr->as.unary.expr,
+                                  realm);
+    if ((source & MEM_PROV_BORROWED) ||
+        (nested & (MEM_PROV_STACK | MEM_PROV_BORROWED)))
+      typechecker_error(tc, expr->line, expr->col,
+                        "Promotion cannot make borrowed pointers outlive "
+                        "their owner");
+    validate_promotion_sources(tc, expr->as.promote.expr, realm);
+    return;
+  }
+  switch (expr->kind) {
+  case AST_BINARY_EXPR:
+    validate_promotion_sources(tc, expr->as.binary.left, realm);
+    validate_promotion_sources(tc, expr->as.binary.right, realm);
+    break;
+  case AST_UNARY_EXPR:
+    validate_promotion_sources(tc, expr->as.unary.expr, realm);
+    break;
+  case AST_CAST_EXPR:
+    validate_promotion_sources(tc, expr->as.cast.expr, realm);
+    break;
+  case AST_CALL_EXPR:
+    validate_gc_call_arguments(tc, expr, realm);
+    validate_promotion_sources(tc, expr->as.call.callee, realm);
+    for (AstNode *arg = expr->as.call.args; arg; arg = arg->next)
+      validate_promotion_sources(tc, arg, realm);
+    break;
+  case AST_NAMED_ARG:
+    validate_promotion_sources(tc, expr->as.named_arg.value, realm);
+    break;
+  case AST_TUPLE_EXPR:
+    for (AstNode *element = expr->as.tuple_expr.elems; element;
+         element = element->next)
+      validate_promotion_sources(tc, element, realm);
+    break;
+  case AST_ARRAY_LITERAL:
+    for (AstNode *element = expr->as.array_literal.elems; element;
+         element = element->next)
+      validate_promotion_sources(tc, element, realm);
+    break;
+  case AST_IF_STMT:
+    validate_promotion_sources(tc, expr->as.if_stmt.then_branch, realm);
+    validate_promotion_sources(tc, expr->as.if_stmt.else_branch, realm);
+    break;
+  case AST_BLOCK:
+    for (AstNode *statement = expr->as.block.statements; statement;
+         statement = statement->next)
+      validate_promotion_sources(tc, statement, realm);
+    break;
+  case AST_TRY_EXPR:
+    validate_promotion_sources(tc, expr->as.try_expr.expr, realm);
+    break;
+  case AST_CATCH_EXPR:
+    validate_promotion_sources(tc, expr->as.catch_expr.expr, realm);
+    validate_promotion_sources(tc, expr->as.catch_expr.handler, realm);
+    break;
+  default:
+    break;
+  }
+}
+
+static void validate_provenance(TypeChecker *tc, AstNode *node,
+                                AstNode *function, MemoryRealm realm) {
+  for (; node; node = node->next) {
+    switch (node->kind) {
+    case AST_FUNC_DECL:
+      validate_provenance(tc, node->as.func_decl.body, node,
+                          node->as.func_decl.realm);
+      break;
+    case AST_MOD_DECL:
+      validate_provenance(tc, node->as.mod_decl.declarations, function, realm);
+      break;
+    case AST_METHOD_DECL:
+      validate_provenance(tc, node->as.method_decl.methods, function, realm);
+      break;
+    case AST_VAR_DECL: {
+      uint32_t value = provenance_of_expr(node->as.var_decl.init, realm);
+      validate_promotion_sources(tc, node->as.var_decl.init, realm);
+      if ((value & MEM_PROV_ARENA) && realm != REALM_ARENA)
+        typechecker_error(tc, node->line, node->col,
+                          "Arena-backed value cannot escape its regional "
+                          "call tree; promote it first");
+      if (!function &&
+          (value & (MEM_PROV_STACK | MEM_PROV_ARENA | MEM_PROV_BORROWED)))
+        typechecker_error(tc, node->line, node->col,
+                          "Borrowed or scoped value cannot be stored globally");
+      break;
+    }
+    case AST_ASSIGN: {
+      uint32_t value = provenance_of_expr(node->as.assign.value, realm);
+      validate_promotion_sources(tc, node->as.assign.value, realm);
+      AstNode *target = node->as.assign.target;
+      bool interface_conversion = is_concrete_interface_conversion(
+          target->resolved_type, node->as.assign.value);
+      if (interface_conversion)
+        value |= interface_backing_provenance(node->as.assign.value, realm);
+      if (is_array_slice_conversion(target->resolved_type,
+                                    node->as.assign.value))
+        value |= slice_backing_provenance(node->as.assign.value, realm);
+      AstNode *declaration = target->kind == AST_IDENTIFIER
+                                 ? target->resolved_decl
+                                 : NULL;
+      bool is_result = declaration == function;
+      if (is_result && (value & MEM_PROV_STACK))
+        typechecker_error(tc, node->line, node->col,
+                          "Pointer to stack storage cannot escape a function");
+      if (is_result && target->resolved_type &&
+          target->resolved_type->kind == TY_FUNCTION &&
+          (value & MEM_PROV_BORROWED))
+        typechecker_error(tc, node->line, node->col,
+                          "Borrowing closure cannot escape its captured "
+                          "bindings; use move f");
+      if (is_result && interface_conversion && (value & MEM_PROV_BORROWED))
+        typechecker_error(tc, node->line, node->col,
+                          "Stack-backed interface cannot escape a function");
+      if (declaration && declaration->kind == AST_VAR_DECL &&
+          declaration->enclosing_function != function &&
+          (value & (MEM_PROV_STACK | MEM_PROV_ARENA | MEM_PROV_BORROWED)))
+        typechecker_error(tc, node->line, node->col,
+                          "Scoped value cannot be assigned outside its owning "
+                          "function");
+      uint32_t storage = lvalue_storage_provenance(target, realm);
+      if ((storage & (MEM_PROV_RAW | MEM_PROV_GC | MEM_PROV_EXTERNAL |
+                      MEM_PROV_BORROWED)) &&
+          (value & (MEM_PROV_STACK | MEM_PROV_ARENA | MEM_PROV_BORROWED)))
+        typechecker_error(tc, node->line, node->col,
+                          "Scoped pointer cannot be stored in longer-lived "
+                          "memory");
+      if ((value & MEM_PROV_ARENA) && realm != REALM_ARENA)
+        typechecker_error(tc, node->line, node->col,
+                          "Arena-backed value cannot escape its regional "
+                          "call tree; promote it first");
+      break;
+    }
+    case AST_RETURN_STMT: {
+      uint32_t value = provenance_of_expr(node->as.return_stmt.value, realm);
+      bool interface_conversion = is_concrete_interface_conversion(
+          provenance_function_return_type(function),
+          node->as.return_stmt.value);
+      if (interface_conversion)
+        value |= interface_backing_provenance(node->as.return_stmt.value,
+                                              realm);
+      if (is_array_slice_conversion(provenance_function_return_type(function),
+                                    node->as.return_stmt.value))
+        value |= slice_backing_provenance(node->as.return_stmt.value, realm);
+      validate_promotion_sources(tc, node->as.return_stmt.value, realm);
+      if (value & MEM_PROV_STACK)
+        typechecker_error(tc, node->line, node->col,
+                          "Pointer to stack storage cannot escape a function");
+      Type *return_type = provenance_function_return_type(function);
+      if (return_type && return_type->kind == TY_FUNCTION &&
+          (value & MEM_PROV_BORROWED))
+        typechecker_error(tc, node->line, node->col,
+                          "Borrowing closure cannot escape its captured "
+                          "bindings; use move f");
+      if (interface_conversion && (value & MEM_PROV_BORROWED))
+        typechecker_error(tc, node->line, node->col,
+                          "Stack-backed interface cannot escape a function");
+      break;
+    }
+    case AST_PROMOTE_EXPR:
+      validate_promotion_sources(tc, node, realm);
+      break;
+    case AST_BLOCK:
+      validate_provenance(tc, node->as.block.statements, function, realm);
+      break;
+    case AST_IF_STMT:
+      validate_provenance(tc, node->as.if_stmt.then_branch, function, realm);
+      validate_provenance(tc, node->as.if_stmt.else_branch, function, realm);
+      break;
+    case AST_WHILE_STMT:
+      validate_provenance(tc, node->as.while_stmt.body, function, realm);
+      break;
+    case AST_FOR_STMT:
+      validate_provenance(tc, node->as.for_stmt.body, function, realm);
+      break;
+    case AST_LOOP_STMT:
+      validate_provenance(tc, node->as.loop_stmt.body, function, realm);
+      break;
+    case AST_MATCH_STMT:
+      for (AstNode *arm = node->as.match_stmt.arms; arm; arm = arm->next)
+        validate_provenance(tc, arm->as.match_arm.body, function, realm);
+      break;
+    case AST_UNSAFE_BLOCK:
+      validate_provenance(tc, node->as.unsafe_block.body, function, realm);
+      break;
+    default:
+      provenance_of_expr(node, realm);
+      validate_promotion_sources(tc, node, realm);
+      break;
+    }
+  }
+}
+
 void typechecker_check(TypeChecker *tc, AstNode *program) {
   if (!program || program->kind != AST_PROGRAM)
     return;
@@ -3030,4 +4806,29 @@ void typechecker_check(TypeChecker *tc, AstNode *program) {
   // Only ICEs on expression kinds that have handlers in typechecker_infer_expr;
   // unhandled kinds legitimately remain TY_UNKNOWN until their handlers are added.
   check_unresolved_types(tc, program);
+
+  if (!tc->had_error) {
+    seed_provenance_owners(program->as.program.declarations, NULL);
+    size_t function_count =
+        count_provenance_functions(program->as.program.declarations);
+    for (size_t iteration = 0; iteration < function_count + 1; iteration++)
+      if (!propagate_closure_captures(tc,
+                                      program->as.program.declarations))
+        break;
+    size_t max_iterations = function_count * 8 + 8;
+    bool converged = false;
+    for (size_t iteration = 0; iteration < max_iterations; iteration++) {
+      if (!analyze_provenance_functions(program->as.program.declarations)) {
+        converged = true;
+        break;
+      }
+    }
+    if (!converged) {
+      typechecker_error(tc, program->line, program->col,
+                        "Memory provenance analysis did not converge");
+      return;
+    }
+    validate_provenance(tc, program->as.program.declarations, NULL,
+                        REALM_MAIN);
+  }
 }

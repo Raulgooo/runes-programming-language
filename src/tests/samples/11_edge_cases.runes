@@ -68,11 +68,11 @@ stack f s_add(a: i32, b: i32) = r: i32  r = a + b
 f main() {
     regional f prepare() {
         f helper(p: *u8) {
-            *p = 0xFF
+            unsafe { *p = 0xFF }
         }
 
         PageTable pt = PageTable(entries: [])
-        helper((&pt) as *u8)
+        unsafe { helper((&pt) as *u8) }
     }
 
     prepare()
@@ -89,7 +89,7 @@ f main() {
         if validate("default") {
             r = fetch("default")
         } else {
-            r = 0 as *Config
+            r = config_load("fallback")
         }
     }
 
@@ -112,8 +112,8 @@ f main() {
 -- ─────────────────────────────────────────────
 
 regional f split_promote() = r: (*Node, *Node) {
-    Node a = Node(val: 1, next: 0 as *Node)
-    Node b = Node(val: 2, next: 0 as *Node)
+    Node a = Node(val: 1, next: null)
+    Node b = Node(val: 2, next: null)
 
     *Node a_dyn = promote(&a) as dynamic   -- caller must raw_free
     *Node b_gc  = promote(&b) as gc        -- GC owns this one
@@ -154,12 +154,14 @@ f demo_tuple_destruct() {
 
 f transform_buffer(buf: [16]i32, scale: i32, offset: i32) {
     for (buf) |*n, i| {
-        i32 old = *n
-        *n = old * scale + offset
-        if *n < 0 {
-            *n = 0
+        unsafe {
+            i32 old = *n
+            *n = old * scale + offset
+            if *n < 0 {
+                *n = 0
+            }
+            print(i, old, *n)
         }
-        print(i, old, *n)
     }
 }
 

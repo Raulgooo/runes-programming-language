@@ -1,0 +1,4 @@
+-- EXPECT FAIL: malformed UTF-8/escape sequence
+f main() {
+    print("\uD800")
+}

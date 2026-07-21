@@ -1,0 +1,4 @@
+f main() {
+    str value = "é"
+    print(value[0..1])
+}

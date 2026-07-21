@@ -13,6 +13,8 @@ typedef struct {
   Token next;
   Token next2;
   uint32_t prev_line;
+  unsigned soft_delimiter_depth;
+  unsigned declaration_depth;
   const char *filename;
   const char *source;
   bool had_error;

@@ -5,7 +5,9 @@
     array iteration, indexed, pointer-capture).
 ---
 
+#[safe]
 extern f tick()
+#[safe]
 extern f done() = result: bool
 
 f demo_if(x: i32) {
@@ -124,12 +126,12 @@ f demo_for_array() {
 
     -- Pointer capture — mutate in place
     for (nums) |*n| {
-        *n = *n * 2
+        unsafe { *n = *n * 2 }
     }
 
     -- Pointer capture with index
     for (bytes) |*b, i| {
-        *b = *b ^ (i as u8)
+        unsafe { *b = *b ^ (i as u8) }
     }
 }
 
@@ -162,7 +164,8 @@ f process_buffer(buf: *u8, len: usize) = r: i32 {
     }
 
     for (0..len) |i| {
-        u8 byte = *(buf + i)
+        u8 byte = 0
+        unsafe { byte = *(buf + i) }
         if byte == 0 {
             break
         }

@@ -1,0 +1,3 @@
+-- EXPECT FAIL: duplicate declaration of 'answer'
+f answer() = result: i32 { result = 1 }
+f answer() = result: i32 { result = 2 }

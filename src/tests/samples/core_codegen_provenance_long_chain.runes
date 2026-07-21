@@ -1,0 +1,34 @@
+extern f raw_free(pointer: *void)
+
+regional f forwarded_01() = result: *i32 { result = forwarded_02() }
+regional f forwarded_02() = result: *i32 { result = forwarded_03() }
+regional f forwarded_03() = result: *i32 { result = forwarded_04() }
+regional f forwarded_04() = result: *i32 { result = forwarded_05() }
+regional f forwarded_05() = result: *i32 { result = forwarded_06() }
+regional f forwarded_06() = result: *i32 { result = forwarded_07() }
+regional f forwarded_07() = result: *i32 { result = forwarded_08() }
+regional f forwarded_08() = result: *i32 { result = forwarded_09() }
+regional f forwarded_09() = result: *i32 { result = forwarded_10() }
+regional f forwarded_10() = result: *i32 { result = forwarded_11() }
+regional f forwarded_11() = result: *i32 { result = forwarded_12() }
+regional f forwarded_12() = result: *i32 { result = forwarded_13() }
+regional f forwarded_13() = result: *i32 { result = forwarded_14() }
+regional f forwarded_14() = result: *i32 { result = forwarded_15() }
+regional f forwarded_15() = result: *i32 { result = forwarded_16() }
+regional f forwarded_16() = result: *i32 { result = forwarded_17() }
+regional f forwarded_17() = result: *i32 { result = forwarded_18() }
+regional f forwarded_18() = result: *i32 { result = forwarded_19() }
+regional f forwarded_19() = result: *i32 { result = forwarded_20() }
+
+regional f forwarded_20() = result: *i32 {
+    i32 local = 42
+    result = promote(&local) as dynamic
+}
+
+f main() {
+    *i32 value = forwarded_01()
+    unsafe {
+        print(*value)
+        raw_free(value)
+    }
+}

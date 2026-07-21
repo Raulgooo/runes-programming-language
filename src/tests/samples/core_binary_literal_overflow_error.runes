@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Integer literal overflow for type 'u8'
+f invalid_literal(value: u8) = result: u8 {
+    result = value + 256
+}

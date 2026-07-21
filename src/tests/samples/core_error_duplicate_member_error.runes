@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Duplicate member 'Failed' in error set 'ReadError'
+error ReadError = {
+    | Failed
+    | Failed
+}

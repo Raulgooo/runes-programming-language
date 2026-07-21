@@ -1,0 +1,4 @@
+f main() {
+    i8 minimum = -128
+    print(-minimum)
+}

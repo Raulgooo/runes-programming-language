@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Raw slice construction requires an unsafe block
+f invalid(pointer: *i32) = result: []i32 {
+    result = slice(pointer, 1)
+}

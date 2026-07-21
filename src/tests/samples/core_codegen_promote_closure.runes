@@ -1,0 +1,15 @@
+regional f make_adder(base: i32) = result: f(i32) -> i32 {
+    move f add(value: i32) = answer: i32 {
+        answer = base + value
+    }
+    f(i32) -> i32 saved = add
+    unsafe {
+        *f(i32) -> i32 escaped = promote(&saved) as dynamic
+        result = *escaped
+    }
+}
+
+f main() {
+    f(i32) -> i32 add_forty = make_adder(40)
+    print(add_forty(2), " ", add_forty(5))
+}

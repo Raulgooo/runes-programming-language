@@ -17,8 +17,11 @@ typedef struct {
   Type *expected_ret;
   MemoryRealm current_realm;
   int loop_depth;
-  Scope *function_parent_scopes[32];
+  int unsafe_depth;
+  Scope **function_parent_scopes;
+  AstNode **function_nodes;
   int function_depth;
+  int function_scope_capacity;
 } TypeChecker;
 
 void typechecker_init(TypeChecker *tc, Arena *arena, TypeContext *tctx,

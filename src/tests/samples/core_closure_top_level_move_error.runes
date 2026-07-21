@@ -1,0 +1,4 @@
+-- EXPECT FAIL: only valid for nested functions
+move f answer() = result: i32 {
+    result = 42
+}

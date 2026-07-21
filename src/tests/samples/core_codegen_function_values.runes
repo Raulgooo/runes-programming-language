@@ -1,0 +1,58 @@
+f apply(callback: f(i32) -> i32, value: i32) = result: i32 {
+    result = callback(value)
+}
+
+f twice(value: i32) = result: i32 {
+    result = value * 2
+}
+
+f choose_twice() = result: f(i32) -> i32 {
+    result = twice
+}
+
+type Handler = { callback: f(i32) -> i32 }
+type Callback = | Missing | Ready(f(i32) -> i32)
+volatile i32 handler_calls = 0
+volatile i32 index_calls = 0
+
+f make_handler() = result: Handler {
+    handler_calls = handler_calls + 1
+    result = Handler(callback: twice)
+}
+
+f callback_index() = result: usize {
+    index_calls = index_calls + 1
+    result = 1
+}
+
+f apply_variant(callback: Callback, value: i32) = result: i32 {
+    result = match callback {
+        Missing -> 0,
+        Ready(operation) -> operation(value),
+    }
+}
+
+f pass_callback(callback: Callback) = result: Callback {
+    result = callback
+}
+
+f with_capture(base: i32) = result: i32 {
+    f add(value: i32) = answer: i32 {
+        answer = base + value
+    }
+
+    f(i32) -> i32 operation = add
+    result = apply(operation, 5)
+}
+
+f main() {
+    f(i32) -> i32 selected = choose_twice()
+    Handler handler = Handler(callback: twice)
+    Callback callback = Callback.Ready(twice)
+    [2]f(i32) -> i32 callbacks = [twice, twice]
+    print(apply(twice, 21), " ", selected(10), " ", with_capture(37), " ",
+          handler.callback(7), " ", apply_variant(callback, 8), " ",
+          choose_twice()(9), " ", make_handler().callback(3), " ",
+          handler_calls, " ", apply_variant(pass_callback(callback), 9), " ",
+          callbacks[callback_index()](11), " ", index_calls)
+}

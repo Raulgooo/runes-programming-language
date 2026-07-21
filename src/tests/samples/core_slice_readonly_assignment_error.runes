@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Cannot assign through a read-only slice
+f invalid(values: []const i32) {
+    values[0] = 42
+}

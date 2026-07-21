@@ -1,0 +1,5 @@
+pub f double(value: i32) = result: i32 {
+    result = value * 2
+}
+
+pub mod constants

@@ -94,7 +94,8 @@ if [[ "$COMMAND" == build ]]; then
   mkdir -p "$(dirname "$output")"
   c_file="$ROOT/build/$name.c"
   "$COMPILER" "${inputs[@]}" --emit-c "$c_file"
-  "$cc" -std=c11 -O2 -Wall -Wextra "${env_cflags[@]}" "$c_file" \
+  "$cc" -I"$ROOT/src" -std=c11 -O2 -Wall -Wextra "${env_cflags[@]}" \
+    "$c_file" "$ROOT/src/runtime.c" "$ROOT/src/utils/arena.c" \
     -lm "${tail_args[@]}" -o "$output"
   printf '%s\n' "$output"
   exit 0
@@ -105,6 +106,6 @@ trap 'rm -rf "$temp_dir"' EXIT
 c_file="$temp_dir/$name.c"
 binary="$temp_dir/$name"
 "$COMPILER" "${inputs[@]}" --emit-c "$c_file"
-"$cc" -std=c11 -O2 -Wall -Wextra "${env_cflags[@]}" "$c_file" -lm \
-  -o "$binary"
+"$cc" -I"$ROOT/src" -std=c11 -O2 -Wall -Wextra "${env_cflags[@]}" \
+  "$c_file" "$ROOT/src/runtime.c" "$ROOT/src/utils/arena.c" -lm -o "$binary"
 "$binary" "${tail_args[@]}"

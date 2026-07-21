@@ -1,0 +1,36 @@
+#[link_name("abs")]
+#[callconv("sysv64")]
+extern f c_abs(value: i32) = result: i32
+
+#[packed]
+#[align(16)]
+#[repr(C)]
+type Packet = {
+    tag: u8,
+    value: u32,
+}
+
+#[section(".data.runes_test")]
+#[align(32)]
+#[link_name("runes_exported_counter")]
+volatile i32 abi_counter = 40
+
+#[section(".text.runes_test")]
+#[link_name("runes_exported_answer")]
+#[callconv("sysv64")]
+f answer(value: i32) = result: i32 {
+    result = value + 2
+}
+
+#[callconv("win64")]
+f win_answer(value: i32) = result: i32 {
+    result = value + 2
+}
+
+f main() {
+    Packet packet = Packet(tag: 1, value: 2)
+    i32 absolute = 0
+    unsafe { absolute = c_abs(-42) }
+    print(answer(abi_counter), " ", sizeof(Packet), " ", alignof(Packet),
+          " ", packet.value, " ", win_answer(40), " ", absolute)
+}

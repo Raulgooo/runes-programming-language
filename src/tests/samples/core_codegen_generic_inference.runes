@@ -1,0 +1,29 @@
+interface Value {
+    f get(self) = result: i32
+}
+
+type Item = { value: i32 }
+
+method Value for Item {
+    f get(self) = result: i32 { result = self.value }
+}
+
+f identity<T>(value: T) = result: T {
+    result = value
+}
+
+f first<T>(values: []const T) = result: T {
+    result = values[0]
+}
+
+f read<T: Value>(value: T) = result: i32 {
+    result = value.get()
+}
+
+f main() {
+    i64 number = 42
+    bool flag = true
+    [2]i32 values = [7, 9]
+    Item item = Item(value: identity(first(values)))
+    print(identity(number), " ", identity(flag), " ", read(item))
+}

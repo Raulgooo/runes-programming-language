@@ -1,0 +1,23 @@
+extern f alloc(size: usize) = result: *void
+extern f runes_gc_collect()
+
+type Cell = { value: i32 }
+
+gc f build_reader() = result: f() -> i32 {
+    *Cell cell
+    unsafe {
+        cell = alloc(sizeof(Cell)) as *Cell
+        cell.value = 42
+    }
+    move f read() = value: i32 {
+        unsafe { value = cell.value }
+    }
+    result = read
+    runes_gc_collect()
+}
+
+f main() {
+    f() -> i32 reader = build_reader()
+    runes_gc_collect()
+    print(reader())
+}

@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Pointer arithmetic requires an unsafe block
+f advance(pointer: *u8) = result: *u8 {
+    result = pointer + 1
+}

@@ -3,9 +3,13 @@
     specific symbol, nested path), mixed pub/private functions.
 ---
 
+#[safe]
 extern f task_queue_push(task: test_sched.Task)
+#[safe]
 extern f task_queue_pop() = result: test_sched.Task
+#[safe]
 extern f task_queue_len() = result: i32
+#[safe]
 extern f task_queue_current() = result: test_sched.Task
 
 -- ─────────────────────────────────────────────
@@ -31,9 +35,6 @@ mod test_mem {
     ---
     pub regional f alloc_page() = r: !*u8 {
         r = bump_alloc(4096)
-        if r == 0 as *u8 {
-            r = error.MemError.OutOfMemory
-        }
     }
 
     pub f free_page(p: *u8) {
@@ -51,7 +52,7 @@ mod test_mem {
 }
 
 mod test_sched {
-    type Task = {
+    pub type Task = {
         id:    i32,
         name:  str,
         state: i32,   -- 0=ready 1=running 2=blocked
@@ -111,22 +112,22 @@ mod test_io {
 
 -- Nested module definition
 mod test_kern {
-    mod arch {
-        mod x86 {
+    pub mod arch {
+        pub mod x86 {
             pub f read_cr3() = r: u64 {
-                asm { "mov %cr3, %rax" } -> r
+                unsafe { asm { "mov %cr3, %rax" } -> r }
             }
 
             pub f write_cr3(val: u64) {
-                asm { "mov %rax, %cr3" }
+                unsafe { asm { "mov %rax, %cr3" } }
             }
 
             pub f read_cr2() = r: u64 {
-                asm { "mov %cr2, %rax" } -> r
+                unsafe { asm { "mov %cr2, %rax" } -> r }
             }
 
             pub f halt() {
-                asm { "cli; hlt" }
+                unsafe { asm { "cli; hlt" } }
             }
         }
     }
@@ -144,7 +145,7 @@ mod test_kern {
 -- Using modules
 -- ─────────────────────────────────────────────
 
-f demo_modules() {
+regional f demo_modules() {
     -- Module-qualified call
     *u8 page = test_mem.alloc_page() catch |e| {
         print("alloc failed:", e)

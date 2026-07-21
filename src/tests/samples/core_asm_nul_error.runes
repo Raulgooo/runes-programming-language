@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Inline assembly cannot contain NUL bytes
+f main() {
+    unsafe { asm { "nop\0hlt" } }
+}

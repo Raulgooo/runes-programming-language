@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Inline assembly requires an unsafe block
+f halt() {
+    asm { "cli; hlt" }
+}

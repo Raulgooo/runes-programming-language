@@ -20,5 +20,5 @@ f read(value: Value) = r: i32 {
 f main() {
     First first = First(value: 7)
     Value second = Second(value: 8)
-    print(read(first), read(second))
+    print(read(first), " ", read(second))
 }

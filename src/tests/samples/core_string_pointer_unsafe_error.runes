@@ -1,0 +1,7 @@
+-- EXPECT FAIL: String pointer access requires an unsafe block
+extern f consume(value: *u8)
+
+f main() {
+    str value = "immutable"
+    consume(value.ptr)
+}

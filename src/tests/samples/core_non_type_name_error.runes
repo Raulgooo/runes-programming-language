@@ -1,0 +1,3 @@
+-- EXPECT FAIL: 'helper' does not name a type
+f helper() {}
+f consume(value: helper) {}

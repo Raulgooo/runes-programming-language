@@ -1,0 +1,7 @@
+-- EXPECT FAIL: Borrowing closure cannot escape its captured bindings
+f invalid(base: i32) = result: f(i32) -> i32 {
+    f add(value: i32) = answer: i32 {
+        answer = base + value
+    }
+    result = add
+}

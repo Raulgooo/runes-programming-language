@@ -1,6 +1,9 @@
+#define _XOPEN_SOURCE 700
+
 #include "ast.h"
 #include "codegen.h"
 #include "lexer.h"
+#include "monomorphize.h"
 #include "parser.h"
 #include "resolver.h"
 #include "symbol_table.h"
@@ -9,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 typedef struct {
   bool lex_only;
@@ -18,6 +22,256 @@ typedef struct {
   const char **filenames;
   int file_count;
 } Config;
+
+typedef struct {
+  Arena *arena;
+  StrTab *strtab;
+  char **sources;
+  char **paths;
+  size_t file_count;
+  size_t file_capacity;
+  bool had_error;
+} SourceLoader;
+
+static void source_loader_oom(SourceLoader *loader) {
+  if (!loader->had_error)
+    fprintf(stderr, "Out of memory while loading Runes source files\n");
+  loader->had_error = true;
+}
+
+static char *path_directory(const char *path) {
+  const char *slash = strrchr(path, '/');
+  size_t length = slash ? (size_t)(slash - path) : 1;
+  const char *start = slash ? path : ".";
+  if (slash == path)
+    length = 1;
+  char *result = malloc(length + 1);
+  if (!result)
+    return NULL;
+  memcpy(result, start, length);
+  result[length] = '\0';
+  return result;
+}
+
+static char *path_join(const char *left, const char *right) {
+  size_t left_length = strlen(left);
+  size_t right_length = strlen(right);
+  bool separator = left_length && left[left_length - 1] != '/';
+  if (left_length > SIZE_MAX - right_length - (separator ? 2 : 1))
+    return NULL;
+  char *result = malloc(left_length + right_length + (separator ? 2 : 1));
+  if (!result)
+    return NULL;
+  memcpy(result, left, left_length);
+  size_t offset = left_length;
+  if (separator)
+    result[offset++] = '/';
+  memcpy(result + offset, right, right_length + 1);
+  return result;
+}
+
+static bool regular_file_exists(const char *path) {
+  struct stat status;
+  return stat(path, &status) == 0 && S_ISREG(status.st_mode);
+}
+
+static bool source_loader_record(SourceLoader *loader, char *path,
+                                 char *source) {
+  if (loader->file_count == loader->file_capacity) {
+    size_t next = loader->file_capacity ? loader->file_capacity * 2 : 8;
+    if (next < loader->file_capacity || next > SIZE_MAX / sizeof(char *))
+      return false;
+    char **sources = realloc(loader->sources, next * sizeof(char *));
+    if (!sources)
+      return false;
+    loader->sources = sources;
+    char **paths = realloc(loader->paths, next * sizeof(char *));
+    if (!paths)
+      return false;
+    loader->paths = paths;
+    loader->file_capacity = next;
+  }
+  loader->paths[loader->file_count] = path;
+  loader->sources[loader->file_count] = source;
+  loader->file_count++;
+  return true;
+}
+
+static bool source_already_loaded(const SourceLoader *loader,
+                                  const char *path) {
+  for (size_t i = 0; i < loader->file_count; i++)
+    if (strcmp(loader->paths[i], path) == 0)
+      return true;
+  return false;
+}
+
+static AstNode *load_source_program(SourceLoader *loader, const char *path,
+                                    const char *module_base);
+
+static char *read_source_file(const char *path, bool *had_error) {
+  FILE *file = fopen(path, "rb");
+  if (!file) {
+    perror(path);
+    *had_error = true;
+    return NULL;
+  }
+  if (fseek(file, 0, SEEK_END) != 0) {
+    perror("fseek");
+    fclose(file);
+    *had_error = true;
+    return NULL;
+  }
+  long size = ftell(file);
+  if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {
+    perror("ftell/fseek");
+    fclose(file);
+    *had_error = true;
+    return NULL;
+  }
+  char *source = malloc((size_t)size + 1);
+  if (!source) {
+    fclose(file);
+    fprintf(stderr, "Out of memory while reading %s\n", path);
+    *had_error = true;
+    return NULL;
+  }
+  size_t bytes_read = fread(source, 1, (size_t)size, file);
+  fclose(file);
+  if (bytes_read != (size_t)size) {
+    fprintf(stderr, "Could not read all of %s\n", path);
+    free(source);
+    *had_error = true;
+    return NULL;
+  }
+  source[size] = '\0';
+  return source;
+}
+
+static bool load_external_modules(SourceLoader *loader, AstNode *declaration,
+                                  const char *module_base) {
+  for (; declaration; declaration = declaration->next) {
+    if (declaration->kind != AST_MOD_DECL)
+      continue;
+    const char *name = declaration->as.mod_decl.name;
+    char *flat_name = malloc(strlen(name) + sizeof(".runes"));
+    if (!flat_name) {
+      source_loader_oom(loader);
+      return false;
+    }
+    sprintf(flat_name, "%s.runes", name);
+    char *flat = path_join(module_base, flat_name);
+    free(flat_name);
+    char *directory = path_join(module_base, name);
+    char *nested = directory ? path_join(directory, "mod.runes") : NULL;
+    if (!flat || !directory || !nested) {
+      source_loader_oom(loader);
+      free(flat);
+      free(directory);
+      free(nested);
+      return false;
+    }
+
+    if (declaration->as.mod_decl.is_external) {
+      bool has_flat = regular_file_exists(flat);
+      bool has_nested = regular_file_exists(nested);
+      if (has_flat == has_nested) {
+        fprintf(stderr,
+                has_flat
+                    ? "Module '%s' is ambiguous: both %s and %s exist\n"
+                    : "Module '%s' not found; tried %s and %s\n",
+                name, flat, nested);
+        loader->had_error = true;
+        free(flat);
+        free(directory);
+        free(nested);
+        return false;
+      }
+      const char *selected = has_flat ? flat : nested;
+      char *canonical = realpath(selected, NULL);
+      if (!canonical) {
+        perror("realpath");
+        loader->had_error = true;
+        free(flat);
+        free(directory);
+        free(nested);
+        return false;
+      }
+      if (source_already_loaded(loader, canonical)) {
+        fprintf(stderr, "Module file loaded more than once: %s\n", canonical);
+        loader->had_error = true;
+        free(canonical);
+        free(flat);
+        free(directory);
+        free(nested);
+        return false;
+      }
+      char *child_base =
+          has_flat ? strdup(directory) : path_directory(canonical);
+      if (!child_base) {
+        source_loader_oom(loader);
+        free(canonical);
+        free(flat);
+        free(directory);
+        free(nested);
+        return false;
+      }
+      AstNode *program = load_source_program(loader, canonical, child_base);
+      free(child_base);
+      if (!program) {
+        free(canonical);
+        free(flat);
+        free(directory);
+        free(nested);
+        return false;
+      }
+      declaration->as.mod_decl.declarations =
+          program->as.program.declarations;
+      declaration->as.mod_decl.is_external = false;
+      free(canonical);
+    } else if (!load_external_modules(loader,
+                                      declaration->as.mod_decl.declarations,
+                                      directory)) {
+      free(flat);
+      free(directory);
+      free(nested);
+      return false;
+    }
+    free(flat);
+    free(directory);
+    free(nested);
+  }
+  return true;
+}
+
+static AstNode *load_source_program(SourceLoader *loader, const char *path,
+                                    const char *module_base) {
+  char *source = read_source_file(path, &loader->had_error);
+  if (!source)
+    return NULL;
+  char *stored_path = strdup(path);
+  if (!stored_path || !source_loader_record(loader, stored_path, source)) {
+    source_loader_oom(loader);
+    free(stored_path);
+    free(source);
+    return NULL;
+  }
+
+  Lexer lexer;
+  lexer_init(&lexer, source, loader->strtab);
+  Parser parser;
+  parser_init(&parser, &lexer, loader->arena, path, source);
+  AstNode *program = parser_parse(&parser);
+  if (parser.had_error) {
+    fprintf(stderr, "Compilation failed in %s with %d error(s)\n", path,
+            parser.error_count);
+    loader->had_error = true;
+    return NULL;
+  }
+  if (!load_external_modules(loader, program->as.program.declarations,
+                             module_base))
+    return NULL;
+  return program;
+}
 
 static void print_usage(const char *prog) {
   fprintf(stderr, "Usage: %s [options] <filename> [additional_files...]\n",
@@ -32,6 +286,10 @@ static void print_usage(const char *prog) {
 static Config parse_args(int argc, char **argv) {
   Config config = {0};
   config.filenames = malloc(sizeof(const char *) * argc);
+  if (!config.filenames) {
+    fprintf(stderr, "Out of memory while parsing command-line arguments\n");
+    exit(1);
+  }
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--lex-only") == 0) {
       config.lex_only = true;
@@ -68,86 +326,72 @@ int main(int argc, char **argv) {
   }
 
   Arena arena;
-  arena_init(&arena);
+  if (!arena_init(&arena)) {
+    fprintf(stderr, "Out of memory while initializing compiler arena\n");
+    free(config.filenames);
+    return 1;
+  }
 
   StrTab strtab;
   strtab_init(&strtab, &arena);
 
   AstNode *program = NULL;
   AstNode **next_decl = NULL;
+  SourceLoader loader = {.arena = &arena, .strtab = &strtab};
 
-  char **sources = calloc((size_t)config.file_count, sizeof(char *));
-  if (!sources) {
-    fprintf(stderr, "Out of memory\n");
-    arena_destroy(&arena);
-    free(config.filenames);
-    return 1;
-  }
-
-  for (int i = 0; i < config.file_count; i++) {
-    const char *filename = config.filenames[i];
-    FILE *f = fopen(filename, "rb");
-    if (!f) {
-      perror("fopen");
-      had_error = true;
-      goto cleanup;
-    }
-
-    if (fseek(f, 0, SEEK_END) != 0) {
-      perror("fseek");
-      fclose(f);
-      had_error = true;
-      goto cleanup;
-    }
-    long size = ftell(f);
-    if (size < 0 || fseek(f, 0, SEEK_SET) != 0) {
-      perror("ftell/fseek");
-      fclose(f);
-      had_error = true;
-      goto cleanup;
-    }
-
-    char *source = malloc((size_t)size + 1);
-    if (!source) {
-      fprintf(stderr, "Out of memory\n");
-      fclose(f);
-      had_error = true;
-      goto cleanup;
-    }
-    size_t bytes_read = fread(source, 1, (size_t)size, f);
-    if (bytes_read != (size_t)size) {
-      fprintf(stderr, "Could not read all of %s\n", filename);
-      free(source);
-      fclose(f);
-      had_error = true;
-      goto cleanup;
-    }
-    source[size] = '\0';
-    fclose(f);
-    sources[i] = source;
-
-    Lexer lexer;
-    lexer_init(&lexer, source, &strtab);
-
-    if (config.lex_only) {
+  if (config.lex_only) {
+    for (int i = 0; i < config.file_count; i++) {
+      char *canonical = realpath(config.filenames[i], NULL);
+      if (!canonical) {
+        perror(config.filenames[i]);
+        had_error = true;
+        goto cleanup;
+      }
+      char *source = read_source_file(canonical, &had_error);
+      if (!source) {
+        free(canonical);
+        goto cleanup;
+      }
+      Lexer lexer;
+      lexer_init(&lexer, source, &strtab);
       Token token;
       do {
         token = lexer_next_token(&lexer);
-        printf("[%s] %s at %d:%d: '%.*s'\n", filename,
+        printf("[%s] %s at %d:%d: '%.*s'\n", canonical,
                token_kind_to_string(token.kind), token.line, token.column,
                (int)token.length, token.start);
       } while (token.kind != TOKEN_EOF);
-      continue;
+      free(source);
+      free(canonical);
     }
+    goto cleanup;
+  }
 
-    Parser parser;
-    parser_init(&parser, &lexer, &arena, filename, source);
-
-    AstNode *file_program = parser_parse(&parser);
-
-    if (parser.had_error) {
-      fprintf(stderr, "Compilation failed in %s with %d error(s)\n", filename,
-              parser.error_count);
+  for (int i = 0; i < config.file_count; i++) {
+    char *canonical = realpath(config.filenames[i], NULL);
+    if (!canonical) {
+      perror(config.filenames[i]);
+      had_error = true;
+      goto cleanup;
+    }
+    if (source_already_loaded(&loader, canonical)) {
+      fprintf(stderr, "Source file loaded more than once: %s\n", canonical);
+      free(canonical);
+      had_error = true;
+      goto cleanup;
+    }
+    char *base = path_directory(canonical);
+    if (!base) {
+      fprintf(stderr, "Out of memory while resolving source path %s\n",
+              canonical);
+      free(canonical);
+      had_error = true;
+      goto cleanup;
+    }
+    AstNode *file_program = load_source_program(&loader, canonical, base);
+    free(base);
+    free(canonical);
+    if (!file_program) {
       had_error = true;
       goto cleanup;
     }
@@ -172,15 +416,17 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (config.lex_only)
-    goto cleanup;
-
   if (config.dump_ast && program) {
     ast_print(program);
   }
 
   if (config.parse_only)
     goto cleanup;
+
+  if (!monomorphize_program(&arena, program)) {
+    had_error = true;
+    goto cleanup;
+  }
 
   // Phase 2: Name Resolution
   SymbolTable st;
@@ -220,7 +466,7 @@ int main(int argc, char **argv) {
     }
 
     Codegen cg;
-    codegen_init(&cg, out);
+    codegen_init(&cg, out, &arena);
     bool ok = codegen_emit_c(&cg, program);
     fclose(out);
     if (!ok) {
@@ -232,11 +478,15 @@ int main(int argc, char **argv) {
   }
 
 cleanup:
+  if (loader.had_error)
+    had_error = true;
   arena_destroy(&arena);
-  for (int i = 0; i < config.file_count; i++) {
-    free(sources[i]);
+  for (size_t i = 0; i < loader.file_count; i++) {
+    free(loader.sources[i]);
+    free(loader.paths[i]);
   }
-  free(sources);
+  free(loader.sources);
+  free(loader.paths);
   free(config.filenames);
 
   return had_error ? 1 : 0;

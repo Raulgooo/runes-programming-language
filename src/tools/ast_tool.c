@@ -28,7 +28,11 @@ int main(int argc, char **argv) {
     fclose(f);
 
     Arena arena;
-    arena_init(&arena);
+    if (!arena_init(&arena)) {
+        fprintf(stderr, "Out of memory while initializing arena\n");
+        free(source);
+        return 1;
+    }
 
     StrTab strtab;
     strtab_init(&strtab, &arena);

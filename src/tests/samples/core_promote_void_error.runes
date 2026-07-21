@@ -1,0 +1,7 @@
+-- EXPECT FAIL: promote requires a pointer to a sized value
+extern f alloc(size: usize) = result: *void
+
+regional f invalid() = result: *void {
+    *void allocation = alloc(16)
+    result = promote(allocation) as dynamic
+}

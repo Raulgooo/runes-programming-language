@@ -1,0 +1,5 @@
+f main() {
+    str value = "héllo\0世界"
+    char scalar = '界'
+    print(value.len, value[0..3], scalar, "\u00e9" == "é")
+}

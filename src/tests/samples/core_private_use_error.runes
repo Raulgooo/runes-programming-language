@@ -1,0 +1,6 @@
+-- EXPECT FAIL: could not resolve module path
+mod tools {
+    f hidden() {}
+}
+
+use tools.hidden

@@ -1,0 +1,21 @@
+extern f alloc(size: usize) = result: *void
+extern f raw_free(pointer: *void)
+
+type Text = { value: str }
+
+regional f make_text() = result: *Text {
+    unsafe {
+        *Text text = alloc(sizeof(Text)) as *Text
+        text.value = "hello" + "\0世界"
+        result = promote(text) as dynamic
+    }
+}
+
+f main() {
+    unsafe {
+        *Text text = make_text()
+        print(text.value.len, " ", text.value == "hello\0世界")
+        raw_free(text.value.ptr)
+        raw_free(text)
+    }
+}

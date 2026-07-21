@@ -1,56 +1,107 @@
 -- External contracts shared by the broad language showcase samples.
 
+#[safe]
 extern f tick()
+#[safe]
 extern f is_done() = result: bool
-f done() = result: bool result = is_done()
+f done() = result: bool { unsafe { result = is_done() } }
 
+#[safe]
 extern f raw_alloc(size: usize) = result: *void
+#[safe]
 extern f raw_free(ptr: *void)
+#[safe]
 extern f memset(ptr: *void, value: i32, size: usize) = result: *void
+#[safe]
 extern f memcpy(dst: *void, src: *void, len: usize) = result: *void
+#[safe]
 extern f alloc(size: usize) = result: *void
+#[safe]
+extern f runes_gc_collect()
+#[safe]
+extern f runes_gc_debug_object_count() = result: usize
+#[safe]
+extern f runes_gc_debug_collection_count() = result: usize
+#[safe]
 extern f collect_errors(source: str) = result: *Error
+#[safe]
 extern f sqrt(value: f32) = result: f32
+#[safe]
+extern f runes_str_is_utf8(value: str) = result: bool
+#[safe]
+extern f runes_str_decode_next(
+    value: str,
+    index: *usize,
+    scalar: *char
+) = result: bool
+#[safe]
+extern f runes_utf8_encode(
+    scalar: char,
+    output: *u8,
+    length: *usize
+) = result: bool
+#[safe]
+extern f runes_str_hash(value: str) = result: u64
 
 extern u64 heap_cursor
+#[safe]
 extern f bump_alloc(size: usize) = result: *void
+#[safe]
 extern f preempt_current()
 
 mod kernel {
-    mod arch {
-        mod x86 {
+    pub mod arch {
+        pub mod x86 {
             pub f read_cr3() = result: u64 { result = 0 }
             pub f read_cr2() = result: u64 { result = 0 }
         }
     }
 }
 
+#[safe]
 extern f log_error(error_code: u32)
+#[safe]
 extern f panic(message: str)
+#[safe]
 extern f map_page(vaddr: u64, paddr: u64, flags: u64) = result: !void
+#[safe]
 extern f render_point(x: f32, y: f32)
+#[safe]
 extern f render_rect(x: f32, y: f32, width: f32, height: f32)
+#[safe]
 extern f dispatch(number: u64, a: u64, b: u64, c: u64) = result: u64
+#[safe]
 extern f init_output(table: *void)
 type Keyboard = { id: u8 }
 extern Keyboard keyboard
+#[safe]
 extern f keyboard_push(scancode: u8)
 method Keyboard {
-    f push(self, scancode: u8) { keyboard_push(scancode) }
+    f push(self, scancode: u8) { unsafe { keyboard_push(scancode) } }
 }
+#[safe]
 extern f read_file(path: str) = result: !str
 
+#[safe]
 extern f parse_config(source: str) = result: *Config
+#[safe]
 extern f build_ast(source: str) = result: *Node
+#[safe]
 extern f eval(node: *Node) = result: !i32
+#[safe]
 extern f config_load(source: str) = result: *Config
+#[safe]
 extern f ruleset_from_config(config: *Config) = result: *RuleSet
+#[safe]
 extern f apply_rules(rules: *RuleSet)
+#[safe]
 extern f make_pair(a: i32, b: i32) = result: (*Node, *Node)
+#[safe]
 extern f get_coords() = result: (i32, i32, i32)
+#[safe]
 extern f framebuffer_resize(width: u32, height: u32)
 
 type Config = { id: i32 }
-type Node = { val: i32, next: *Node }
+type Node = { val: i32, next: ?*Node }
 type Error = { code: i32 }
 type RuleSet = { id: i32 }

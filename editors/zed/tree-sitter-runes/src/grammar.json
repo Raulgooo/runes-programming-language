@@ -50,6 +50,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "null"
+        },
+        {
+          "type": "SYMBOL",
           "name": "special_constant"
         },
         {
@@ -466,6 +470,18 @@
         },
         {
           "type": "STRING",
+          "value": "move"
+        },
+        {
+          "type": "STRING",
+          "value": "sizeof"
+        },
+        {
+          "type": "STRING",
+          "value": "alignof"
+        },
+        {
+          "type": "STRING",
           "value": "as"
         },
         {
@@ -475,12 +491,12 @@
         {
           "type": "STRING",
           "value": "or"
-        },
-        {
-          "type": "STRING",
-          "value": "not"
         }
       ]
+    },
+    "null": {
+      "type": "STRING",
+      "value": "null"
     },
     "identifier": {
       "type": "PATTERN",
@@ -500,6 +516,14 @@
         {
           "type": "STRING",
           "value": "->"
+        },
+        {
+          "type": "STRING",
+          "value": "<<"
+        },
+        {
+          "type": "STRING",
+          "value": ">>"
         },
         {
           "type": "STRING",
@@ -556,6 +580,10 @@
         {
           "type": "STRING",
           "value": "!"
+        },
+        {
+          "type": "STRING",
+          "value": "?"
         },
         {
           "type": "STRING",

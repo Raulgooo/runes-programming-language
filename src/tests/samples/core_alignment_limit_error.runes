@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Alignment exceeds the v0.1 C backend maximum
+#[align(536870912)]
+type TooAligned = { value: u8 }
+
+f main() {}

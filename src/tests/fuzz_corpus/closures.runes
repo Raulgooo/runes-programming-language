@@ -1,0 +1,2 @@
+f apply(callback: f(i32) -> i32, value: i32) = result: i32 { result = callback(value) }
+f main() { i32 base = 40 move f add(value: i32) = result: i32 { result = base + value } print(apply(add, 2)) }

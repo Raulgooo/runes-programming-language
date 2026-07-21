@@ -1,0 +1,44 @@
+extern f alloc(size: usize) = result: *void
+extern f raw_free(pointer: *void)
+
+type Node = { value: i32 }
+type NodeRef = { node: *Node }
+type Views = { values: []i32, readonly: []const i32, nodes: []NodeRef }
+
+regional f promoted_views() = result: *Views {
+    unsafe {
+        *i32 backing = alloc(3 * sizeof(i32)) as *i32
+        backing[0] = 10
+        backing[1] = 20
+        backing[2] = 30
+
+        []i32 values = slice(backing, 3)
+        []const i32 readonly = values
+        *Node node = alloc(sizeof(Node)) as *Node
+        node.value = 91
+        *NodeRef node_backing = alloc(2 * sizeof(NodeRef)) as *NodeRef
+        node_backing[0].node = node
+        node_backing[1].node = node
+        []NodeRef nodes = slice(node_backing, 2)
+        *Views views = alloc(sizeof(Views)) as *Views
+        views.values = values
+        views.readonly = readonly
+        views.nodes = nodes
+        result = promote(views) as dynamic
+    }
+}
+
+f main() {
+    unsafe {
+        *Views views = promoted_views()
+        i32 total = views.values[0] + views.readonly[2]
+        views.values[0] = 77
+        *Node first = views.nodes[0].node
+        print(total, " ", views.readonly[0], " ", views.values.len, " ",
+              views.nodes[0].node == views.nodes[1].node, " ", first.value)
+        raw_free(first)
+        raw_free(views.nodes.ptr)
+        raw_free(views.values.ptr)
+        raw_free(views)
+    }
+}

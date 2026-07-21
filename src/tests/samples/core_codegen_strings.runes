@@ -6,5 +6,5 @@ f main() {
     str combined = "ru" + "nes"
     bool equal = combined == "runes"
     bool different = combined != "other"
-    print(combined, classify(combined), equal, different)
+    print(combined, " ", classify(combined), " ", equal, " ", different)
 }

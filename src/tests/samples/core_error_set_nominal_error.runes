@@ -1,0 +1,12 @@
+-- EXPECT FAIL: Variable initializer does not match declared type
+error FirstError = {
+    | Failed
+}
+
+error SecondError = {
+    | Failed
+}
+
+f main() {
+    FirstError value = error.SecondError.Failed
+}

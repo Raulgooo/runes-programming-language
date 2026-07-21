@@ -4,10 +4,8 @@
 
 static AstNode *ast_alloc(Arena *arena, AstKind kind) {
   AstNode *n = arena_alloc(arena, sizeof(AstNode));
+  memset(n, 0, sizeof(*n));
   n->kind = kind;
-  n->next = NULL;
-  n->line = 0; // Will be set by parser
-  n->col = 0;
   return n;
 }
 
@@ -29,7 +27,9 @@ AstNode *ast_new_func_decl(Arena *arena, MemoryRealm realm, bool is_pub,
   n->as.func_decl.realm = realm;
   n->as.func_decl.is_pub = is_pub;
   n->as.func_decl.is_main = is_main;
+  n->as.func_decl.is_move = false;
   n->as.func_decl.name = name;
+  n->as.func_decl.generic_params = NULL;
   n->as.func_decl.params = params;
   n->as.func_decl.ret_name = ret_name;
   n->as.func_decl.ret_type = ret_type;
@@ -56,6 +56,7 @@ AstNode *ast_new_type_decl(Arena *arena, bool is_pub, const char *name,
   AstNode *n = ast_alloc(arena, AST_TYPE_DECL);
   n->as.type_decl.is_pub = is_pub;
   n->as.type_decl.name = name;
+  n->as.type_decl.generic_params = NULL;
   n->as.type_decl.fields = fields;
   n->as.type_decl.attrs = attrs;
   return n;
@@ -66,6 +67,7 @@ AstNode *ast_new_variant_decl(Arena *arena, bool is_pub, const char *name,
   AstNode *n = ast_alloc(arena, AST_VARIANT_DECL);
   n->as.variant_decl.is_pub = is_pub;
   n->as.variant_decl.name = name;
+  n->as.variant_decl.generic_params = NULL;
   n->as.variant_decl.arms = arms;
   return n;
 }
@@ -94,6 +96,7 @@ AstNode *ast_new_method_decl(Arena *arena, bool is_pub, const char *type_name,
   n->as.method_decl.is_pub = is_pub;
   n->as.method_decl.type_name = type_name;
   n->as.method_decl.iface_name = iface_name;
+  n->as.method_decl.type_args = NULL;
   n->as.method_decl.methods = methods;
   return n;
 }
@@ -243,9 +246,11 @@ AstNode *ast_new_float_literal(Arena *arena, double value) {
   return n;
 }
 
-AstNode *ast_new_string_literal(Arena *arena, const char *value) {
+AstNode *ast_new_string_literal(Arena *arena, const char *value,
+                                size_t length) {
   AstNode *n = ast_alloc(arena, AST_STRING_LITERAL);
   n->as.string_literal.value = value;
+  n->as.string_literal.length = length;
   return n;
 }
 
@@ -259,6 +264,10 @@ AstNode *ast_new_char_literal(Arena *arena, uint32_t codepoint) {
   AstNode *n = ast_alloc(arena, AST_CHAR_LITERAL);
   n->as.char_literal.codepoint = codepoint;
   return n;
+}
+
+AstNode *ast_new_null_literal(Arena *arena) {
+  return ast_alloc(arena, AST_NULL_LITERAL);
 }
 
 AstNode *ast_new_array_literal(Arena *arena, AstNode *elems) {
@@ -316,6 +325,7 @@ AstNode *ast_new_assign(Arena *arena, AstNode *target, AstNode *value) {
 AstNode *ast_new_call(Arena *arena, AstNode *callee, AstNode *args) {
   AstNode *n = ast_alloc(arena, AST_CALL_EXPR);
   n->as.call.callee = callee;
+  n->as.call.type_args = NULL;
   n->as.call.args = args;
   return n;
 }
@@ -383,9 +393,11 @@ AstNode *ast_new_error_expr(Arena *arena, AstNode *path) {
   return n;
 }
 
-AstNode *ast_new_asm_expr(Arena *arena, const char *code, const char *output) {
+AstNode *ast_new_asm_expr(Arena *arena, const char *code, size_t code_length,
+                          const char *output) {
   AstNode *n = ast_alloc(arena, AST_ASM_EXPR);
   n->as.asm_expr.code = code;
+  n->as.asm_expr.code_length = code_length;
   n->as.asm_expr.output = output;
   return n;
 }
@@ -461,6 +473,14 @@ AstNode *ast_new_type_array(Arena *arena, AstNode *size, AstNode *elem_type) {
   return n;
 }
 
+AstNode *ast_new_type_slice(Arena *arena, AstNode *elem_type, bool readonly) {
+  AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
+  n->as.type_expr.kind = TYPE_SLICE;
+  n->as.type_expr.inner = elem_type;
+  n->as.type_expr.readonly = readonly;
+  return n;
+}
+
 AstNode *ast_new_type_fallible(Arena *arena, AstNode *inner) {
   AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
   n->as.type_expr.kind = TYPE_FALLIBLE;
@@ -472,6 +492,16 @@ AstNode *ast_new_type_tuple(Arena *arena, AstNode *elems) {
   AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
   n->as.type_expr.kind = TYPE_TUPLE;
   n->as.type_expr.elems = elems;
+  return n;
+}
+
+AstNode *ast_new_type_function(Arena *arena, AstNode *params, AstNode *ret,
+                               MemoryRealm realm) {
+  AstNode *n = ast_alloc(arena, AST_TYPE_EXPR);
+  n->as.type_expr.kind = TYPE_FUNCTION;
+  n->as.type_expr.elems = params;
+  n->as.type_expr.inner = ret;
+  n->as.type_expr.realm = realm;
   return n;
 }
 

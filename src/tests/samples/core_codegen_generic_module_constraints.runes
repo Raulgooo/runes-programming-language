@@ -1,0 +1,22 @@
+mod domain {
+    pub interface Value {
+        f get(self) = result: i32
+    }
+
+    pub type Item = { value: i32 }
+
+    method Value for Item {
+        f get(self) = result: i32 { result = self.value }
+    }
+}
+
+mod algorithms {
+    pub f read<T: domain.Value>(value: T) = result: i32 {
+        result = value.get()
+    }
+}
+
+f main() {
+    domain.Item item = domain.Item(value: 42)
+    print(algorithms.read<domain.Item>(item))
+}

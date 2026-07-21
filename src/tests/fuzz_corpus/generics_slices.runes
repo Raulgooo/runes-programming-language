@@ -1,0 +1,2 @@
+f first<T>(values: []const T) = result: T { result = values[0] }
+f main() { [3]i32 data = [40, 41, 42] []const i32 view = data[..] print(first(view)) }

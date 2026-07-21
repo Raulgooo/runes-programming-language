@@ -1,4 +1,6 @@
 #include "../lexer.h"
+#include "../utils/arena.h"
+#include "../utils/strtab.h"
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
@@ -163,13 +165,47 @@ void test_lexer_bugs() {
   ASSERT_TOKEN(&L, TOKEN_EOF, "");
 
   // Bug 3: Column tracking for multiline strings
-  const char *s3 = "\"multi\nline\"";
+  const char *s3 = "\"multi\nline\" next";
   lexer_init(&L, s3, NULL);
-  ASSERT_TOKEN(&L, TOKEN_STRING_LITERAL, "\"multi\nline\"");
-  // The test already checks kind and lexeme. 
-  // We verified the column tracking via manual check in previous output.
+  Token multiline = lexer_next_token(&L);
+  assert(multiline.kind == TOKEN_STRING_LITERAL);
+  assert(multiline.line == 1);
+  assert(multiline.column == 1);
+
+  Token next = lexer_next_token(&L);
+  assert(next.kind == TOKEN_IDENTIFIER);
+  assert(next.line == 2);
+  assert(next.column == 7);
 
   printf("test_lexer_bugs completed (some bugs verified)!\n");
+}
+
+void test_unicode_literals() {
+  printf("Running test_unicode_literals...\n");
+  Arena arena;
+  assert(arena_init(&arena));
+  StrTab strings;
+  strtab_init(&strings, &arena);
+  Lexer lexer;
+
+  lexer_init(&lexer, "\"a\\0\\u00e9\" '界'", &strings);
+  Token string = lexer_next_token(&lexer);
+  assert(string.kind == TOKEN_STRING_LITERAL && string.str_val.len == 4);
+  assert(string.str_val.ptr[0] == 'a' && string.str_val.ptr[1] == 0);
+  assert((unsigned char)string.str_val.ptr[2] == 0xc3 &&
+         (unsigned char)string.str_val.ptr[3] == 0xa9);
+  Token character = lexer_next_token(&lexer);
+  assert(character.kind == TOKEN_CHAR_LITERAL &&
+         character.char_val == 0x754c);
+
+  lexer_init(&lexer, "\"\\uD800\"", &strings);
+  assert(lexer_next_token(&lexer).kind == TOKEN_INVALID);
+  const char invalid_utf8[] = {'\"', (char)0xc0, (char)0x80, '\"', 0};
+  lexer_init(&lexer, invalid_utf8, &strings);
+  assert(lexer_next_token(&lexer).kind == TOKEN_INVALID);
+
+  arena_destroy(&arena);
+  printf("test_unicode_literals passed!\n");
 }
 
 int main() {
@@ -179,6 +215,7 @@ int main() {
   test_control_flow_and_errors();
   test_dynamic_function();
   test_lexer_bugs();
+  test_unicode_literals();
   printf("--- All tests passed successfully! ---\n");
   return 0;
 }

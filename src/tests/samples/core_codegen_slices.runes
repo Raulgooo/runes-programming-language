@@ -1,0 +1,18 @@
+f sum(values: []const i32) = result: i32 {
+    result = 0
+    for (values) |value| {
+        result = result + value
+    }
+}
+
+f increment_first(values: []i32) {
+    values[0] = values[0] + 1
+}
+
+f main() {
+    [4]i32 values = [10, 20, 30, 40]
+    []i32 all = values
+    []i32 middle = all[1..=2]
+    increment_first(middle)
+    print(all.len, " ", middle.len, " ", values[1], " ", sum(all), " ", sum(values))
+}

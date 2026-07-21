@@ -1,0 +1,11 @@
+-- EXPECT FAIL: Scoped pointer cannot be stored in longer-lived memory
+extern f alloc(size: usize) = result: *void
+
+type Holder = { pointer: *u8 }
+
+regional f overwrite(holder: *Holder) {
+    unsafe {
+        *u8 scoped = alloc(1) as *u8
+        holder.pointer = scoped
+    }
+}

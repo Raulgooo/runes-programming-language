@@ -1,0 +1,4 @@
+-- EXPECT FAIL: unwrap requires a nullable pointer
+f invalid_unwrap(pointer: *u8) {
+    *u8 same = unwrap(pointer)
+}

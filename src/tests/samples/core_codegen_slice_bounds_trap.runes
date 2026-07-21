@@ -1,0 +1,5 @@
+f main() {
+    [2]i32 values = [1, 2]
+    []i32 slice = values
+    print(slice[2])
+}

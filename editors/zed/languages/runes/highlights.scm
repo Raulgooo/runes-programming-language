@@ -7,6 +7,7 @@
 (integer) @number
 (builtin_type) @type.builtin
 (boolean) @boolean
+(null) @constant.builtin
 (special_constant) @constant.builtin
 (keyword) @keyword
 (identifier) @variable

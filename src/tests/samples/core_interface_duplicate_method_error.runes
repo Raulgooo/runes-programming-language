@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Duplicate interface method 'get'
+interface Value {
+    f get(self) = result: i32
+    f get(self) = result: i32
+}

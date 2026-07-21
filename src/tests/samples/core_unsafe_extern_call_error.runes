@@ -1,0 +1,7 @@
+-- EXPECT FAIL: Foreign function call requires an unsafe block
+extern f platform_read(fd: i32, buffer: *u8, length: usize) = result: i64
+
+f main() {
+    [8]u8 buffer = []
+    i64 count = platform_read(0, &buffer, 8)
+}

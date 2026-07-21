@@ -54,15 +54,9 @@ gc f outer_gc() {
     gc f gc_in_gc() {}
 }
 
--- FLEX nesting all types (inherits caller)
+-- FLEX bodies are realm-polymorphic, so only universally valid helpers nest.
 flex f outer_flex() {
     f stack_in_flex() {}
-
-    regional f arena_in_flex() {}
-
-    dynamic f heap_in_flex() {}
-
-    gc f gc_in_flex() {}
 
     flex f flex_in_flex() {}
 }

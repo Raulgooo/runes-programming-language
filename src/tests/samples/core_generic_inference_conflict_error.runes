@@ -1,0 +1,10 @@
+-- EXPECT FAIL: conflicting inferred types for 'T'
+f choose<T>(left: T, right: T) = result: T {
+    result = left
+}
+
+f main() {
+    i32 left = 1
+    bool right = true
+    print(choose(left, right))
+}

@@ -1,4 +1,4 @@
--- EXPECT FAIL: For loop requires a range or fixed array
+-- EXPECT FAIL: For loop requires a range, fixed array, or slice
 f bad_loop() {
     for (true) |value| {
         print(value)

@@ -5,6 +5,44 @@ extern f raw_alloc(size: usize) = result: *void
 extern f raw_free(ptr: *void)
 extern f alloc(size: usize) = result: *void
 
+-- Scoped collector controls. `gc_collect` is an explicit safepoint; the debug
+-- counters are runtime diagnostics and not collection-library APIs.
+extern f runes_gc_collect()
+extern f runes_gc_debug_object_count() = result: usize
+extern f runes_gc_debug_collection_count() = result: usize
+
 extern f memset(ptr: *void, value: i32, size: usize) = result: *void
 extern f memcpy(dst: *void, src: *void, len: usize) = result: *void
 extern f sqrt(value: f32) = result: f32
+
+-- Length-bearing UTF-8 runtime primitives. These are ABI contracts, not a
+-- text library; higher-level string policy belongs in the user stdlib.
+extern f runes_str_equal(left: str, right: str) = result: bool
+extern f runes_str_compare(left: str, right: str) = result: i32
+extern f runes_str_is_utf8(value: str) = result: bool
+extern f runes_str_is_scalar_boundary(value: str, index: usize) = result: bool
+extern f runes_str_decode_next(
+    value: str,
+    index: *usize,
+    scalar: *char
+) = result: bool
+extern f runes_utf8_encode(
+    scalar: char,
+    output: *u8,
+    length: *usize
+) = result: bool
+extern f runes_str_hash(value: str) = result: u64
+extern f runes_str_from_bytes(
+    value: *u8,
+    length: usize,
+    result: *str
+) = result: bool
+extern f runes_str_from_c_checked(
+    value: *u8,
+    result: *str
+) = result: bool
+extern f runes_str_to_c(
+    value: str,
+    line: u32,
+    column: u32
+) = result: *u8

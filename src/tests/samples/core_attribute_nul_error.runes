@@ -1,0 +1,3 @@
+-- EXPECT FAIL: attribute cannot contain NUL bytes
+#[section(".text\0hidden")]
+f main() {}

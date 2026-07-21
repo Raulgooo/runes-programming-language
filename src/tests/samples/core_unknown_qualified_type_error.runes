@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Unknown type 'types.Missing'
+mod types {
+    pub type Present = { value: i32 }
+}
+
+f consume(value: types.Missing) {}

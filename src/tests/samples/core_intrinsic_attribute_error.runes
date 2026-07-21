@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Attributes are not allowed on compiler-lowered extern 'alloc'
+#[link_name("custom_alloc")]
+extern f alloc(size: usize) = result: *void
+
+f main() {}

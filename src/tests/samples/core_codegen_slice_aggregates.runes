@@ -1,0 +1,24 @@
+type Window = { values: []i32 }
+type View = | Empty | Some([]const i32)
+
+f tail(values: []i32) = result: []i32 {
+    result = values[1..values.len]
+}
+
+f sum(values: []const i32) = result: i32 {
+    result = 0
+    for (values) |value| { result = result + value }
+}
+
+f main() {
+    [4]i32 values = [1, 2, 3, 4]
+    Window window = Window(values: values)
+    []i32 rest = tail(window.values)
+    View view = View.Some(values)
+    rest[0] = 20
+    print(window.values[1], " ", rest.len)
+    match view {
+        Some(items) -> print(sum(items)),
+        _ -> print(-1),
+    }
+}

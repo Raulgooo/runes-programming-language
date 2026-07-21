@@ -1,0 +1,7 @@
+-- EXPECT FAIL: Field attribute '#[align]' is not supported by the v0.1 C backend
+type Packet = {
+    #[align(8)]
+    value: i32,
+}
+
+f main() {}

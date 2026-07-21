@@ -2,8 +2,10 @@
 f core_arrays_pointers() = result: i32 {
     [4]i32 values = [1, 2, 3, 4]
     *i32 first = &values
-    first[1] = 7
-    *(first + 2) = 9
+    unsafe {
+        first[1] = 7
+        *(first + 2) = 9
+    }
     result = values[0] + values[1] + values[2] + values[3]
 }
 

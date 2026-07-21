@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Variable initializer does not match declared type
+f main() {
+    ?*i32 optional = null
+    *i32 required = optional
+}

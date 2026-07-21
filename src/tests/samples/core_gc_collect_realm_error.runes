@@ -1,0 +1,6 @@
+-- EXPECT FAIL: GC collection is not available in a stack function
+extern f runes_gc_collect()
+
+f invalid() {
+    runes_gc_collect()
+}

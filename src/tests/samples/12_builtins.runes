@@ -37,8 +37,7 @@ f demo_sizeof_pointers() = r: usize {
     usize ptr_i32  = sizeof(*i32)
     usize ptr_ptr  = sizeof(**u64)  -- double pointer
     
-    -- Raw pointer from cast
-    *u8  raw = 0x1000 as *u8
+    -- Raw pointer layout
     usize raw_size = sizeof(*u8)
     
     r = ptr_size
@@ -108,7 +107,7 @@ regional f promote_to_dynamic() = r: *u8 {
 
 -- Promote from stack/regional to GC (GC owns)
 regional f promote_to_gc() = r: *Node {
-    Node n = Node(val: 42, next: 0 as *Node)
+    Node n = Node(val: 42, next: null)
     *Node promoted = promote(&n) as gc
     r = promoted
 }
@@ -143,7 +142,7 @@ regional f copy_to_dynamic(src: *u8, len: usize) = r: *u8 {
     [256]u8 temp = []
     -- Copy data to temp buffer
     for (0..len) |i| {
-        temp[i] = *(src + i)
+        unsafe { temp[i] = *(src + i) }
     }
     
     -- Promote to dynamic memory
@@ -154,7 +153,7 @@ regional f copy_to_dynamic(src: *u8, len: usize) = r: *u8 {
 -- Type definition for use in examples
 type Node = {
     val: i32,
-    next: *Node
+    next: ?*Node
 }
 
 -- External declarations for runtime functions

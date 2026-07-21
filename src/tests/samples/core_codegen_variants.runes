@@ -17,9 +17,9 @@ f main() {
     Pixel gray = Pixel.Gray(7)
     Pixel color = Pixel.RGB(10, 20, 30)
 
-    print(score(clear), score(gray), score(color))
+    print(score(clear), " ", score(gray), " ", score(color))
     match color {
-        RGB(red, green, blue) if red == 10 -> print(red, green, blue),
+        RGB(red, green, blue) if red == 10 -> print(red, " ", green, " ", blue),
         _ -> print("unexpected"),
     }
 }

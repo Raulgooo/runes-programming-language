@@ -1,0 +1,3 @@
+#[repr(C)] #[packed] type Header = { volatile tag: u8, value: u32 }
+#[callconv("sysv64")] f answer() = result: i32 { result = 42 }
+f main() { print(answer()) }

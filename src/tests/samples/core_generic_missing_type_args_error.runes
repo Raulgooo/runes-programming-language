@@ -1,0 +1,9 @@
+-- EXPECT FAIL: generic type 'Box' requires type arguments
+type Box<T> = {
+    value: T
+}
+
+f main() {
+    Box value = Box(value: 42)
+    print(value.value)
+}

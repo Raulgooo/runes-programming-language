@@ -21,9 +21,9 @@ gc f run_userspace() {
 }
 ```
 
-**Status:** Experimental C bootstrap compiler. The v0.1 core is implemented and
-all positive integration programs emit C that compiles, but the runtime and
-standard library are still minimal. Not production-ready or self-hosted.
+**Status:** Experimental C bootstrap compiler. The v0.1 language core and its
+compiler-required runtime are implemented and under hardening. No standard
+library is included. Not production-ready or self-hosted.
 
 ---
 
@@ -42,7 +42,7 @@ The core bet: **memory strategy belongs to the function, not the data**. You pic
 make          # builds ./runes
 make test     # focused unit, core semantics, and C bootstrap tests
 make test-samples # full integration inventory, including known failures
-make test-codegen # emit and compile C for every positive integration sample
+make test-codegen # emit strict C for the executable core inventory
 make test-sanitize # ASan/UBSan over every integration sample
 make clean    # removes binary
 ```
@@ -98,13 +98,15 @@ const i32 MAX = 512
 u64 addr = 0xFFFF800000000000
 ```
 
-Types: `i8`–`i64`, `u8`–`u64`, `f32`, `f64`, `bool`, `str`, `char`, `*T`, `[N]T`.
+Types include `i8`–`i64`, `u8`–`u64`, `usize`, `f32`, `f64`, `bool`,
+Unicode `char`, length-bearing UTF-8 `str`, `*T`, `?*T`, `[N]T`, `[]T`,
+`[]const T`, tuples, function values, structs, variants, and interfaces.
 
 Fixed arrays require a positive integer literal size and exactly `N` elements, except `[]`, which zero-initializes the declared array. Array literals must be homogeneous and same-typed arrays copy by value. Both arrays and pointers support integer indexing; literal array indexes are checked at compile time. Pointer arithmetic is limited to `pointer + integer`, `integer + pointer`, and `pointer - integer`. Address-of requires an assignable expression. Pointer loop captures are valid only for fixed arrays.
 
 On the current 64-bit bootstrap target, `usize` is an alias of `u64`. `*void` is the untyped FFI/allocation pointer and converts to or from any pointer type; other pointer element types remain invariant.
 
-`print(value, ...)` is a compiler builtin. It requires at least one argument and accepts primitive values and raw pointers; structs, arrays, tuples, and other composite values must be formatted explicitly.
+`print(value, ...)` is a compiler builtin. It requires at least one argument and accepts primitive values and raw pointers; structs, arrays, tuples, and other composite values must be formatted explicitly. Arguments are emitted consecutively with no implicit separators, followed by one newline.
 
 Variant arms may carry zero, one, or multiple ordered payload values. Construction checks both payload arity and each value's declared type.
 
@@ -220,12 +222,8 @@ f read_cr3() = r: u64 {
 volatile *u32 uart = 0x10000000 as *u32
 *uart = 0x41
 
--- interrupt handler (saves/restores all registers, ends with iretq)
-#[interrupt]
-f page_fault_handler() {
-    u64 cr2 = read_cr2()
-    handle_page_fault(cr2)
-}
+-- Interrupt entry points use an external assembly stub in v0.1.
+-- The C backend rejects #[interrupt] rather than emitting an unsafe ABI.
 
 -- FFI
 extern f memset(ptr: *u8, val: i32, len: usize)
@@ -236,15 +234,17 @@ extern u64 KERNEL_START
 
 - **Named returns are mandatory.** `f foo() = result: i32 { ... }` not `f foo() = i32 { ... }`. Void functions have no return clause at all.
 - **Comments use `--`.** Single line: `-- comment`. Block: `--- ... ---`.
-- **No generics yet** (v0.1). The syntax is in the spec; the compiler doesn't support it yet.
+- **Generics are monomorphized.** Functions, structs, variants, and methods
+  support type parameters and exact interface constraints.
 - **C generation is the v0.1 bootstrap backend.** It lowers functions, modules,
   methods and interfaces, structs and variants, fixed arrays and pointers,
   matches, fallible values, strings, globals, externs, unsafe blocks, and inline
   assembly. Unsupported constructs fail with a code-generation diagnostic.
 - **JSON and pipeline language features are not part of Runes.** The `|` token remains for variants, captures, catch bindings, and bitwise OR.
-- **`flex f` is stack-only in v0.1.** Full monomorphization over memory strategies is v0.2.
+- **`flex f` inherits the active caller realm.** It enters a GC frame only when
+  a GC scope is active and otherwise follows the caller's allocation context.
 - **Prelude is a separate file.** Pass `src/std/prelude.runes` for the minimal
-  allocator/memory/math contracts. `print` is a compiler builtin. Broad sample
+  compiler-runtime ABI contracts. `print` is a compiler builtin. Broad sample
   mocks live only in `src/tests/fixtures/sample_prelude.runes`.
 
 ---
@@ -290,20 +290,20 @@ See `.planning/codebase/ARCHITECTURE.md` for the full pipeline design and `.plan
 | Parser (Phase 1) | v0.1 syntax covered by unit and integration tests |
 | Name resolution (Phase 2) | Modules, imports, methods, and nested scopes implemented |
 | Type checker (Phase 3) | Tested v0.1 core; diagnostics remain an active hardening area |
-| Code generation (Phase 4) | All positive integration samples emit compilable C |
+| Code generation (Phase 4) | Executable core corpus emits warning-clean C11 |
 
-Current verified integration result: `57` positive passes, `42`
-expected-negative passes, `0` unexpected failures across `99` programs. All 57
-positive programs emit C accepted by GCC; focused tests execute generated code
-for control flow, arrays/pointers, fixed-array returns, structs, variants,
-interfaces, modules, methods, errors, strings, and systems primitives.
+The maintained sample inventory currently covers more than 200 positive and
+expected-negative programs. The executable generated-C inventory compiles 73
+core programs with `-Wall -Wextra -Werror`; focused tests execute arenas, deep
+promotion, the scoped collector, closures, generics, slices, Unicode, modules,
+FFI attributes, checked arithmetic, and traps.
 
 The type checker enforces:
 - Memory realm nesting matrix (which strategy can nest inside which)
 - Named return requirements
 - `promote` rules and valid targets
 - `!T` / `try` / `catch` consistency
-- `#[interrupt]` function signature rules
+- systems attributes, with explicit rejection of unsupported interrupt lowering
 - Struct self-recursion, duplicate field names
 - `break`/`continue` inside loops only
 
@@ -332,12 +332,13 @@ matching, and `--` comment toggling. See
 
 ## Contributing
 
-The compiler is written in C with no external dependencies. If you want to contribute:
+The compiler is written in C with no third-party dependencies. To contribute:
 
 1. **Read the spec:** `docs/specv0_1.md` is the language reference.
 2. **Read the architecture:** `.planning/codebase/ARCHITECTURE.md` explains the pipeline and how phases connect.
-3. **Run the tests:** `src/tests/tester.bash` runs all sample files through the full pipeline.
-4. **Check the known gaps:** `CODEBASE_AUDIT_AND_FIX_PLAN.md` records the latest verified failures and priorities.
+3. **Run the tests:** `make test`, `make test-samples`, and `make test-codegen`.
+4. **Check the runtime boundary:** `docs/v0.1-runtime-requirements.md` records
+   what belongs in the compiler runtime and what remains user library work.
 
 The compiler is a single-binary build (`make`), no linking step, no package manager. Start hacking.
 

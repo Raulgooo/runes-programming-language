@@ -2,7 +2,9 @@ type Counter = { value: i32 }
 
 method Counter {
     f add(self: *Counter, amount: i32) {
-        self.value = self.value + amount
+        unsafe {
+            self.value = self.value + amount
+        }
     }
 
 }
@@ -52,5 +54,5 @@ f main() {
 
     i32 quotient = divide(84, 2) catch -1
     Status status = Status.Ready
-    print(read(counter), total, quotient, status_code(status))
+    print(read(counter), " ", total, " ", quotient, " ", status_code(status))
 }

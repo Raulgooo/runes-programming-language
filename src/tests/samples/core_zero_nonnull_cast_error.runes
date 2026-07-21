@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Non-null pointer cannot be constructed from zero
+f main() {
+    unsafe { *u8 pointer = 0 as *u8 }
+}

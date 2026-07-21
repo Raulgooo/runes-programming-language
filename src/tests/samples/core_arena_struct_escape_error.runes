@@ -1,0 +1,12 @@
+-- EXPECT FAIL: Arena-backed value cannot escape its regional call tree
+extern f alloc(size: usize) = result: *void
+
+type Holder = { pointer: *u8 }
+
+regional f arena_holder() = result: Holder {
+    unsafe { result = Holder(pointer: alloc(1) as *u8) }
+}
+
+f main() {
+    Holder dangling = arena_holder()
+}

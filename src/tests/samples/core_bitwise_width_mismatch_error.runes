@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Bitwise operands must have exactly matching types
+f invalid_bitwise(left: u8, right: u16) = result: u8 {
+    result = left | right
+}

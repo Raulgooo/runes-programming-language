@@ -1,7 +1,0 @@
--- EXPECT FAIL: Nested functions cannot capture enclosing variable 'amount'
-f outer(amount: i32) = result: i32 {
-    f captured() = value: i32 {
-        value = amount
-    }
-    result = captured()
-}

@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Promotion cannot make borrowed pointers outlive their owner
+regional f invalid() = result: *[]i32 {
+    [2]i32 values = [1, 2]
+    []i32 slice = values
+    result = promote(&slice) as dynamic
+}

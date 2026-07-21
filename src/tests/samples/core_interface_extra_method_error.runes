@@ -1,0 +1,11 @@
+-- EXPECT FAIL: Method 'extra' is not declared by interface 'Value'
+interface Value {
+    f get(self) = result: i32
+}
+
+type Item = { value: i32 }
+
+method Value for Item {
+    f get(self) = result: i32 { result = self.value }
+    f extra(self) = result: i32 { result = 0 }
+}

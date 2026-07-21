@@ -1,0 +1,5 @@
+f main() {
+    i8 maximum = 127
+    i8 one = 1
+    print(maximum + one)
+}

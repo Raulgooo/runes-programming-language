@@ -1,0 +1,1 @@
+f main() { str greeting = "hé, 世界" char globe = '🌍' print(greeting, globe) }

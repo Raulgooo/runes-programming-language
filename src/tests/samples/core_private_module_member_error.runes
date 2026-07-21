@@ -1,0 +1,8 @@
+-- EXPECT FAIL: Module has no member 'hidden'
+mod tools {
+    f hidden() {}
+}
+
+f main() {
+    tools.hidden()
+}

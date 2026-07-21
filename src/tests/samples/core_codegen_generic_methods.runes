@@ -1,0 +1,38 @@
+interface Value {
+    f get(self) = result: i32
+}
+
+type Item = { value: i32 }
+type Box<T> = { value: T }
+type Tool = { value: i32 }
+
+method Value for Item {
+    f get(self) = result: i32 { result = self.value }
+}
+
+method Box<T> {
+    f replace<V>(self, value: V) = result: V {
+        result = value
+    }
+}
+
+method Tool {
+    f read<V: Value>(self, value: V) = result: i32 {
+        result = value.get()
+    }
+}
+
+f identity<T>(value: T) = result: T {
+    result = value
+}
+
+f apply<T>(box: Box<T>, value: T) = result: T {
+    result = identity(box.replace(value))
+}
+
+f main() {
+    Box<i32> box = Box<i32>(value: 7)
+    Tool tool = Tool(value: 1)
+    Item item = Item(value: 9)
+    print(box.replace<bool>(true), " ", apply(box, 42), " ", tool.read(item))
+}

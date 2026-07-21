@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Pointer to stack storage cannot escape a function
+f invalid() = result: []i32 {
+    [2]i32 values = [1, 2]
+    result = values
+}

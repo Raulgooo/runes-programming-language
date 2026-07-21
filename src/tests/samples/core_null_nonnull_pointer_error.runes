@@ -1,0 +1,4 @@
+-- EXPECT FAIL: Variable initializer does not match declared type
+f main() {
+    *i32 pointer = null
+}
