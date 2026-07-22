@@ -1,3 +1,4 @@
 f main() {
-print("hello world")
+str name = input("What's your name?")
+print("hello", name)
 }

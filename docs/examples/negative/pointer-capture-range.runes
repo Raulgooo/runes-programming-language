@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Pointer capture requires a fixed array
+f main() {
+    for (0..3) |*value| {
+        unsafe { print(*value) }
+    }
+}

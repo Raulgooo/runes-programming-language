@@ -136,14 +136,15 @@ make test-codegen
 make test-sanitize
 ```
 
-## 7. Editor highlighting
+## 7. Editor highlighting and icons
 
 VS Code support is in `runes-lang/`. For Zed, install the local Tree-sitter
-extension with:
+language extension and Runes file-icon theme with:
 
 ```bash
 make install-zed
 ```
 
-Restart Zed if it was already running. Use `make test-zed` to validate the
-grammar and extension files locally.
+Select **Runes Material Icon Theme** with Zed's icon-theme selector, then
+restart Zed if it was already running. Use `make test-zed` to validate the
+grammar, highlighting query, installer, and icon asset locally.

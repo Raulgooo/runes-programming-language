@@ -26,6 +26,7 @@ The recommended reading order is:
 |---|---|
 | Learn the language from the beginning | [Handbook](guide/README.md) |
 | Look up syntax, commands, attributes, or limitations | [Reference](guide/08-reference.md) |
+| Read the exhaustive syntax and semantics reference | [Complete reference](reference/README.md) |
 | Configure a `runes.toml` project | [Projects and modules](projects-and-modules.md) |
 | Implement compiler-required C runtime support | [Runtime requirements](v0.1-runtime-requirements.md) |
 | Build the future standard library | [Standard-library roadmap](stdlib-roadmap.md) |

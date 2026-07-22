@@ -1,0 +1,27 @@
+-- EXPECT OUTPUT: 42
+type Node = {
+    value: i32
+    next: ?*Node
+}
+
+regional f promoted_node(value: i32) = result: *Node {
+    Node local = Node(value: value, next: null)
+    return promote(&local) as dynamic
+}
+
+dynamic f allocate_value(value: i32) = result: *i32 {
+    unsafe {
+        result = alloc(sizeof(i32)) as *i32
+        *result = value
+    }
+}
+
+f main() {
+    *Node node = promoted_node(40)
+    *i32 value = allocate_value(2)
+    unsafe {
+        print(node.value + *value)
+        raw_free(node as *void)
+        raw_free(value as *void)
+    }
+}

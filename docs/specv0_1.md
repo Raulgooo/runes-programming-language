@@ -33,6 +33,11 @@ String and character literals contain UTF-8 and the implemented escapes.
 String literals may contain embedded NUL. Character literals denote exactly one
 Unicode scalar value.
 
+Integer literals are decimal or hexadecimal (`0x`/`0X`). Binary and octal
+prefixes and digit separators are not part of v0.1. Floating literals contain
+a decimal point and may have an exponent after the fractional part. The escape
+set is `\n`, `\t`, `\r`, `\\`, `\"`, `\'`, `\0`, and `\u{HEX}`.
+
 ## 3. Types
 
 Primitive types are signed `i8`, `i16`, `i32`, `i64`; unsigned `u8`, `u16`,
@@ -62,6 +67,7 @@ Unresolved types are errors.
 Variables have explicit types or use `name := expression` inference. `const`
 storage is not assignable. `volatile` storage preserves volatile access in
 generated C and requires an unsafe context when accessed through raw pointers.
+Variables may be local or module-global; module globals are currently private.
 
 Primitive, fixed-array, tuple, struct, and variant values copy by value.
 Pointers, strings, slices, interfaces, and closures contain references and copy
@@ -105,7 +111,12 @@ f add(a: i32, b: i32) = result: i32 { result = a + b }
 
 A void function omits the return declaration. An explicit `return` performs
 all compiler-managed arena and GC cleanup. Reaching the end returns the current
-named result. Fallible functions use a named `!T` result.
+named result. `return expression` validates the expression against and returns
+through the named result type. Fallible functions use a named `!T` result.
+
+A named-result function may use one same-line expression body without braces;
+the named result must still be assigned on every path. All general
+multi-statement function bodies and control-flow blocks use braces.
 
 Functions may be declared before or after their uses. Overloading is not
 supported. Generated internal symbols are deterministic and encode declaration
@@ -196,7 +207,9 @@ compiler/runtime contracts, not arbitrary foreign calls.
 
 Structs are nominal named field aggregates. Duplicate fields and direct
 by-value recursive layout are errors. Constructors validate field names,
-arity, defaults, and types.
+arity, defaults, and types. Structs have braced and same-line compact
+declaration forms. Fields may declare defaults or use the `volatile` storage
+modifier.
 
 Variants are nominal tagged unions with zero or more ordered payloads per arm.
 Constructors validate exact arm payloads. `match` supports variant, literal,
@@ -237,9 +250,11 @@ promotion; GC environments participate in precise tracing.
 
 ## 14. Control flow and errors
 
-`if`, `while`, `loop`, range/iterable `for`, `break`, `continue`, `return`, and
-`match` are implemented. `if` and `match` may produce values where every path
-has a compatible result.
+`if`, `while`, `loop`, range/array/slice `for`, `break`, `continue`, `return`,
+and `match` are implemented. `if` and `match` may produce values where every
+path has a compatible result. Array and slice iteration supports value,
+value/index, pointer, and pointer/index captures. Pointer capture is rejected
+for ranges and read-only slices.
 
 Error sets are nominal. `!T` is a result carrying `T` or an error. `try`
 propagates an error from the current fallible function. `catch` handles the

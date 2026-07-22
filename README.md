@@ -44,6 +44,7 @@ make          # builds ./runes
 make test     # focused unit, core semantics, and C bootstrap tests
 make test-samples # full integration inventory, including known failures
 make test-codegen # emit strict C for the executable core inventory
+make test-docs # compile documentation examples and validate reference links
 make test-sanitize # ASan/UBSan over every integration sample
 make clean    # removes binary
 ```
@@ -54,6 +55,8 @@ For a short walkthrough, see [Writing and Running Runes Programs](docs/getting-s
 For the beginner-first language handbook, see
 [Learn Runes](docs/guide/README.md). The stable documentation entry point is
 [Runes v0.1 Language Guide](docs/language-guide.md).
+For exhaustive syntax and semantics, use the
+[Complete Language Reference](docs/reference/README.md).
 For manifests, module roots, and local dependencies, see
 [Projects and Modules](docs/projects-and-modules.md).
 For the planned standard library and official ecosystem surface, see
@@ -117,7 +120,7 @@ Types include `i8`–`i64`, `u8`–`u64`, `usize`, `f32`, `f64`, `bool`,
 Unicode `char`, length-bearing UTF-8 `str`, `*T`, `?*T`, `[N]T`, `[]T`,
 `[]const T`, tuples, function values, structs, variants, and interfaces.
 
-Fixed arrays require a positive integer literal size and exactly `N` elements, except `[]`, which zero-initializes the declared array. Array literals must be homogeneous and same-typed arrays copy by value. Both arrays and pointers support integer indexing; literal array indexes are checked at compile time. Pointer arithmetic is limited to `pointer + integer`, `integer + pointer`, and `pointer - integer`. Address-of requires an assignable expression. Pointer loop captures are valid only for fixed arrays.
+Fixed arrays require a positive integer literal size and exactly `N` elements, except `[]`, which zero-initializes the declared array. Array literals must be homogeneous and same-typed arrays copy by value. Both arrays and pointers support integer indexing; literal array indexes are checked at compile time. Pointer arithmetic is limited to `pointer + integer`, `integer + pointer`, and `pointer - integer`. Address-of requires an assignable expression. Pointer loop captures are valid for fixed arrays and mutable slices, but not for ranges or read-only slices.
 
 On the current 64-bit bootstrap target, `usize` is an alias of `u64`. `*void` is the untyped FFI/allocation pointer and converts to or from any pointer type; other pointer element types remain invariant.
 
@@ -168,7 +171,10 @@ regional f setup_tables() = r: *PageTable {
 }
 ```
 
-`promote(&val) as X` is the only way to move a value out of a short-lived scope. `promote` without `as X` is a compile error.
+`promote(&val) as X` deep-clones an arena-backed graph into a longer-lived raw
+or GC realm. Inline values can return by value without promotion; borrowed
+references cannot be made longer-lived by a cast. `promote` without `as X` is a
+compile error.
 
 ### Structs, variants, interfaces
 
@@ -230,12 +236,14 @@ f32 val = divide(10.0, 0.0) catch 0.0
 ```runes
 -- inline asm
 f read_cr3() = r: u64 {
-    asm { "mov %cr3, %rax" } -> r
+    unsafe { asm { "mov %cr3, %rax" } -> r }
 }
 
 -- volatile memory-mapped I/O (never optimized away)
-volatile *u32 uart = 0x10000000 as *u32
-*uart = 0x41
+unsafe {
+    volatile *u32 uart = 0x10000000 as *u32
+    *uart = 0x41
+}
 
 -- Interrupt entry points use an external assembly stub in v0.1.
 -- The C backend rejects #[interrupt] rather than emitting an unsafe ABI.

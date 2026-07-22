@@ -37,7 +37,7 @@ types are important in file formats, protocols, hardware, and FFI.
 ```runes
 i32 decimal = 42
 u8 byte = 0x2A
-u32 mask = 0b101010
+u32 mask = 0x2A
 f64 ratio = 3.5
 bool ready = true
 char letter = 'R'
@@ -46,6 +46,12 @@ str greeting = "hello"
 
 Text and character literals may contain UTF-8 and escapes. A `char` must be one
 valid Unicode scalar, not an arbitrary byte or multi-character string.
+
+Integer literals are decimal or hexadecimal (`0x`/`0X`). Binary and octal
+prefixes and digit separators are not implemented in v0.1. Floating-point
+literals require a decimal point; scientific notation is accepted after the
+fractional part. The complete escape table is in the
+[lexical reference](../reference/syntax.md#literals).
 
 `str` is a pointer plus a byte length. It is not necessarily NUL-terminated,
 may contain embedded NUL bytes, and does not own the memory it views.

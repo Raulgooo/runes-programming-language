@@ -26,3 +26,6 @@ jq -e '.extensions.runes.dev == true' \
   "$TEMP/zed/extensions/index.json" >/dev/null
 grep -q '^grammar = "runes"$' \
   "$TEMP/install/runes-extension/languages/runes/config.toml"
+bash -n "$ROOT/editors/zed/install-icons.bash"
+grep -q 'viewBox="0 0 24 24"' "$ROOT/editors/zed/icons/runes.svg"
+grep -q 'fill="#FA1429"' "$ROOT/editors/zed/icons/runes.svg"

@@ -3,6 +3,10 @@
 This chapter collects details that are useful to look up after reading the
 tutorial chapters.
 
+This is the handbook's quick-reference chapter. For exhaustive grammar,
+semantics, conversion rules, and implementation evidence, see the
+[complete language reference](../reference/README.md).
+
 ## Source forms
 
 Top-level and module declarations include:
@@ -79,7 +83,7 @@ forms described in chapter 7.
 | Attribute | Applies to | Meaning/status |
 |---|---|---|
 | `#[safe]` | extern function | Binding author asserts every typed call is safe |
-| `#[link_name("name")]` | function/extern | Select emitted or foreign symbol name |
+| `#[link_name("name")]` | function/global/extern function | Select emitted or foreign symbol name |
 | `#[callconv("sysv64")]` | function/extern | System V x86-64 calling convention |
 | `#[callconv("win64")]` | function/extern | Windows x64 calling convention |
 | `#[section("name")]` | function/global | Select object section |
@@ -139,12 +143,14 @@ make test-samples  # positive and expected-failure source inventory
 make test-codegen  # compile executable generated C with strict warnings
 make test-sanitize # compiler/runtime ASan and UBSan coverage
 make fuzz-smoke    # lexer-to-codegen fuzz smoke test
-make test-zed      # Zed extension checks
-make install-zed   # install local Zed highlighting
+make test-zed      # Zed grammar, highlighting, and icon checks
+make test-docs     # executable examples, reference coverage, and links
+make install-zed   # install local Zed highlighting and file icons
 ```
 
 Zed support lives under `editors/zed/`; VS Code support is under `runes-lang/`.
-Restart Zed after installing or updating its extension.
+After installation, choose **Runes Material Icon Theme** in Zed's icon-theme
+selector. Restart Zed after installing or updating its extensions.
 
 ## Runtime versus standard library
 

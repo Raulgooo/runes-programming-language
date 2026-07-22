@@ -70,8 +70,10 @@ must eventually release owned memory through the corresponding raw-free policy.
 Pointers do not carry an automatic destructor, so ownership must be explicit in
 the API and documentation.
 
-`raw_alloc` and `raw_alloc_aligned` always use raw memory regardless of the
-current realm. `raw_free` releases it.
+`raw_alloc` always uses raw memory regardless of the current realm, and
+`raw_free` releases it. The backend also recognizes `raw_alloc_aligned`, but
+the default prelude does not currently declare it; programs using it must
+provide the matching extern declaration explicitly.
 
 ## Regional functions and arenas
 

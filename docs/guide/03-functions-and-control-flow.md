@@ -46,6 +46,16 @@ f absolute(value: i32) = result: i32 {
 }
 ```
 
+You may also return a compatible expression directly. The compiler stores it
+in the named result before performing realm cleanup:
+
+```runes
+f absolute(value: i32) = result: i32 {
+    if value < 0 { return -value }
+    return value
+}
+```
+
 A function with no result simply omits the return clause:
 
 ```runes
@@ -54,7 +64,15 @@ f log_ready() {
 }
 ```
 
-`return` does not carry an expression. Assign the named result first.
+For a very small value-returning function, v0.1 also accepts a same-line body
+without braces:
+
+```runes
+f double(value: i32) = result: i32 result = value * 2
+```
+
+This shorthand requires a named result and must remain on the declaration
+line. Prefer a braced body when the function needs more than one expression.
 
 ## `main`
 
@@ -136,6 +154,18 @@ for (values) |value, index| {
     print(index, ": ", value)
 }
 ```
+
+Arrays and mutable slices also support pointer captures. They expose each
+element as `*T`, allowing in-place mutation inside `unsafe`:
+
+```runes
+for (values) |*value, index| {
+    unsafe { *value = *value + (index as i32) }
+}
+```
+
+The four capture forms are `|value|`, `|value, index|`, `|*value|`, and
+`|*value, index|`. Pointer capture is invalid for ranges and read-only slices.
 
 ## Scopes
 
@@ -260,7 +290,7 @@ realm call rules in chapter 6.
 ## Common mistakes
 
 - Writing `f value() = i32`; the required form is `= result: i32`.
-- Writing `return expression`; assign the named result, then use bare `return`.
+- Returning a value incompatible with the function's named result type.
 - Using an integer as an `if` condition.
 - Using `try` in a non-fallible function.
 - Forgetting that `0..end` excludes `end`.

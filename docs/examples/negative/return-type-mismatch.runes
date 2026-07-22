@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Return type mismatch
+f answer() = result: i32 {
+    return "forty-two"
+}
+
+f main() {}

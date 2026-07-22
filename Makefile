@@ -12,6 +12,7 @@ guide:
 
 install-zed:
 	bash editors/zed/install.bash
+	bash editors/zed/install-icons.bash
 
 $(TARGET): $(CORE_SRCS) $(MAIN_SRC)
 	$(CC) $(CFLAGS) $(CORE_SRCS) $(MAIN_SRC) -o $(TARGET)
@@ -332,7 +333,10 @@ test-tooling: $(TARGET)
 test-zed:
 	bash editors/zed/test.bash
 
-test: test-unit test-core test-tooling test-codegen-scale test-differential
+test: test-unit test-core test-tooling test-docs test-codegen-scale test-differential
+
+test-docs: $(TARGET)
+	bash docs/test.bash
 
 test-codegen-scale: $(TARGET)
 	bash src/tests/codegen_scale_test.bash

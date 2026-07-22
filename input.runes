@@ -1,0 +1,18 @@
+extern f read(
+      fd: i32,
+      buffer: *u8,
+      count: usize
+  ) = result: i64
+
+f main() {
+      [64]u8 input = []
+      print("What's your name?: ")
+      unsafe {
+      i64 count = read(0, &input, 63)
+
+      if count > 0 {
+          input[count as usize] = 0
+          print("hello,",(&input) as str)
+      }
+      }
+  }

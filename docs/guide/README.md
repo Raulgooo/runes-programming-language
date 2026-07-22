@@ -48,6 +48,11 @@ in [specv0_1.md](../specv0_1.md). Project manifest details are also collected
 in [projects-and-modules.md](../projects-and-modules.md), and future library
 work is tracked in [stdlib-roadmap.md](../stdlib-roadmap.md).
 
+For exhaustive syntax and semantics, use the
+[complete language reference](../reference/README.md). Unlike this progressive
+handbook, the reference includes every implemented form, conversion rule,
+runtime check, and implementation limitation.
+
 ## Fast lookup
 
 | Question | Go to |

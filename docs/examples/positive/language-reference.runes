@@ -1,0 +1,62 @@
+-- EXPECT OUTPUT: point 44 5
+const i32 BASE = 20
+volatile i32 observed = 0
+
+type Point = x: i32, y: i32
+
+type Position = {
+    x: i32 = 0
+    y: i32 = 0
+}
+
+type Maybe<T> = | None | Some(T)
+
+interface Value {
+    f value(self) = result: i32
+}
+
+method Value for Point {
+    f value(self) = result: i32 { return self.x + self.y }
+}
+
+method Point {
+    f translate(self: *Point, amount: i32) {
+        unsafe { self.x = self.x + amount }
+    }
+}
+
+f identity<T>(value: T) = result: T { return value }
+
+f double(value: i32) = result: i32 result = value * 2
+
+f read<T: Value>(item: T) = result: i32 {
+    return item.value()
+}
+
+f describe(point: Point) = result: str {
+    result = match point {
+        Point(x: 0, y: 0) -> "origin",
+        Point(x: 0, y: _) -> "y-axis",
+        Point(x: _, y: 0) -> "x-axis",
+        Point(x, y) if x == y -> "diagonal",
+        Point(x: _, y: _) -> "point",
+    }
+}
+
+f main() {
+    Position origin = Position()
+    Point point = Point(x: BASE, y: origin.y + 2)
+    point.translate(0)
+
+    [3]i32 values = [1, 2, 3]
+    for (values) |*value, index| {
+        unsafe { *value = *value + (index as i32) }
+    }
+
+    Maybe<i32> maybe = Maybe.Some(identity<i32>(read<Point>(point)))
+    observed = match maybe {
+        Some(value) -> double(value),
+        None -> 0,
+    }
+    print(describe(point), " ", observed, " ", values[2])
+}

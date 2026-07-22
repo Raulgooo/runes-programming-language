@@ -1,0 +1,5 @@
+-- EXPECT FAIL: Unknown type 'b101010'
+f main() {
+    u32 mask = 0b101010
+    print(mask)
+}

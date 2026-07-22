@@ -84,6 +84,24 @@ f main() {
 }
 ```
 
+A compact declaration is also accepted:
+
+```runes
+type Point = x: i32, y: i32
+```
+
+Fields can declare defaults. A constructor may omit those fields:
+
+```runes
+type Position = {
+    x: i32 = 0
+    y: i32 = 0
+}
+
+Position origin = Position()
+Position right = Position(x: 10)
+```
+
 Constructors use field names, so argument order does not silently change the
 meaning. The compiler rejects unknown, duplicate, missing required, and
 wrongly typed fields. A field may have a declared default.
@@ -181,6 +199,17 @@ f describe(message: Message) {
 Patterns include variant arms, literals, bindings, `_` wildcards, tuples, and
 struct shapes. A guard after `if` adds a condition to an arm.
 
+Struct patterns can name fields and either test or bind their values:
+
+```runes
+str location = match point {
+    Point(x: 0, y: 0) -> "origin",
+    Point(x: 0, y) -> "y-axis",
+    Point(x, y: 0) -> "x-axis",
+    Point(x, y) -> "other",
+}
+```
+
 A match can produce a value when every reachable arm produces a compatible
 value:
 
@@ -217,6 +246,16 @@ The compiler creates a specialized copy for each concrete use. This is called
 
 Function calls infer type arguments when the mapping is unambiguous. Explicit
 type arguments are required when inference has insufficient information.
+
+```runes
+Pair<i32, bool> pair = Pair<i32, bool>(first: 42, second: true)
+i32 value = identity<i32>(pair.first)
+bool changed = identity<bool>(false)
+```
+
+The same `<...>` syntax works on qualified calls such as
+`algorithms.identity<i32>(42)`. A constructor can often infer its arguments
+from the declared destination, as in `Pair<i32, bool> pair = Pair(...)`.
 
 Constrain a type parameter with an interface:
 
