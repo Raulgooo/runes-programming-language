@@ -1,0 +1,1 @@
+pub f answer() = result: i32 { result = 22 }

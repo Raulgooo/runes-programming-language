@@ -8,16 +8,24 @@ COMMAND=${1:-help}
 usage() {
   cat <<'EOF'
 Usage:
-  ./runec check  [--prelude] FILE [FILE...]
-  ./runec emit-c [--prelude] FILE [FILE...] [-o OUTPUT.c]
-  ./runec build  [--prelude] FILE [FILE...] [-o PROGRAM] [-- CC_FLAGS...]
-  ./runec run    [--prelude] FILE [FILE...] [-- PROGRAM_ARGS...]
+  ./runec check  [OPTIONS] [FILE...]
+  ./runec emit-c [OPTIONS] [FILE...] [-o OUTPUT.c]
+  ./runec build  [OPTIONS] [FILE...] [-o PROGRAM] [-- CC_FLAGS...]
+  ./runec run    [OPTIONS] [FILE...] [-- PROGRAM_ARGS...]
+  ./runec project [OPTIONS]
 
 Commands:
   check    Parse, resolve, and type-check without producing a binary.
   emit-c   Generate readable C. The default output is build/<name>.c.
   build    Generate C and compile it with the host C compiler.
   run      Build a temporary binary and run it.
+  project  Print the resolved project configuration.
+
+Project options:
+  --project FILE     Use an explicit runes.toml manifest.
+  --module-path DIR  Add a module search root; may be repeated.
+  --stdlib DIR       Use DIR as the standard library root.
+  --no-prelude       Build without the runtime prelude.
 
 Environment:
   CC       Host C compiler (default: gcc)
@@ -26,7 +34,7 @@ EOF
 }
 
 case "$COMMAND" in
-  check|emit-c|build|run) shift ;;
+  check|emit-c|build|run|project) shift ;;
   help|-h|--help) usage; exit 0 ;;
   *) printf 'runec: unknown command: %s\n\n' "$COMMAND" >&2; usage >&2; exit 2 ;;
 esac
@@ -34,10 +42,29 @@ esac
 sources=()
 tail_args=()
 output=""
-with_prelude=false
+with_prelude=true
+project=""
+stdlib=""
+module_paths=()
 while (($#)); do
   case "$1" in
     --prelude) with_prelude=true; shift ;;
+    --no-prelude) with_prelude=false; shift ;;
+    --project)
+      (($# >= 2)) || { echo "runec: --project requires a path" >&2; exit 2; }
+      project=$2
+      shift 2
+      ;;
+    --module-path)
+      (($# >= 2)) || { echo "runec: --module-path requires a path" >&2; exit 2; }
+      module_paths+=("$2")
+      shift 2
+      ;;
+    --stdlib)
+      (($# >= 2)) || { echo "runec: --stdlib requires a path" >&2; exit 2; }
+      stdlib=$2
+      shift 2
+      ;;
     -o|--output)
       (($# >= 2)) || { echo "runec: $1 requires a path" >&2; exit 2; }
       output=$2
@@ -53,16 +80,11 @@ while (($#)); do
   esac
 done
 
-((${#sources[@]})) || { echo "runec: at least one .runes file is required" >&2; exit 2; }
-
 if [[ ! -x "$COMPILER" ]] || find "$ROOT/src" -type f \( -name '*.c' -o -name '*.h' \) -newer "$COMPILER" -print -quit | grep -q .; then
   make -s -C "$ROOT" runes
 fi
 
 inputs=()
-if $with_prelude; then
-  inputs+=("$ROOT/src/std/prelude.runes")
-fi
 for source in "${sources[@]}"; do
   if [[ "$source" = /* ]]; then
     inputs+=("$source")
@@ -71,17 +93,34 @@ for source in "${sources[@]}"; do
   fi
 done
 
-if [[ "$COMMAND" == check ]]; then
-  exec "$COMPILER" "${inputs[@]}"
+compiler_args=()
+if $with_prelude; then
+  compiler_args+=(--prelude)
+else
+  compiler_args+=(--no-prelude)
+fi
+[[ -z "$project" ]] || compiler_args+=(--project "$project")
+[[ -z "$stdlib" ]] || compiler_args+=(--stdlib "$stdlib")
+for path in "${module_paths[@]}"; do
+  compiler_args+=(--module-path "$path")
+done
+
+if [[ "$COMMAND" == project ]]; then
+  exec "$COMPILER" "${compiler_args[@]}" --project-info
 fi
 
-name=$(basename "${sources[0]}" .runes)
+if [[ "$COMMAND" == check ]]; then
+  exec "$COMPILER" "${compiler_args[@]}" "${inputs[@]}"
+fi
+
+name=app
+((${#sources[@]} == 0)) || name=$(basename "${sources[0]}" .runes)
 mkdir -p "$ROOT/build"
 
 if [[ "$COMMAND" == emit-c ]]; then
   output=${output:-"$ROOT/build/$name.c"}
   mkdir -p "$(dirname "$output")"
-  "$COMPILER" "${inputs[@]}" --emit-c "$output"
+  "$COMPILER" "${compiler_args[@]}" "${inputs[@]}" --emit-c "$output"
   printf '%s\n' "$output"
   exit 0
 fi
@@ -93,7 +132,7 @@ if [[ "$COMMAND" == build ]]; then
   output=${output:-"$ROOT/build/$name"}
   mkdir -p "$(dirname "$output")"
   c_file="$ROOT/build/$name.c"
-  "$COMPILER" "${inputs[@]}" --emit-c "$c_file"
+  "$COMPILER" "${compiler_args[@]}" "${inputs[@]}" --emit-c "$c_file"
   "$cc" -I"$ROOT/src" -std=c11 -O2 -Wall -Wextra "${env_cflags[@]}" \
     "$c_file" "$ROOT/src/runtime.c" "$ROOT/src/utils/arena.c" \
     -lm "${tail_args[@]}" -o "$output"
@@ -105,7 +144,7 @@ temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/runec.XXXXXX")
 trap 'rm -rf "$temp_dir"' EXIT
 c_file="$temp_dir/$name.c"
 binary="$temp_dir/$name"
-"$COMPILER" "${inputs[@]}" --emit-c "$c_file"
+"$COMPILER" "${compiler_args[@]}" "${inputs[@]}" --emit-c "$c_file"
 "$cc" -I"$ROOT/src" -std=c11 -O2 -Wall -Wextra "${env_cflags[@]}" \
   "$c_file" "$ROOT/src/runtime.c" "$ROOT/src/utils/arena.c" -lm -o "$binary"
 "$binary" "${tail_args[@]}"

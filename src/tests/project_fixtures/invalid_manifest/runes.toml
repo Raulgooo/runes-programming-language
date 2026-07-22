@@ -1,0 +1,4 @@
+[project]
+name = "invalid-test"
+entry = "src/main.runes"
+unknown = "rejected"

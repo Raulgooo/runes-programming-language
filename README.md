@@ -22,8 +22,9 @@ gc f run_userspace() {
 ```
 
 **Status:** Experimental C bootstrap compiler. The v0.1 language core and its
-compiler-required runtime are implemented and under hardening. No standard
-library is included. Not production-ready or self-hosted.
+compiler-required runtime are implemented and under hardening. The `std`
+project structure exists, but the general standard library is not implemented.
+Not production-ready or self-hosted.
 
 ---
 
@@ -50,8 +51,13 @@ make clean    # removes binary
 No external dependencies. Pure C, zero third-party libraries.
 
 For a short walkthrough, see [Writing and Running Runes Programs](docs/getting-started.md).
-For the full implemented-language reference, see
-[Runes v0.1 Language Usage Guide](docs/language-guide.md).
+For the beginner-first language handbook, see
+[Learn Runes](docs/guide/README.md). The stable documentation entry point is
+[Runes v0.1 Language Guide](docs/language-guide.md).
+For manifests, module roots, and local dependencies, see
+[Projects and Modules](docs/projects-and-modules.md).
+For the planned standard library and official ecosystem surface, see
+[Standard Library and Ecosystem Roadmap](docs/stdlib-roadmap.md).
 
 ---
 
@@ -79,6 +85,15 @@ For normal development, use the `runec` driver:
 ./runec run program.runes
 ./runec build program.runes -o build/program
 ./runec emit-c program.runes -o build/program.c
+```
+
+Inside a directory containing `runes.toml`, the filename is optional:
+
+```bash
+./runec project
+./runec check
+./runec run
+./runec build -o build/app
 ```
 
 Exit code 0 = clean. Exit code 1 = errors (printed to stderr with `file:line:col`).
@@ -243,9 +258,11 @@ extern u64 KERNEL_START
 - **JSON and pipeline language features are not part of Runes.** The `|` token remains for variants, captures, catch bindings, and bitwise OR.
 - **`flex f` inherits the active caller realm.** It enters a GC frame only when
   a GC scope is active and otherwise follows the caller's allocation context.
-- **Prelude is a separate file.** Pass `src/std/prelude.runes` for the minimal
-  compiler-runtime ABI contracts. `print` is a compiler builtin. Broad sample
-  mocks live only in `src/tests/fixtures/sample_prelude.runes`.
+- **The prelude is runtime-only.** `runec` loads `src/std/prelude.runes`
+  automatically; the lower-level `runes` command requires it as an explicit
+  input or `--prelude`. Use `--no-prelude` for freestanding builds. `print` is a
+  compiler builtin. Broad sample mocks live only in
+  `src/tests/fixtures/sample_prelude.runes`.
 
 ---
 

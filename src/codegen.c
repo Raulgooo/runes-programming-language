@@ -1468,6 +1468,18 @@ static bool emit_expr(Codegen *cg, AstNode *expr) {
               descriptor, expr->line, expr->col);
       return true;
     }
+    bool pointer_to_string =
+        expr->resolved_type && expr->resolved_type->kind == TY_PRIMITIVE &&
+        strcmp(expr->resolved_type->as.primitive.name, "str") == 0 &&
+        expr->as.cast.expr->resolved_type &&
+        expr->as.cast.expr->resolved_type->kind == TY_POINTER;
+    if (pointer_to_string) {
+      fputs("runes_str_from_c((const char *)(", cg->out);
+      if (!emit_expr(cg, expr->as.cast.expr))
+        return false;
+      fputs("))", cg->out);
+      return true;
+    }
     if (expr->resolved_type && expr->resolved_type->kind == TY_PRIMITIVE &&
         strcmp(expr->resolved_type->as.primitive.name, "char") == 0 &&
         expr->as.cast.expr->resolved_type &&
@@ -5462,6 +5474,7 @@ bool codegen_emit_c(Codegen *cg, AstNode *program) {
         "extern void runes_clone_value(RunesCloneContext *, void *, const "
         "void *, const RunesTypeDescriptor *);\n"
         "extern RunesStr runes_clone_string(RunesCloneContext *, RunesStr);\n"
+        "extern RunesStr runes_str_from_c(const char *);\n"
         "extern bool runes_str_equal(RunesStr, RunesStr);\n"
         "extern int runes_str_compare(RunesStr, RunesStr);\n"
         "extern RunesStr runes_str_concat(RunesStr, RunesStr, unsigned, "

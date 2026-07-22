@@ -1,0 +1,3 @@
+pub f local_answer() = result: i32 {
+    result = 20
+}

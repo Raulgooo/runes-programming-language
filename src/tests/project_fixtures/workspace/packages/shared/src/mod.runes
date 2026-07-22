@@ -1,0 +1,3 @@
+pub f shared_answer() = result: i32 {
+    result = 22
+}

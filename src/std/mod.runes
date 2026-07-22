@@ -1,0 +1,5 @@
+-- Root of the standard-library namespace. Keep runtime ABI declarations in
+-- prelude.runes; library modules are declared here as they become available.
+
+pub mod core
+pub mod os

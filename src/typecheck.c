@@ -2464,6 +2464,35 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     }
     bool source_pointer = source && source->kind == TY_POINTER;
     bool target_pointer = inferred && inferred->kind == TY_POINTER;
+    bool source_string = source && source->kind == TY_PRIMITIVE &&
+                         strcmp(source->as.primitive.name, "str") == 0;
+    bool target_string = inferred && inferred->kind == TY_PRIMITIVE &&
+                         strcmp(inferred->as.primitive.name, "str") == 0;
+    if (target_string && source_pointer) {
+      Type *pointee = source->as.pointer.inner;
+      if (pointee && pointee->kind == TY_ARRAY)
+        pointee = pointee->as.array.inner;
+      bool byte_pointer =
+          pointee && pointee->kind == TY_PRIMITIVE &&
+          strcmp(pointee->as.primitive.name, "u8") == 0;
+      if (!byte_pointer) {
+        typechecker_error(tc, expr->line, expr->col,
+                          "Only a byte pointer may be cast to str");
+        inferred = tc->tctx->type_error;
+        break;
+      }
+    } else if (target_string && !source_string) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Only a byte pointer may be cast to str");
+      inferred = tc->tctx->type_error;
+      break;
+    }
+    if (source_string && target_pointer) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "str cannot be cast to a pointer; use '.ptr'");
+      inferred = tc->tctx->type_error;
+      break;
+    }
     if (source && source->kind == TY_NULL) {
       if (!target_pointer || !inferred->as.pointer.nullable) {
         typechecker_error(tc, expr->line, expr->col,

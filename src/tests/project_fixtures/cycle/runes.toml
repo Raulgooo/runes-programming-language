@@ -1,0 +1,6 @@
+[project]
+name = "cycle-test"
+entry = "src/main.runes"
+
+[modules]
+roots = ["src", "modules"]

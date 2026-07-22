@@ -1,0 +1,8 @@
+-- EXPECT FAIL: Only a byte pointer may be cast to str
+f main() {
+    i32 value = 42
+    unsafe {
+        str text = (&value) as str
+        print(text)
+    }
+}

@@ -1,0 +1,9 @@
+mod helper
+
+use std.core
+use helper.local_answer
+use shared.shared_answer
+
+f main() {
+    print(local_answer() + shared_answer())
+}

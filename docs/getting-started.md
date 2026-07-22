@@ -1,8 +1,9 @@
 # Writing and Running Runes Programs
 
-This is the short setup path. See [language-guide.md](language-guide.md) for the
-complete implemented syntax, builtins, FFI workflow, memory realms, systems
-features, and current backend limitations.
+This is the short setup path. New language users should continue with the
+[chapter-based handbook](guide/README.md), which explains syntax, projects,
+memory realms, FFI, and limitations without assuming systems-language
+experience.
 
 ## 1. Build the compiler
 
@@ -74,15 +75,33 @@ f main() {
 }
 ```
 
-## 5. Use runtime contracts or multiple files
+## 5. Start a project
 
-Pass `--prelude` when using the minimal allocation, memory, or math contracts:
+Create `runes.toml` beside the project source directory:
 
-```bash
-./runec build --prelude app.runes -o build/app
+```toml
+[project]
+name = "hello"
+entry = "src/main.runes"
+
+[modules]
+roots = ["src"]
 ```
 
-Multiple source files are analyzed as one program:
+Then commands discover the entry automatically:
+
+```bash
+./runec project
+./runec check
+./runec run
+```
+
+Normal `runec` commands load the runtime prelude automatically. Pass
+`--no-prelude` for freestanding programs. See
+[projects-and-modules.md](projects-and-modules.md) for module roots, the `std`
+namespace, and local path dependencies.
+
+Multiple explicit source files can still be analyzed as one program:
 
 ```bash
 ./runec build types.runes server.runes -o build/server
@@ -95,9 +114,9 @@ flags after `--`:
 ./runec build app.runes -o build/app -- -lpthread
 ```
 
-External modules are discovered relative to the declaring file. `mod parser`
-loads exactly one of `parser.runes` or `parser/mod.runes`; supplying both is an
-error. You can still list independent root files explicitly.
+External modules are discovered relative to the declaring file and then from
+configured module roots. `mod parser` loads exactly one of `parser.runes` or
+`parser/mod.runes`; supplying both is an error.
 
 ## 6. Useful compiler commands
 

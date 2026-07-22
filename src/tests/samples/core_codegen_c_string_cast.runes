@@ -1,0 +1,10 @@
+f main() {
+    [8]u8 bytes = []
+    bytes[0] = 104
+    bytes[1] = 195
+    bytes[2] = 169
+    unsafe {
+        str value = (&bytes) as str
+        print(value, " ", value.len)
+    }
+}

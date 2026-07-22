@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Isrc -std=c11 -Wall -Wextra -g
 
-CORE_SRCS = src/lexer.c src/parser.c src/ast.c src/monomorphize.c src/utils/arena.c src/utils/strtab.c src/tools/ast_print.c src/symbol_table.c src/resolver.c src/types.c src/typecheck.c src/codegen.c
+CORE_SRCS = src/lexer.c src/parser.c src/ast.c src/monomorphize.c src/project.c src/utils/arena.c src/utils/strtab.c src/tools/ast_print.c src/symbol_table.c src/resolver.c src/types.c src/typecheck.c src/codegen.c
 MAIN_SRC = src/main.c
 TARGET = runes
 
@@ -131,6 +131,9 @@ test-core: $(TARGET)
 	./$(TARGET) src/tests/samples/core_codegen_strings.runes --emit-c /tmp/runes_core_strings.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_strings.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_strings
 	@test "$$(/tmp/runes_core_strings)" = "runes equal true true"
+	./$(TARGET) src/tests/samples/core_codegen_c_string_cast.runes --emit-c /tmp/runes_core_c_string_cast.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_c_string_cast.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_c_string_cast
+	@test "$$(/tmp/runes_core_c_string_cast)" = "hé 3"
 	./$(TARGET) src/tests/samples/core_codegen_unicode_strings.runes --emit-c /tmp/runes_core_unicode_strings.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_unicode_strings.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_unicode_strings
 	@test "$$(/tmp/runes_core_unicode_strings)" = "13 true true 108 hé 界"
@@ -310,6 +313,21 @@ test-tooling: $(TARGET)
 	./runec check src/examples/language_tour.runes
 	./runec build src/examples/language_tour.runes -o /tmp/runes_language_tour
 	@test "$$(/tmp/runes_language_tour)" = "42 42 42 0"
+	cd src/tests/project_fixtures/workspace && ../../../../runec check
+	cd src/tests/project_fixtures/workspace && ../../../../runec build -o /tmp/runes_workspace_project
+	@test "$$(/tmp/runes_workspace_project)" = "42"
+	@if cd src/tests/project_fixtures/cycle && ../../../../runec check >/tmp/runes_project_cycle.out 2>&1; then \
+		echo 'expected cyclic project modules to fail'; exit 1; \
+	fi
+	@grep -Fq 'Cyclic module dependency:' /tmp/runes_project_cycle.out
+	@if cd src/tests/project_fixtures/ambiguous_roots && ../../../../runec check >/tmp/runes_project_ambiguous.out 2>&1; then \
+		echo 'expected ambiguous project modules to fail'; exit 1; \
+	fi
+	@grep -Fq "Module 'helper' is ambiguous across module roots" /tmp/runes_project_ambiguous.out
+	@if cd src/tests/project_fixtures/invalid_manifest && ../../../../runec check >/tmp/runes_project_manifest.out 2>&1; then \
+		echo 'expected unknown manifest field to fail'; exit 1; \
+	fi
+	@grep -Fq 'manifest error: unknown field' /tmp/runes_project_manifest.out
 
 test-zed:
 	bash editors/zed/test.bash

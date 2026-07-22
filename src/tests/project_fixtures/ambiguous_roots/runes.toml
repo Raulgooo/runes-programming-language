@@ -1,0 +1,6 @@
+[project]
+name = "ambiguous-test"
+entry = "src/main.runes"
+
+[modules]
+roots = ["src", "modules-a", "modules-b"]

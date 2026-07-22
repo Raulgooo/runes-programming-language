@@ -1,0 +1,9 @@
+[project]
+name = "workspace-test"
+entry = "src/main.runes"
+
+[modules]
+roots = ["src", "modules"]
+
+[dependencies]
+shared = { path = "packages/shared/src" }

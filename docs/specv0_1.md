@@ -3,7 +3,7 @@
 Status: experimental specification for the implemented hosted C bootstrap.
 
 This document states normative v0.1 behavior. The practical syntax reference
-and examples are in [language-guide.md](language-guide.md). Runtime-only ABI
+and examples are in the [language handbook](guide/README.md). Runtime-only ABI
 requirements are in
 [v0.1-runtime-requirements.md](v0.1-runtime-requirements.md).
 
@@ -184,6 +184,7 @@ The following require lexical `unsafe`:
 - integer-to-pointer construction and unsafe pointer casts;
 - calls through arbitrary external function declarations;
 - raw pointer/length slice construction;
+- direct string pointer access and byte-pointer-to-string conversion;
 - inline assembly.
 
 Taking an address and passing a typed pointer are not inherently unsafe.
@@ -248,17 +249,30 @@ unrelated sets are not structurally interchangeable.
 ## 15. Modules
 
 An inline module is `mod name { declarations }`. An external declaration
-`mod name` loads exactly one relative path:
+`mod name` first searches beside the declaring file, then configured project
+module roots, for exactly one form:
 
 1. `name.runes`, or
 2. `name/mod.runes`.
 
-Both existing is an ambiguity. Neither existing is an error. Nested flat
-modules resolve children beneath a same-named directory. Canonical duplicate
-loads and cycles are rejected deterministically.
+Both existing is an ambiguity. Neither existing is an error. Multiple matches
+among configured roots are ambiguous. Nested flat modules resolve children
+beneath a same-named directory. Canonically completed modules may be reused;
+re-entering a module that is still loading is a cycle and is rejected.
 
 Members are private unless `pub`. Qualified access uses dot-separated paths.
 `use path.member` imports the final public member into the current scope.
+
+Projects use a strict `runes.toml` with a required project name and entry,
+optional module roots, and named local path dependencies. A dependency creates
+a top-level module namespace. The reserved `std` namespace is loaded from the
+configured, environment, development, or installed standard-library root.
+Normal driver builds load the runtime prelude unless `--no-prelude` is used.
+
+Visibility is enforced for functions, types/variants, interfaces, error sets,
+and child modules. Fields and variant arms follow their containing type. v0.1
+currently exposes extern declarations, keeps module globals private, and does
+not consistently enforce method visibility or support public `use` re-exports.
 
 ## 16. Foreign and systems ABI
 
@@ -285,8 +299,10 @@ target-specific.
 
 ## 17. Deliberate omissions
 
-v0.1 has no standard library, package manager, variadics, overloads, const
-generics, async, macros, cleanup/defer construct, deterministic destructors,
-public foreign GC-root API, native object backend, or freestanding runtime.
+v0.1 has a standard-library namespace and local path project dependencies, but
+no complete standard library, registry/package fetcher, version solver, or
+lockfile. It also has no variadics, overloads, const generics, async, macros,
+cleanup/defer construct, deterministic destructors, public foreign GC-root API,
+native object backend, or complete freestanding runtime.
 
 Pipeline syntax is deferred. No incomplete linear pipe form is part of v0.1.
