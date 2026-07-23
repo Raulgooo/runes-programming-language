@@ -20,6 +20,12 @@ This makes allocation behavior visible at call boundaries. It does **not** mean
 every value inside a function is dynamically allocated. Integers, arrays,
 structs, tuples, and other ordinary locals can still live inline on the stack.
 
+`alloc(size)` is the standard realm-sensitive allocation operation. It returns
+`*void`, normally cast to the required typed pointer inside `unsafe`. The same
+call selects raw, arena, or GC storage from the active realm. See the
+[complete `alloc()` reference](../reference/allocation.md) and the
+[executable realm examples](../examples/README.md#memory-realm-examples).
+
 ## The realms
 
 | Function form | `alloc` destination | Typical lifetime/cleanup |

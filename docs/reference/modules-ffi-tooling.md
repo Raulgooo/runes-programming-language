@@ -189,6 +189,10 @@ are the programmer's responsibility.
 `print` inserts no separators. `str` values are length-aware. Aggregates and
 closures are not printable directly.
 
+`alloc(size)` is a compiler-recognized prelude contract rather than a lexical
+keyword. Its ownership changes with the active realm; see the dedicated
+[`alloc()` reference](allocation.md).
+
 ## Default prelude contracts
 
 The default prelude currently declares:

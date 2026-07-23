@@ -1,0 +1,17 @@
+-- EXPECT OUTPUT: 42
+type Pair = {
+    left: i32
+    right: i32
+}
+
+-- A stack function uses inline locals and borrowed data. Direct alloc() calls
+-- are forbidden, so there is no owning allocation to release.
+stack f stack_total() = result: i32 {
+    Pair pair = Pair(left: 20, right: 22)
+    [2]i32 values = [pair.left, pair.right]
+    result = values[0] + values[1]
+}
+
+f main() {
+    print(stack_total())
+}

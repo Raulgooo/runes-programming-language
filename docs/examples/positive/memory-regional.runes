@@ -1,0 +1,23 @@
+-- EXPECT OUTPUT: 42
+
+-- A nested regional call receives a child arena. Its allocation remains alive
+-- for the parent regional call, so the pointer can be used by regional_total().
+regional f regional_child(value: i32) = result: *i32 {
+    unsafe {
+        result = alloc(sizeof(i32)) as *i32
+        *result = value
+    }
+}
+
+regional f regional_total() = result: i32 {
+    *i32 left = regional_child(20)
+    *i32 right = regional_child(22)
+    unsafe { result = *left + *right }
+
+    -- No raw_free(): both child arenas are destroyed with the outer regional
+    -- tree after this inline result has been copied out.
+}
+
+f main() {
+    print(regional_total())
+}

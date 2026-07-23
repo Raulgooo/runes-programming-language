@@ -4,6 +4,9 @@ Runes attaches an allocation realm to each function and tracks the provenance
 of reference-bearing values. The goal is to make allocation policy visible at
 call boundaries while rejecting references that outlive their storage.
 
+For the complete operation-level reference, see
+[`alloc()` and allocation](allocation.md).
+
 ## Memory realms
 
 | Function form | Realm | `alloc` behavior | Cleanup model |
@@ -18,6 +21,19 @@ call boundaries while rejecting references that outlive their storage.
 The qualifier controls owning allocation and legal calls. It does not force all
 ordinary locals into that storage: primitives and inline aggregates can remain
 ordinary automatic values.
+
+Executable comparisons are available in
+[`docs/examples/positive`](../examples/positive/):
+
+- [`memory-stack.runes`](../examples/positive/memory-stack.runes);
+- [`memory-dynamic.runes`](../examples/positive/memory-dynamic.runes);
+- [`memory-regional.runes`](../examples/positive/memory-regional.runes);
+- [`memory-gc.runes`](../examples/positive/memory-gc.runes);
+- [`memory-flex.runes`](../examples/positive/memory-flex.runes).
+
+The corresponding
+[`stack-alloc.runes`](../examples/negative/stack-alloc.runes) example records
+the compile-time rejection of a direct stack-realm allocation.
 
 ### Call matrix
 

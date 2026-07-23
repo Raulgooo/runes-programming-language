@@ -1,0 +1,9 @@
+-- EXPECT FAIL: alloc is not available in a stack function
+stack f invalid_stack_allocation() = result: *i32 {
+    unsafe {
+        result = alloc(sizeof(i32)) as *i32
+        *result = 42
+    }
+}
+
+f main() {}

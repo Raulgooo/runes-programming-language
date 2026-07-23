@@ -1,0 +1,23 @@
+-- EXPECT OUTPUT: 42
+type Box = { value: i32 }
+
+-- In a dynamic function, alloc() returns raw-owned storage. The program must
+-- eventually pass that allocation to raw_free().
+dynamic f make_box(value: i32) = result: *Box {
+    unsafe {
+        result = alloc(sizeof(Box)) as *Box
+        result.value = value
+    }
+}
+
+dynamic f dynamic_total() = result: i32 {
+    *Box box = make_box(42)
+    unsafe {
+        result = box.value
+        raw_free(box as *void)
+    }
+}
+
+f main() {
+    print(dynamic_total())
+}

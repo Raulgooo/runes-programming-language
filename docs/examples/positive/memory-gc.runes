@@ -1,0 +1,29 @@
+-- EXPECT OUTPUT: 42 0
+type Node = {
+    value: i32
+    next: ?*Node
+}
+
+-- alloc() creates traced objects in a GC function. Live locals and graph edges
+-- are roots; raw_free() must not be used for these objects.
+gc f gc_total() = result: i32 {
+    unsafe {
+        *Node root = alloc(sizeof(Node)) as *Node
+        *Node child = alloc(sizeof(Node)) as *Node
+        root.value = 20
+        root.next = child
+        child.value = 22
+        child.next = null
+
+        runes_gc_collect()
+        result = root.value + unwrap(root.next).value
+    }
+}
+
+f main() {
+    i32 value = gc_total()
+
+    -- The GC frame from gc_total() is gone, so neither node remains rooted.
+    runes_gc_collect()
+    print(value, " ", runes_gc_debug_object_count())
+}

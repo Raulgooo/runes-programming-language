@@ -31,6 +31,7 @@ automatically a language guarantee.
 |---|---|
 | Tokens, literals, grammar, declarations, expressions, statements, patterns | [Syntax](syntax.md) |
 | Types, conversions, evaluation, functions, aggregates, generics, errors | [Semantics](semantics.md) |
+| `alloc()`, ownership, cleanup, and raw-allocation differences | [Allocation](allocation.md) |
 | Realms, allocation, lifetimes, promotion, GC, pointers, and unsafe operations | [Memory and unsafe](memory-and-unsafe.md) |
 | Modules, projects, visibility, FFI, ABI attributes, builtins, and commands | [Modules, FFI, and tooling](modules-ffi-tooling.md) |
 | Supported, partial, unsupported, and platform-dependent behavior | [Implementation status](implementation-status.md) |

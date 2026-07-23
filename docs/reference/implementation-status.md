@@ -113,6 +113,32 @@ effects in separate statements instead of depending on host C evaluation order.
   file icons;
 - diagnostics are compiler-oriented and do not yet have stable error codes.
 
+## Deferred import ergonomics
+
+The current `use module.member` form can import one public function, type,
+interface, error set, or child module after its root module is present in the
+module graph. It has no alias, grouped-import, or public re-export syntax, and
+`use` does not independently load an arbitrary filesystem module.
+
+Future language-design work should evaluate, without committing v0.1 to a
+specific syntax:
+
+- import aliases for resolving collisions and shortening qualified names;
+- grouped imports from one module;
+- explicit public re-exports for package façade modules;
+- allowing `use` to resolve/load a module without a separate `mod`
+  declaration, while preserving deterministic module identity and ambiguity
+  diagnostics.
+
+Methods should remain receiver-based rather than independently importable.
+Importing `Type.method` as a free function would blur method and function
+lookup, complicate generic/interface dispatch, and create avoidable name
+collisions. Users should import the owning type or interface and invoke the
+method through its receiver.
+
+This is a design note only. No parser, resolver, or visibility behavior is
+scheduled or changed by this entry.
+
 ## Status discipline
 
 When an implementation restriction changes, update this page, the normative
