@@ -4,6 +4,9 @@ Status: design and implementation roadmap. None of the modules described here
 are part of the compiler-required runtime unless explicitly identified in
 `v0.1-runtime-requirements.md`.
 
+For the concrete starting sequence, module layout, initial APIs, and acceptance
+gates, see the [standard-library implementation plan](implementation-plan.md).
+
 The objective is an ergonomic library ecosystem capable of supporting compiler
 bootstrapping, command-line tools, servers, desktop applications, games,
 graphics, numerical computing, and machine learning without hiding Runes'
@@ -660,7 +663,8 @@ Maximum ergonomics eventually requires more than APIs:
 
 The v0.1 bootstrap already provides a strict `runes.toml`, project entry
 discovery, multiple module roots, an installed `std` search path, and named
-local path dependencies. See [projects-and-modules.md](projects-and-modules.md).
+local path dependencies. See
+[projects-and-modules.md](../../projects-and-modules.md).
 The remaining package work includes:
 
 - lockfiles and a versioned expansion of the current package manifest;

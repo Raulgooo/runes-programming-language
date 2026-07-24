@@ -7,7 +7,21 @@ module.exports = grammar({
   extras: ($) => [/\s/],
 
   rules: {
-    source_file: ($) => repeat($._token),
+    // Keep delimiter structure even when the full compiler grammar evolves.
+    // Zed uses these nodes for nesting, indentation, and rainbow brackets.
+    source_file: ($) => repeat($._item),
+
+    _item: ($) =>
+      choice(
+        $.block,
+        $.parenthesized,
+        $.bracketed,
+        $._token,
+      ),
+
+    block: ($) => seq("{", repeat($._item), "}"),
+    parenthesized: ($) => seq("(", repeat($._item), ")"),
+    bracketed: ($) => seq("[", repeat($._item), "]"),
 
     _token: ($) =>
       choice(
@@ -61,6 +75,6 @@ module.exports = grammar({
       choice("..=", "..", "->", "<<", ">>", "==", "!=", "<=", ">=", ":=",
              "+", "-", "*", "/", "%", "=", "<", ">", "!", "?", "&", "|",
              "^", "~"),
-    punctuation: (_) => choice("(", ")", "[", "]", "{", "}", ",", ":", ".", ";"),
+    punctuation: (_) => choice(",", ":", ".", ";"),
   },
 });

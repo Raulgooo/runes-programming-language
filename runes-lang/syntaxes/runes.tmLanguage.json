@@ -9,6 +9,7 @@
     { "include": "#attributes" },
     { "include": "#keywords" },
     { "include": "#types" },
+    { "include": "#symbols" },
     { "include": "#numbers" },
     { "include": "#punctuation" },
     { "include": "#logic" }
@@ -88,6 +89,39 @@
         {
           "name": "storage.type.primitive.runes",
           "match": "\\b(i8|i16|i32|i64|u8|u16|u32|u64|f32|f64|bool|str|char|usize|void)\\b"
+        }
+      ]
+    },
+    "symbols": {
+      "patterns": [
+        {
+          "match": "\\b(f)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.runes" },
+            "2": { "name": "entity.name.function.runes" }
+          }
+        },
+        {
+          "match": "\\b(type|interface|error)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.type.runes" },
+            "2": { "name": "entity.name.type.runes" }
+          }
+        },
+        {
+          "match": "\\b(mod)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.module.runes" },
+            "2": { "name": "entity.name.namespace.runes" }
+          }
+        },
+        {
+          "name": "support.type.runes",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        },
+        {
+          "name": "entity.name.function.call.runes",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
         }
       ]
     },

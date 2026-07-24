@@ -108,9 +108,12 @@ effects in separate statements instead of depending on host C evaluation order.
 
 - no package registry, remote fetching, semantic-version solver, or lockfile;
 - no build scripts;
-- no language server with semantic completion/refactoring in this repository;
-- editor integrations currently focus on syntax, highlighting, brackets, and
-  file icons;
+- the initial AST-backed language server supports parser diagnostics, document
+  symbols, same-document hover/definition, and language completions, but not
+  resolver/type diagnostics, cross-file navigation, references, rename,
+  semantic tokens, or formatting;
+- editor integrations support syntax highlighting, nested indentation, bracket
+  metadata, file icons, and LSP startup;
 - diagnostics are compiler-oriented and do not yet have stable error codes.
 
 ## Deferred import ergonomics

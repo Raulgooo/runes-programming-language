@@ -1,4 +1,10 @@
+
 f main() {
-str name = input("What's your name?")
-print("hello", name)
+[5]i8 values = [1,2,3,4,5]
+for (values) |value| {
+if value == 2 {
+values[value] = 4
+}
+print(value)
+}
 }

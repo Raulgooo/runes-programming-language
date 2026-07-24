@@ -40,7 +40,7 @@ The core bet: **memory strategy belongs to the function, not the data**. You pic
 
 ```bash
 # Requires: gcc, make
-make          # builds ./runes
+make          # builds ./runes and ./runes-lsp
 make test     # focused unit, core semantics, and C bootstrap tests
 make test-samples # full integration inventory, including known failures
 make test-codegen # emit strict C for the executable core inventory
@@ -60,7 +60,7 @@ For exhaustive syntax and semantics, use the
 For manifests, module roots, and local dependencies, see
 [Projects and Modules](docs/projects-and-modules.md).
 For the planned standard library and official ecosystem surface, see
-[Standard Library and Ecosystem Roadmap](docs/stdlib-roadmap.md).
+[standard-library internal documentation](docs/internal/stdlib/README.md).
 
 ---
 

@@ -6,6 +6,10 @@
 #include "utils/arena.h"
 #include <stdbool.h>
 
+typedef void (*ParserDiagnosticHandler)(void *context, const char *filename,
+                                        uint32_t line, uint32_t column,
+                                        const char *message);
+
 typedef struct {
   Lexer *lexer;
   Arena *arena;
@@ -20,11 +24,15 @@ typedef struct {
   bool had_error;
   bool panic_mode;
   int error_count;
+  ParserDiagnosticHandler diagnostic_handler;
+  void *diagnostic_context;
 } Parser;
 
 void parser_init(Parser *p, Lexer *lexer, Arena *arena, const char *filename,
                  const char *source);
 AstNode *parser_parse(Parser *p);
 void parser_free(Parser *p);
+void parser_set_diagnostic_handler(Parser *p, ParserDiagnosticHandler handler,
+                                   void *context);
 
 #endif // RUNES_PARSER_H

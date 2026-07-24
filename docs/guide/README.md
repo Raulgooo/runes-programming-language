@@ -46,7 +46,8 @@ collections, files, networking, and text utilities.
 The handbook explains how to use the language. The normative compact rules are
 in [specv0_1.md](../specv0_1.md). Project manifest details are also collected
 in [projects-and-modules.md](../projects-and-modules.md), and future library
-work is tracked in [stdlib-roadmap.md](../stdlib-roadmap.md).
+work is tracked in the
+[standard-library internal documentation](../internal/stdlib/README.md).
 
 For exhaustive syntax and semantics, use the
 [complete language reference](../reference/README.md). Unlike this progressive

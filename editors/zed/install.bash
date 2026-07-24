@@ -41,6 +41,12 @@ wasm-ld --no-entry --shared --export=tree_sitter_runes --strip-all \
   -o "$INSTALLED/grammars/runes.wasm" "$PREFIX/tree-sitter-runes.o"
 cp "$EXTENSION/extension.toml" "$INSTALLED/extension.toml"
 cp "$EXTENSION/languages/runes/"* "$INSTALLED/languages/runes/"
+if [[ "${RUNES_ZED_SKIP_LSP_BUILD:-0}" != "1" ]]; then
+  cargo component build --quiet --release \
+    --manifest-path "$ROOT/editors/zed/Cargo.toml"
+  cp "$ROOT/editors/zed/target/wasm32-wasip1/release/runes_zed.wasm" \
+    "$INSTALLED/extension.wasm"
+fi
 
 mkdir -p "$(dirname "$INDEX")"
 if [[ ! -f "$INDEX" ]]; then
@@ -52,24 +58,35 @@ jq --arg repository "file://$GRAMMAR" --arg rev "$rev" '
     manifest: {
       id: "runes",
       name: "Runes",
-      version: "0.1.0",
+      version: "0.1.3",
       schema_version: 1,
       description: "Runes language syntax highlighting",
       repository: "https://github.com/Raulgooo/runes-programming-language",
       authors: ["Runes contributors"],
+      lib: {
+        kind: "Rust",
+        version: null
+      },
       themes: [],
       icon_themes: [],
       languages: ["languages/runes"],
       grammars: {
         runes: {repository: $repository, rev: $rev, path: null}
       },
-      language_servers: {},
+      language_servers: {
+        "runes-lsp": {
+          language: null,
+          languages: ["Runes"],
+          language_ids: {},
+          code_action_kinds: null
+        }
+      },
       context_servers: {},
       slash_commands: {},
       snippets: null,
       capabilities: []
     },
-    dev: true
+    dev: false
   }
 ' "$INDEX" > "$index_temp"
 mv "$index_temp" "$INDEX"

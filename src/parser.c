@@ -121,8 +121,14 @@ static void parser_error(Parser *p, const char *msg) {
   if (p->panic_mode)
     return;
   p->panic_mode = true;
-  fprintf(stderr, "[Error] %s:%d:%d: %s\n", p->filename, p->current.line,
-          p->current.column, msg);
+  if (p->diagnostic_handler) {
+    p->diagnostic_handler(p->diagnostic_context, p->filename,
+                          (uint32_t)p->current.line,
+                          (uint32_t)p->current.column, msg);
+  } else {
+    fprintf(stderr, "[Error] %s:%d:%d: %s\n", p->filename, p->current.line,
+            p->current.column, msg);
+  }
   p->had_error = true;
   p->error_count++;
 }
@@ -218,9 +224,17 @@ void parser_init(Parser *p, Lexer *lexer, Arena *arena, const char *filename,
   p->prev_line = 1;
   p->soft_delimiter_depth = 0;
   p->declaration_depth = 0;
+  p->diagnostic_handler = NULL;
+  p->diagnostic_context = NULL;
 }
 
 void parser_free(Parser *p) { (void)p; }
+
+void parser_set_diagnostic_handler(Parser *p, ParserDiagnosticHandler handler,
+                                   void *context) {
+  p->diagnostic_handler = handler;
+  p->diagnostic_context = context;
+}
 
 // ── Type expressions
 // ──────────────────────────────────────────────────────────

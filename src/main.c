@@ -515,6 +515,16 @@ static bool append_unique_module_path(char **paths, size_t *count,
   return true;
 }
 
+static bool path_is_within_directory(const char *path, const char *directory) {
+  if (!path || !directory)
+    return false;
+  size_t directory_length = strlen(directory);
+  while (directory_length > 1 && directory[directory_length - 1] == '/')
+    directory_length--;
+  return strncmp(path, directory, directory_length) == 0 &&
+         (path[directory_length] == '/' || path[directory_length] == '\0');
+}
+
 static bool append_program_declarations(AstNode **program,
                                         AstNode ***next_declaration,
                                         AstNode *addition) {
@@ -763,6 +773,23 @@ int main(int argc, char **argv) {
     free(canonical_standard);
   }
 
+  /*
+   * Load the standard namespace before explicit inputs. A source file beneath
+   * the stdlib root may also be named directly on the command line while
+   * developing the library. Loading the input first and then reusing its AST
+   * inside `std` would let append_program_declarations splice the same linked
+   * declaration list into two parents, creating a cycle.
+   */
+  if (inject_std_namespace) {
+    AstNode *standard =
+        load_named_root_module(&loader, &arena, "std", stdlib_root);
+    if (!standard ||
+        !append_program_declarations(&program, &next_decl, standard)) {
+      had_error = true;
+      goto cleanup;
+    }
+  }
+
   for (int i = 0; i < config.file_count; i++) {
     char *canonical = realpath(config.filenames[i], NULL);
     if (!canonical) {
@@ -771,6 +798,16 @@ int main(int argc, char **argv) {
       goto cleanup;
     }
     if (source_loader_index(&loader, canonical) >= 0) {
+      if (inject_std_namespace &&
+          path_is_within_directory(canonical, stdlib_root)) {
+        /*
+         * The file is already reachable through std/mod.runes. Analyze that
+         * single AST instance in its module context; do not append its
+         * declarations again at the program root.
+         */
+        free(canonical);
+        continue;
+      }
       fprintf(stderr, "Source file loaded more than once: %s\n", canonical);
       free(canonical);
       had_error = true;
@@ -798,15 +835,6 @@ int main(int argc, char **argv) {
     }
   }
 
-  if (inject_std_namespace) {
-    AstNode *standard =
-        load_named_root_module(&loader, &arena, "std", stdlib_root);
-    if (!standard ||
-        !append_program_declarations(&program, &next_decl, standard)) {
-      had_error = true;
-      goto cleanup;
-    }
-  }
   for (size_t i = 0; i < project.dependency_count; i++) {
     AstNode *dependency =
         load_named_root_module(&loader, &arena, project.dependency_names[i],

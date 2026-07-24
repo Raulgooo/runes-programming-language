@@ -1,0 +1,12 @@
+pub type Maybe<T> =
+    | None
+    | Some(T)
+
+method Maybe<T> {
+    f is_some(self) = result: bool {
+        result = match self {
+            Some(_) -> true,
+            None -> false,
+        }
+    }
+}

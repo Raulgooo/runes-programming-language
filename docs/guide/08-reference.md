@@ -248,7 +248,7 @@ true try type u8 u16 u32 u64 unsafe use usize void volatile while
 - [Compact language specification](../specv0_1.md)
 - [Project and manifest reference](../projects-and-modules.md)
 - [Runtime implementation requirements](../v0.1-runtime-requirements.md)
-- [Standard-library roadmap](../stdlib-roadmap.md)
+- [Standard-library internal documentation](../internal/stdlib/README.md)
 - [Locked hardening decisions](../hardening-decisions.md)
 
 [Back to the handbook index](README.md)

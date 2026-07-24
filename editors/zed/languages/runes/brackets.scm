@@ -1,3 +1,3 @@
-("(" @open ")" @close)
-("[" @open "]" @close)
-("{" @open "}" @close)
+(parenthesized "(" @open ")" @close)
+(bracketed "[" @open "]" @close)
+(block "{" @open "}" @close)

@@ -29,7 +29,7 @@ The recommended reading order is:
 | Read the exhaustive syntax and semantics reference | [Complete reference](reference/README.md) |
 | Configure a `runes.toml` project | [Projects and modules](projects-and-modules.md) |
 | Implement compiler-required C runtime support | [Runtime requirements](v0.1-runtime-requirements.md) |
-| Build the future standard library | [Standard-library roadmap](stdlib-roadmap.md) |
+| Build the future standard library | [Stdlib internal documentation](internal/stdlib/README.md) |
 | Read compact normative v0.1 rules | [Language specification](specv0_1.md) |
 | Review locked design decisions | [Hardening decisions](hardening-decisions.md) |
 

@@ -1,0 +1,7 @@
+pub type Maybe<T> =
+    | None
+    | Some(T)
+
+f broken() {
+    missing = 1
+}

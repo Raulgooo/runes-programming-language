@@ -17,6 +17,8 @@ tested on Linux x86-64 with GCC and Clang.
 | Read the normative language rules | [Runes v0.1 specification](specv0_1.md) |
 | Configure modules and a `runes.toml` project | [Projects and modules](projects-and-modules.md) |
 | Understand what is implemented or incomplete | [Implementation status](reference/implementation-status.md) |
+| Configure editor support and the language server | [Editor support and LSP](tooling/language-server.md) |
+| Work on the internal standard-library design | [Stdlib internal documentation](internal/stdlib/README.md) |
 
 The [language guide entry point](language-guide.md) also explains which
 documentation layer to use for different tasks.
@@ -76,7 +78,9 @@ make test-docs
 | [Runes v0.1 specification](specv0_1.md) | Normative language behavior |
 | [Hardening decisions](hardening-decisions.md) | Locked implementation and design decisions |
 | [Runtime requirements](v0.1-runtime-requirements.md) | C runtime ABI and behavior required by generated programs |
-| [Standard-library roadmap](stdlib-roadmap.md) | Planned library and ecosystem surface |
+| [Stdlib internal documentation](internal/stdlib/README.md) | Building guide, implementation plan, and long-term roadmap |
+| [Freestanding runtime plan](internal/runtime/README.md) | Internal allocation decoupling, freestanding C, migration, and testing plan |
+| [Internal language-design notes](internal/language-design/README.md) | Open compiler, ABI, value-passing, and pointer-design questions |
 | [Projects and modules](projects-and-modules.md) | Manifest and module-loading details |
 
 The specification defines what the language promises. Current bootstrap gaps

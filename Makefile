@@ -4,8 +4,10 @@ CFLAGS = -Isrc -std=c11 -Wall -Wextra -g
 CORE_SRCS = src/lexer.c src/parser.c src/ast.c src/monomorphize.c src/project.c src/utils/arena.c src/utils/strtab.c src/tools/ast_print.c src/symbol_table.c src/resolver.c src/types.c src/typecheck.c src/codegen.c
 MAIN_SRC = src/main.c
 TARGET = runes
+LSP_TARGET = runes-lsp
+LSP_SRCS = src/lsp/main.c src/lexer.c src/parser.c src/ast.c src/utils/arena.c src/utils/strtab.c
 
-all: $(TARGET)
+all: $(TARGET) $(LSP_TARGET)
 
 guide:
 	@printf '%s\n' 'See docs/language-guide.md'
@@ -16,6 +18,9 @@ install-zed:
 
 $(TARGET): $(CORE_SRCS) $(MAIN_SRC)
 	$(CC) $(CFLAGS) $(CORE_SRCS) $(MAIN_SRC) -o $(TARGET)
+
+$(LSP_TARGET): $(LSP_SRCS)
+	$(CC) $(CFLAGS) $(LSP_SRCS) -o $(LSP_TARGET)
 
 LEXER_TEST = /tmp/runes_lexer_test
 PARSER_TEST = /tmp/runes_parser_test
@@ -33,6 +38,9 @@ test-unit: $(TARGET)
 	$(LEXER_TEST)
 	$(CC) $(CFLAGS) src/tests/parser_test.c src/lexer.c src/parser.c src/ast.c src/utils/arena.c src/utils/strtab.c -o $(PARSER_TEST)
 	$(PARSER_TEST)
+
+test-lsp: $(LSP_TARGET)
+	python3 src/tests/lsp_test.py ./$(LSP_TARGET)
 
 test-core: $(TARGET)
 	./$(TARGET) src/tests/samples/core_print_builtin.runes --emit-c /tmp/runes_core_print.c
@@ -86,6 +94,11 @@ test-core: $(TARGET)
 	./$(TARGET) src/tests/module_fixtures/directory/main.runes --emit-c /tmp/runes_core_modules_directory.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_modules_directory.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_modules_directory
 	@test "$$(/tmp/runes_core_modules_directory)" = "42"
+	./$(TARGET) --stdlib src/tests/module_fixtures/direct_std src/tests/module_fixtures/direct_std/core.runes
+	@if ./$(TARGET) --stdlib src/tests/module_fixtures/direct_std_invalid src/tests/module_fixtures/direct_std_invalid/broken.runes >/tmp/runes_direct_std_invalid.out 2>&1; then \
+		echo 'expected invalid directly compiled stdlib module to fail'; exit 1; \
+	fi
+	@grep -Fq "undefined identifier 'missing'" /tmp/runes_direct_std_invalid.out
 	@if ./$(TARGET) src/tests/module_fixtures/ambiguous/main.runes >/tmp/runes_module_ambiguous.out 2>&1; then \
 		echo 'expected ambiguous filesystem module to fail'; exit 1; \
 	fi
@@ -333,7 +346,7 @@ test-tooling: $(TARGET)
 test-zed:
 	bash editors/zed/test.bash
 
-test: test-unit test-core test-tooling test-docs test-codegen-scale test-differential
+test: test-unit test-core test-tooling test-docs test-codegen-scale test-differential test-lsp
 
 test-docs: $(TARGET)
 	bash docs/test.bash
@@ -421,7 +434,7 @@ fuzz: fuzz-build
 	$(FUZZ_FRONTEND) -max_len=65536 -timeout=5 src/tests/fuzz_corpus
 
 clean:
-	rm -f $(TARGET) lexer_test.exe *.o
+	rm -f $(TARGET) $(LSP_TARGET) lexer_test.exe *.o
 
 debug: CFLAGS += -DDEBUG
 debug: $(TARGET)

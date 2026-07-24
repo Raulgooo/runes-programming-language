@@ -1,0 +1,42 @@
+--- Core Runes Library, written by the god himself, Raul R. Gzz (AKA New Terry Davis)
+leaving this shit here so y'all know I'm god (jk),
+this library might contain working but horrible code so lfg!
+---
+
+pub type Option<T> =
+    | None
+    | Some(T)
+
+
+error UnwrapError = {
+    | NoValueError
+    | NoValueError2
+}
+-- Current methods copy full data, performance wise it would be better to just carry a reference,
+-- System ergonomy not fully ready to allow me to safely point to og data for this. I'll fix it later
+method Option<T> {
+    f is_some(self) = result:bool {
+        result = match self {
+            Some(_) -> true,
+            None -> false,
+        }
+    }
+    f is_none(self) = result:bool {
+        result = match self {
+            Some(_) -> false,
+            None -> true,
+        }
+    }
+    f unwrap_or(self, fallback: T) = result: T {
+        result = match self {
+            Some(value) -> value,
+            None -> fallback,
+        }
+    }
+    f unwrap(self) = result: !T {
+        result = match self {
+            Some(value) -> value,
+            None -> error.UnwrapError.NoValueError,
+        }
+    }
+}

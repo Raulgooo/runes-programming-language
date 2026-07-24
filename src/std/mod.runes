@@ -3,3 +3,4 @@
 
 pub mod core
 pub mod os
+pub mod bytes

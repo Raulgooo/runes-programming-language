@@ -1,0 +1,26 @@
+[4056]u8 buffer
+---
+Easy no allocation operations
+please keep it simple
+---
+
+f fill(buffer: []i8, value: i8) {
+    for (buffer) |actual| {
+        buffer[actual] = value
+    }
+}
+error CopyError = {
+    | DestinationTooSmall
+}
+f copy(destination: []u8, source: []u8) = result:!void {
+    if (destination.len >= source) {
+        for (destination) |active| {
+            destination[actual] = source[actual]
+        }
+    }
+    else {
+        result = error.CopyError.DestinationTooSmall
+
+    }
+
+}

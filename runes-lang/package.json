@@ -3,8 +3,13 @@
   "displayName": "Runes",
   "description": "Runes programming language support",
   "version": "0.0.1",
+  "main": "./extension.js",
   "engines": { "vscode": "^1.60.0" },
   "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:runes"],
+  "dependencies": {
+    "vscode-languageclient": "^7.0.0"
+  },
   "contributes": {
     "languages": [{
       "id": "runes",
@@ -16,6 +21,22 @@
       "language": "runes",
       "scopeName": "source.runes",
       "path": "./syntaxes/runes.tmLanguage.json"
-    }]
+    }],
+    "configurationDefaults": {
+      "[runes]": {
+        "editor.bracketPairColorization.enabled": true,
+        "editor.guides.bracketPairs": "active"
+      }
+    },
+    "configuration": {
+      "title": "Runes",
+      "properties": {
+        "runes.languageServer.path": {
+          "type": "string",
+          "default": "runes-lsp",
+          "description": "Path to the runes-lsp executable."
+        }
+      }
+    }
   }
 }
