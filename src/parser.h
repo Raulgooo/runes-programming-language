@@ -19,6 +19,7 @@ typedef struct {
   uint32_t prev_line;
   unsigned soft_delimiter_depth;
   unsigned declaration_depth;
+  unsigned function_depth;
   const char *filename;
   const char *source;
   bool had_error;

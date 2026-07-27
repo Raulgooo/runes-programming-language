@@ -1,0 +1,41 @@
+mod linux_values {
+    pub f value() = result: i32 {
+        result = 10
+    }
+}
+
+mod runes_values {
+    pub f value() = result: i32 {
+        result = 20
+    }
+}
+
+#[cfg(target_os = "linux")]
+use linux_values.value as target_value
+
+#[cfg(target_os = "runes")]
+use runes_values.value as target_value
+
+#[cfg(all(target_arch = "x86_64", hosted))]
+f profile() = result: i32 {
+    result = 1
+}
+
+#[cfg(any(freestanding, target_env = "none"))]
+f profile() = result: i32 {
+    result = 2
+}
+
+#[cfg(not(target_os = "linux"))]
+f not_linux() = result: bool {
+    result = true
+}
+
+#[cfg(target_os = "linux")]
+f not_linux() = result: bool {
+    result = false
+}
+
+f main() {
+    print(target_value(), " ", profile(), " ", not_linux())
+}

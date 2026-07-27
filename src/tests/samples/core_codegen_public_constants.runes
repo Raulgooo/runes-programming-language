@@ -1,0 +1,11 @@
+mod values {
+    pub const i32 ANSWER = 42
+    pub const u64 MASK = 0xFF
+}
+
+use values.ANSWER as imported_answer
+use values.MASK
+
+f main() {
+    print(values.ANSWER, " ", imported_answer, " ", MASK)
+}

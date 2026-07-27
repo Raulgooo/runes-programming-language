@@ -1,0 +1,4 @@
+-- EXPECT FAIL: public constants are only allowed at module scope
+f main() {
+    pub const i32 LOCAL = 1
+}

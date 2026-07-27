@@ -1,0 +1,11 @@
+-- EXPECT FAIL: could not resolve module path
+
+mod values {
+    f hidden() = result: i32 {
+        result = 42
+    }
+}
+
+use values.hidden as exposed
+
+f main() {}

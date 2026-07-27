@@ -68,7 +68,7 @@
         },
         {
           "name": "keyword.control.runes",
-          "match": "\\b(if|else|while|loop|break|continue|return|match|for|try|catch)\\b"
+          "match": "\\b(if|else|while|loop|break|continue|return|defer|match|for|try|catch)\\b"
         },
         {
           "name": "keyword.other.systems.runes",

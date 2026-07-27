@@ -32,9 +32,31 @@ math.double(21)
 domain.Box<i32>
 ```
 
-`use path.member` imports the final public member into the current scope. The
-root namespace must already exist through `mod`, `std`, or a manifest
-dependency. There are no aliases, wildcard imports, or public re-exports.
+`use path.member` imports the final public member into the current scope.
+`as` selects a different local name:
+
+```runes
+use std.core.Option as Maybe
+use std.bytes.find as find_byte
+use std.bytes as byte_ops
+```
+
+Aliases work for modules, functions, generic and non-generic types,
+interfaces, and error sets. An alias changes only the local source name; it
+does not create a new declaration, type identity, generic specialization, or
+ABI symbol.
+
+The root namespace must already exist through `mod`, `std`, or a manifest
+dependency. Imports do not independently load files. An import name that
+collides with a local declaration or another import is an error rather than a
+shadowing rule.
+
+Imports are module-scope declarations; they are not permitted inside function
+bodies.
+
+Grouped imports, wildcard imports, and public re-exports are unavailable.
+`pub use` is rejected. Methods are invoked through their receiver and cannot
+be imported as independent functions.
 
 ## Visibility
 
@@ -50,9 +72,10 @@ Declarations inside a module are private unless their declaration kind accepts
 | Child module | `pub mod name` | Enforced |
 | Fields/variant arms | no independent marker | Follow accessible containing type |
 | Extern function/variable | no private form | Exposed; known gap |
-| Module global | no working public form | Private; known gap |
+| Module constant | `pub const T NAME = value` | Enforced |
+| Mutable module global | no public form | Private |
 | Method | marker parsed | Enforcement incomplete |
-| `use` | no public form | Private import only |
+| `use` | no public form | Module-scope private import only |
 
 Every module segment crossed from another module must be public. Visibility
 does not relax type, unsafe, realm, or lifetime rules.
@@ -65,6 +88,7 @@ A project uses a strict `runes.toml`:
 [project]
 name = "server"
 entry = "src/main.runes"
+target = "x86_64-unknown-linux-gnu"
 
 [modules]
 roots = ["src", "modules"]
@@ -75,7 +99,8 @@ logging = "../logging/src"
 ```
 
 `[project]` requires `name` and `entry`. The default module root is `src` when
-`[modules]` is absent. Unknown sections and fields are errors. Manifest paths
+`[modules]` is absent. `target` is optional and is overridden by a CLI
+`--target`. Unknown sections and fields are errors. Manifest paths
 are relative to the manifest, and the driver discovers the nearest manifest by
 walking upward unless `--project` selects one explicitly.
 
@@ -150,11 +175,18 @@ Runes `str` is a pointer/length pair, not `char *`; conversion must be explicit.
 | `#[packed]` | struct | Packed C backend layout |
 | `#[repr(C)]` | struct | C field-order/layout policy |
 | `#[interrupt]` | Runes/extern function | Requires no parameters/result; C emission rejected |
+| `#[cfg(predicate)]` | any declaration | Removes a false declaration before module loading and resolution |
 
 Unknown, duplicate, malformed, and inapplicable attributes are errors. String
 arguments must be nonempty and contain no NUL. `#[interrupt]` is intentionally
 partial: its signature is checked, but an external assembly entry stub is
 required because the v0.1 C backend refuses to emit it.
+
+`#[cfg]` accepts `target_arch`, `target_os`, and `target_env` string
+comparisons; bare `hosted` and `freestanding`; and `all(...)`, `any(...)`, and
+`not(...)`. Supported exact target triples are
+`x86_64-unknown-linux-gnu`, `x86_64-unknown-linux-none`, and
+`x86_64-unknown-runes-none`.
 
 ## Inline assembly
 
@@ -227,10 +259,19 @@ runec project [OPTIONS]
 - `run`: build a temporary executable and pass arguments following `--`.
 - `project`: print resolved manifest, paths, prelude state, and dependencies.
 
-Shared options are `--project`, repeated `--module-path`, `--stdlib`,
+Shared options are `--project`, repeated `--module-path`, `--stdlib`, `--target`,
 `--prelude`, and `--no-prelude`. `-o`/`--output` applies to emitted C or the
 built program. Environment variables are `CC`, `CFLAGS`, `RUNES_PATH`, and
 `RUNES_STDLIB`.
 
 The lower-level compiler supports `--lex-only`, `--parse-only`, `--dump-ast`,
-`--emit-c FILE`, the project/module options, and `--project-info`.
+`--emit-c FILE`, the project/module options, `--target-info`, and
+`--project-info`.
+
+The standard namespace materializes top-level child modules from actual
+`std.<child>` references, then the compiler performs whole-program
+reachability before C emission. Unused function bodies and foreign
+declarations are omitted, so an application that does not call the Linux
+backend neither parses unrelated top-level std modules nor acquires a syscall
+bridge reference. Explicit project `mod` declarations and dependency roots
+retain eager semantic checking; `use` is not a general filesystem import.

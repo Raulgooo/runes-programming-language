@@ -37,7 +37,7 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub);
 static AstNode *parse_interface_decl(Parser *p, bool is_pub);
 static AstNode *parse_error_decl(Parser *p, bool is_pub);
 static AstNode *parse_mod_decl(Parser *p, bool is_pub);
-static AstNode *parse_use_decl(Parser *p);
+static AstNode *parse_use_decl(Parser *p, bool is_pub);
 static AstNode *parse_extern_decl(Parser *p, Attr *attrs);
 static AstNode *parse_param_list(Parser *p);
 static AstNode *parse_param(Parser *p);
@@ -224,6 +224,7 @@ void parser_init(Parser *p, Lexer *lexer, Arena *arena, const char *filename,
   p->prev_line = 1;
   p->soft_delimiter_depth = 0;
   p->declaration_depth = 0;
+  p->function_depth = 0;
   p->diagnostic_handler = NULL;
   p->diagnostic_context = NULL;
 }
@@ -292,11 +293,13 @@ static AstNode *parse_type_expr(Parser *p) {
     expect(p, TOKEN_STAR, "expected '*' after '?' in nullable pointer type");
     if (p->panic_mode)
       return NULL;
+    bool readonly = match(p, TOKEN_CONST);
     AstNode *inner = parse_type_expr(p);
     if (!inner)
       return NULL;
     AstNode *n = ast_new_type_ptr(p->arena, inner);
     n->as.type_expr.nullable = true;
+    n->as.type_expr.readonly = readonly;
     n->line = T.line;
     n->col = T.column;
     return n;
@@ -304,10 +307,12 @@ static AstNode *parse_type_expr(Parser *p) {
 
   // pointer: *T
   if (match(p, TOKEN_STAR)) {
+    bool readonly = match(p, TOKEN_CONST);
     AstNode *inner = parse_type_expr(p);
     if (!inner)
       return NULL;
     AstNode *n = ast_new_type_ptr(p->arena, inner);
+    n->as.type_expr.readonly = readonly;
     n->line = T.line;
     n->col = T.column;
     return n;
@@ -531,7 +536,9 @@ static AstNode *parse_func_decl(Parser *p, bool is_pub, MemoryRealm realm,
   AstNode *body = NULL;
   if (body_allowed && check(p, TOKEN_LBRACE)) {
     p->declaration_depth++;
+    p->function_depth++;
     body = parse_block(p);
+    p->function_depth--;
     p->declaration_depth--;
     if (!body)
       return NULL;
@@ -980,8 +987,16 @@ static AstNode *parse_mod_decl(Parser *p, bool is_pub) {
 }
 
 // Spec §14: use kernel.arch.x86.read_cr3
-static AstNode *parse_use_decl(Parser *p) {
+static AstNode *parse_use_decl(Parser *p, bool is_pub) {
   Token u = advance(p); // consume 'use'
+  if (p->function_depth > 0) {
+    parser_error(p, "use declarations are only allowed at module scope");
+    return NULL;
+  }
+  if (is_pub) {
+    parser_error(p, "'pub use' is not implemented; imports are private");
+    return NULL;
+  }
   // path: ident.ident.ident...
   AstNode *head = NULL, *tail = NULL;
   do {
@@ -999,7 +1014,16 @@ static AstNode *parse_use_decl(Parser *p) {
     }
   } while (match(p, TOKEN_DOT));
 
-  AstNode *n = ast_new_use_decl(p->arena, head);
+  const char *alias = NULL;
+  if (match(p, TOKEN_AS)) {
+    Token alias_tok =
+        expect(p, TOKEN_IDENTIFIER, "expected import alias after 'as'");
+    if (p->panic_mode)
+      return NULL;
+    alias = alias_tok.str_val.ptr;
+  }
+
+  AstNode *n = ast_new_use_decl(p->arena, head, alias);
   n->line = u.line;
   n->col = u.column;
   return n;
@@ -1061,6 +1085,12 @@ static AstNode *parse_extern_decl(Parser *p, Attr *attrs) {
   }
 }
 
+static AstNode *attach_decl_attrs(AstNode *declaration, Attr *attrs) {
+  if (declaration)
+    declaration->decl_attrs = attrs;
+  return declaration;
+}
+
 // Top-level declaration dispatcher
 static AstNode *parse_decl(Parser *p) {
   Attr *attrs = parse_attrs(p);
@@ -1075,7 +1105,13 @@ static AstNode *parse_decl(Parser *p) {
         check(p, TOKEN_FLEX)) &&
        peek(p).kind == TOKEN_F && p->next2.kind == TOKEN_LPAREN);
   if (starts_function_type)
-    return parse_var_decl(p, false, false, attrs);
+    {
+      AstNode *declaration = parse_var_decl(p, false, false, attrs);
+      if (is_pub && declaration) {
+        parser_error(p, "only const module globals can be public");
+      }
+      return attach_decl_attrs(declaration, attrs);
+    }
 
   // memory realm → function
   MemoryRealm realm = REALM_STACK;
@@ -1103,30 +1139,45 @@ static AstNode *parse_decl(Parser *p) {
     AstNode *function = parse_func_decl(p, is_pub, realm, attrs, true);
     if (function)
       function->as.func_decl.is_move = is_move;
-    return function;
+    return attach_decl_attrs(function, attrs);
   }
   if (check(p, TOKEN_TYPE)) {
-    return parse_type_decl(p, is_pub, attrs);
+    return attach_decl_attrs(parse_type_decl(p, is_pub, attrs), attrs);
   }
   if (check(p, TOKEN_METHOD))
-    return parse_method_decl(p, is_pub);
+    return attach_decl_attrs(parse_method_decl(p, is_pub), attrs);
   if (check(p, TOKEN_INTERFACE))
-    return parse_interface_decl(p, is_pub);
+    return attach_decl_attrs(parse_interface_decl(p, is_pub), attrs);
   if (check(p, TOKEN_ERROR))
-    return parse_error_decl(p, is_pub);
+    return attach_decl_attrs(parse_error_decl(p, is_pub), attrs);
   if (check(p, TOKEN_MOD))
-    return parse_mod_decl(p, is_pub);
+    return attach_decl_attrs(parse_mod_decl(p, is_pub), attrs);
   if (check(p, TOKEN_USE))
-    return parse_use_decl(p);
+    return attach_decl_attrs(parse_use_decl(p, is_pub), attrs);
   if (check(p, TOKEN_EXTERN))
-    return parse_extern_decl(p, attrs);
+    return attach_decl_attrs(parse_extern_decl(p, attrs), attrs);
 
   // Variable declarations with attributes: #[section(".data")] const i32 x = 5
   if (is_var_decl_lookahead(p)) {
     bool is_const = match(p, TOKEN_CONST);
     bool is_volatile = match(p, TOKEN_VOLATILE);
     AstNode *decl = parse_var_decl(p, is_const, is_volatile, attrs);
-    return decl;
+    if (is_pub && decl) {
+      if (p->function_depth > 0) {
+        parser_error(p, "public constants are only allowed at module scope");
+      } else if (!is_const || is_volatile) {
+        parser_error(p, "only non-volatile const module globals can be public");
+      } else if (decl->kind == AST_VAR_DECL) {
+        for (AstNode *item = decl; item && item->kind == AST_VAR_DECL;
+             item = item->next)
+          item->as.var_decl.is_pub = true;
+      } else if (decl->kind == AST_TUPLE_DESTRUCTURE) {
+        for (AstNode *item = decl->as.tuple_destructure.targets; item;
+             item = item->next)
+          item->as.var_decl.is_pub = true;
+      }
+    }
+    return attach_decl_attrs(decl, attrs);
   }
 
   parser_error(p, "expected a declaration");
@@ -1752,6 +1803,19 @@ static bool is_var_decl_lookahead(Parser *p) {
 
 // Top-level statement dispatcher
 static AstNode *parse_stmt(Parser *p) {
+  if (check(p, TOKEN_DEFER)) {
+    Token keyword = advance(p);
+    if (check(p, TOKEN_NEWLINE) || check(p, TOKEN_RBRACE) ||
+        check(p, TOKEN_EOF)) {
+      parser_error(p, "expected expression after 'defer'");
+      return NULL;
+    }
+    AstNode *expression = parse_expr(p);
+    AstNode *node = ast_new_defer_stmt(p->arena, expression);
+    node->line = keyword.line;
+    node->col = keyword.column;
+    return node;
+  }
   // Spec §6: return expr
   if (check(p, TOKEN_RETURN)) {
     Token r = advance(p);

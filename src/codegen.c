@@ -114,7 +114,11 @@ static bool ast_type_suffix(AstNode *type, char *buffer, size_t buffer_size) {
     char inner[512];
     return ast_type_suffix(type->as.type_expr.inner, inner, sizeof(inner)) &&
            snprintf(buffer, buffer_size,
-                    type->as.type_expr.nullable ? "optptr_%s" : "ptr_%s",
+                    type->as.type_expr.nullable
+                        ? (type->as.type_expr.readonly ? "optconstptr_%s"
+                                                      : "optptr_%s")
+                        : (type->as.type_expr.readonly ? "constptr_%s"
+                                                      : "ptr_%s"),
                     inner) > 0;
   }
   case TYPE_ARRAY: {
@@ -386,7 +390,11 @@ static bool semantic_type_suffix(Codegen *cg, Type *type, char *buffer,
     if (!semantic_type_suffix(cg, type->as.pointer.inner, inner, sizeof(inner)))
       return false;
     return snprintf(buffer, buffer_size,
-                    type->as.pointer.nullable ? "optptr_%s" : "ptr_%s",
+                    type->as.pointer.nullable
+                        ? (type->as.pointer.readonly ? "optconstptr_%s"
+                                                    : "optptr_%s")
+                        : (type->as.pointer.readonly ? "constptr_%s"
+                                                    : "ptr_%s"),
                     inner) > 0;
   }
   if (type->kind == TY_ARRAY) {
@@ -560,8 +568,14 @@ static bool build_semantic_decl(Codegen *cg, Type *type, const char *name,
                            pointee_is_array ? "(*%s)" : "*%s", name);
     if (written < 0 || (size_t)written >= sizeof(declarator))
       return false;
-    return build_semantic_decl(cg, type->as.pointer.inner, declarator, buffer,
-                               buffer_size);
+    if (!type->as.pointer.readonly)
+      return build_semantic_decl(cg, type->as.pointer.inner, declarator,
+                                 buffer, buffer_size);
+    char mutable_decl[2048];
+    if (!build_semantic_decl(cg, type->as.pointer.inner, declarator,
+                             mutable_decl, sizeof(mutable_decl)))
+      return false;
+    return snprintf(buffer, buffer_size, "const %s", mutable_decl) > 0;
   }
   if (type->kind == TY_ARRAY) {
     char declarator[512];
@@ -760,6 +774,28 @@ static Attr *find_attr(Attr *attrs, const char *name) {
     if (strcmp(attr->name, name) == 0)
       return attr;
   return NULL;
+}
+
+static bool validate_codegen_declarations(Codegen *cg, AstNode *declaration) {
+  for (; declaration; declaration = declaration->next) {
+    if (declaration->kind == AST_FUNC_DECL &&
+        find_attr(declaration->as.func_decl.attrs, "interrupt")) {
+      cg_error(cg, declaration,
+               "#[interrupt] is not supported by the v0.1 C backend; use an "
+               "external assembly entry stub");
+      return false;
+    }
+    if (declaration->kind == AST_METHOD_DECL) {
+      if (!validate_codegen_declarations(
+              cg, declaration->as.method_decl.methods))
+        return false;
+    } else if (declaration->kind == AST_MOD_DECL) {
+      if (!validate_codegen_declarations(
+              cg, declaration->as.mod_decl.declarations))
+        return false;
+    }
+  }
+  return true;
 }
 
 static bool emit_string_attr_argument(Codegen *cg, Attr *attr,
@@ -1988,6 +2024,23 @@ static bool emit_expr(Codegen *cg, AstNode *expr) {
 }
 
 static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth);
+
+static bool emit_deferred_from(Codegen *cg, int start, int depth) {
+  for (int index = cg->deferred_count - 1; index >= start; index--) {
+    AstNode *defer = cg->deferred[index];
+    if (!emit_stmt(cg, defer->as.defer_stmt.expression, depth))
+      return false;
+  }
+  return true;
+}
+
+static bool register_defer(Codegen *cg, AstNode *node) {
+  if (!GROW_REGISTRY(cg, deferred, cg->deferred_count, deferred_capacity,
+                     AstNode *))
+    return false;
+  cg->deferred[cg->deferred_count++] = node;
+  return true;
+}
 static bool emit_match(Codegen *cg, AstNode *match, int depth,
                        AstNode *target, const char *target_name);
 static bool emit_if_value(Codegen *cg, AstNode *if_expr, int depth,
@@ -2031,6 +2084,8 @@ static bool is_c_constant_expr(AstNode *expr) {
 
 static bool emit_fallible_return(Codegen *cg, int depth,
                                  const char *error_expr, bool force_error) {
+  if (!emit_deferred_from(cg, 0, depth))
+    return false;
   if (cg->current_arena_scope || cg->current_gc_frame) {
     if (force_error) {
       indent(cg->out, depth);
@@ -2098,6 +2153,7 @@ static bool emit_block(Codegen *cg, AstNode *block, int depth) {
     return false;
 
   int gc_root_start = cg->gc_root_count;
+  int defer_start = cg->deferred_count;
   AstNode *stmt = block->as.block.statements;
   while (stmt) {
     if (!emit_stmt(cg, stmt, depth))
@@ -2114,6 +2170,9 @@ static bool emit_block(Codegen *cg, AstNode *block, int depth) {
     emit_freeze_gc_roots(cg, gc_root_start, depth, block);
     cg->gc_root_count = gc_root_start;
   }
+  if (!emit_deferred_from(cg, defer_start, depth))
+    return false;
+  cg->deferred_count = defer_start;
   return true;
 }
 
@@ -2630,7 +2689,8 @@ static bool emit_for_stmt(Codegen *cg, AstNode *stmt, int depth) {
     cg_error(cg, stmt, "loop nesting exceeds GC cleanup limit");
     return false;
   }
-  cg->loop_gc_root_starts[cg->loop_codegen_depth++] = loop_gc_root_start;
+  cg->loop_gc_root_starts[cg->loop_codegen_depth] = loop_gc_root_start;
+  cg->loop_defer_starts[cg->loop_codegen_depth++] = cg->deferred_count;
   if (!emit_block(cg, stmt->as.for_stmt.body, depth + 1))
     return false;
   cg->loop_codegen_depth--;
@@ -2987,6 +3047,12 @@ static bool emit_match(Codegen *cg, AstNode *match, int depth,
 
 static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
   switch (stmt->kind) {
+  case AST_DEFER_STMT:
+    if (!register_defer(cg, stmt)) {
+      cg_error(cg, stmt, "too many deferred expressions");
+      return false;
+    }
+    return true;
   case AST_VAR_DECL:
     return emit_var_decl(cg, stmt, depth);
   case AST_FUNC_DECL: {
@@ -3261,7 +3327,8 @@ static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
       cg_error(cg, stmt, "loop nesting exceeds GC cleanup limit");
       return false;
     }
-    cg->loop_gc_root_starts[cg->loop_codegen_depth++] = cg->gc_root_count;
+    cg->loop_gc_root_starts[cg->loop_codegen_depth] = cg->gc_root_count;
+    cg->loop_defer_starts[cg->loop_codegen_depth++] = cg->deferred_count;
     if (!emit_block(cg, stmt->as.while_stmt.body, depth + 1))
       return false;
     cg->loop_codegen_depth--;
@@ -3282,7 +3349,8 @@ static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
       cg_error(cg, stmt, "loop nesting exceeds GC cleanup limit");
       return false;
     }
-    cg->loop_gc_root_starts[cg->loop_codegen_depth++] = cg->gc_root_count;
+    cg->loop_gc_root_starts[cg->loop_codegen_depth] = cg->gc_root_count;
+    cg->loop_defer_starts[cg->loop_codegen_depth++] = cg->deferred_count;
     if (!emit_block(cg, stmt->as.loop_stmt.body, depth + 1))
       return false;
     cg->loop_codegen_depth--;
@@ -3290,6 +3358,10 @@ static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
     fputs("}\n", cg->out);
     return true;
   case AST_BREAK_STMT:
+    if (cg->loop_codegen_depth > 0 &&
+        !emit_deferred_from(
+            cg, cg->loop_defer_starts[cg->loop_codegen_depth - 1], depth))
+      return false;
     if (cg->current_gc_frame && cg->loop_codegen_depth > 0)
       emit_freeze_gc_roots(
           cg, cg->loop_gc_root_starts[cg->loop_codegen_depth - 1], depth,
@@ -3298,6 +3370,10 @@ static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
     fputs("break;\n", cg->out);
     return true;
   case AST_CONTINUE_STMT:
+    if (cg->loop_codegen_depth > 0 &&
+        !emit_deferred_from(
+            cg, cg->loop_defer_starts[cg->loop_codegen_depth - 1], depth))
+      return false;
     if (cg->current_gc_frame && cg->loop_codegen_depth > 0)
       emit_freeze_gc_roots(
           cg, cg->loop_gc_root_starts[cg->loop_codegen_depth - 1], depth,
@@ -3306,6 +3382,21 @@ static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
     fputs("continue;\n", cg->out);
     return true;
   case AST_RETURN_STMT:
+    {
+    bool stored_return = false;
+    if (cg->deferred_count > 0 && stmt->as.return_stmt.value &&
+        stmt->as.return_stmt.value->kind != AST_ERROR_EXPR &&
+        cg->current_result_c_name) {
+      indent(cg->out, depth);
+      fprintf(cg->out, "%s = ", cg->current_result_c_name);
+      Type *target = cg->current_fallible
+                         ? cg->current_fallible->as.fallible.inner
+                         : cg->current_return_type;
+      if (!emit_coerced_expr(cg, target, stmt->as.return_stmt.value))
+        return false;
+      fputs(";\n", cg->out);
+      stored_return = true;
+    }
     if (cg->current_fallible) {
       if (stmt->as.return_stmt.value &&
           stmt->as.return_stmt.value->kind == AST_ERROR_EXPR) {
@@ -3328,13 +3419,18 @@ static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
         if (!result_type_name(cg, cg->current_fallible, result_type,
                               sizeof(result_type)))
           return false;
+        if (!emit_deferred_from(cg, 0, depth))
+          return false;
         indent(cg->out, depth);
         fprintf(cg->out,
                 "return (%s){ .ok = true, .error = RUNES_ERROR_NONE, "
                 ".value = ",
                 result_type);
-        if (!emit_coerced_expr(cg, cg->current_fallible->as.fallible.inner,
-                               stmt->as.return_stmt.value))
+        if (stored_return)
+          fputs(cg->current_result_c_name, cg->out);
+        else if (!emit_coerced_expr(
+                     cg, cg->current_fallible->as.fallible.inner,
+                     stmt->as.return_stmt.value))
           return false;
         fputs(" };\n", cg->out);
         return true;
@@ -3348,7 +3444,7 @@ static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
           strcmp(stmt->as.return_stmt.value->as.identifier.name,
                  cg->current_result_name) == 0;
       if (stmt->as.return_stmt.value && cg->current_result_c_name &&
-          !returns_named_result) {
+          !returns_named_result && !stored_return) {
         indent(cg->out, depth);
         fprintf(cg->out, "%s = ", cg->current_result_c_name);
         Type *target = cg->current_fallible
@@ -3358,14 +3454,20 @@ static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
           return false;
         fputs(";\n", cg->out);
       }
+      if (!emit_deferred_from(cg, 0, depth))
+        return false;
       indent(cg->out, depth);
       fputs("goto __runes_cleanup;\n", cg->out);
       cg->current_cleanup_used = true;
       return true;
     }
+    if (!emit_deferred_from(cg, 0, depth))
+      return false;
     indent(cg->out, depth);
     fputs("return", cg->out);
-    if (stmt->as.return_stmt.value) {
+    if (stored_return) {
+      fprintf(cg->out, " %s", cg->current_result_c_name);
+    } else if (stmt->as.return_stmt.value) {
       fputc(' ', cg->out);
       if (!emit_coerced_expr(cg, cg->current_return_type,
                              stmt->as.return_stmt.value))
@@ -3375,6 +3477,7 @@ static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
     }
     fputs(";\n", cg->out);
     return true;
+    }
   case AST_BLOCK:
     indent(cg->out, depth);
     fputs("{\n", cg->out);
@@ -3789,6 +3892,7 @@ static bool emit_func(Codegen *cg, AstNode *decl, const char *c_name,
   AstNode *saved_function = cg->current_function;
   int saved_gc_root_count = cg->gc_root_count;
   int saved_loop_depth = cg->loop_codegen_depth;
+  int saved_deferred_count = cg->deferred_count;
   Type *return_type = decl->resolved_type &&
                               decl->resolved_type->kind == TY_FUNCTION
                           ? decl->resolved_type->as.function.ret
@@ -3817,6 +3921,7 @@ static bool emit_func(Codegen *cg, AstNode *decl, const char *c_name,
   cg->current_function = decl;
   cg->gc_root_count = 0;
   cg->loop_codegen_depth = 0;
+  cg->deferred_count = 0;
   if (!emit_func_header(cg, decl, c_name, is_main))
     return false;
   if (!emit_function_abi_suffix(cg, decl, false))
@@ -4002,6 +4107,7 @@ static bool emit_func(Codegen *cg, AstNode *decl, const char *c_name,
   cg->current_function = saved_function;
   cg->gc_root_count = saved_gc_root_count;
   cg->loop_codegen_depth = saved_loop_depth;
+  cg->deferred_count = saved_deferred_count;
   return true;
 }
 
@@ -4918,6 +5024,10 @@ static bool emit_ast_tuple_dependencies(Codegen *cg, AstNode *node) {
       if (!emit_ast_tuple_dependencies(cg, node->as.return_stmt.value))
         return false;
       break;
+    case AST_DEFER_STMT:
+      if (!emit_ast_tuple_dependencies(cg, node->as.defer_stmt.expression))
+        return false;
+      break;
     case AST_IF_STMT:
       if (!emit_ast_tuple_dependencies(cg, node->as.if_stmt.condition) ||
           !emit_ast_tuple_dependencies(cg, node->as.if_stmt.then_branch) ||
@@ -5191,6 +5301,8 @@ static bool emit_move_closure_environment_descriptors(Codegen *cg) {
 static bool emit_nested_function_phase(Codegen *cg, EmitPhase phase) {
   for (int i = 0; i < cg->nested_function_count; i++) {
     AstNode *function = cg->nested_functions[i];
+    if (!function->codegen_reachable)
+      continue;
     const char *name = registered_decl_name(cg, function);
     if (phase == EMIT_TUPLES) {
       if (!emit_tuple_dependencies(cg, function->resolved_type, function))
@@ -5235,6 +5347,10 @@ static bool emit_declaration_phase(Codegen *cg, AstNode *decl,
       cg->current_prefix = prefix;
       continue;
     }
+
+    if ((decl->kind == AST_FUNC_DECL || decl->kind == AST_EXTERN_DECL) &&
+        !decl->codegen_reachable)
+      continue;
 
     if (phase == EMIT_TYPEDEFS && decl->kind == AST_TYPE_DECL) {
       const char *name = registered_decl_name(cg, decl);
@@ -5408,6 +5524,9 @@ void codegen_init(Codegen *cg, FILE *out, Arena *arena) {
   cg->gc_root_count = 0;
   cg->gc_root_capacity = 0;
   cg->loop_codegen_depth = 0;
+  cg->deferred = NULL;
+  cg->deferred_count = 0;
+  cg->deferred_capacity = 0;
   cg->current_prefix = NULL;
 }
 
@@ -5576,7 +5695,7 @@ bool codegen_emit_c(Codegen *cg, AstNode *program) {
         "RUNES_CHECKED_UNSIGNED(uint64_t, u64)\n"
         "RUNES_CHECKED_UNSIGNED(size_t, usize)\n\n",
         cg->out);
-  fputs("static inline RUNES_MAYBE_UNUSED void *runes_unwrap_ptr(void *pointer, unsigned line, "
+  fputs("static inline RUNES_MAYBE_UNUSED const void *runes_unwrap_ptr(const void *pointer, unsigned line, "
         "unsigned column) {\n"
         "  if (!pointer) {\n"
         "    fprintf(stderr, \"Runes null error at %u:%u: attempted to "
@@ -5591,6 +5710,8 @@ bool codegen_emit_c(Codegen *cg, AstNode *program) {
     cg_error(cg, program, "too many declarations for C name registry");
     return false;
   }
+  if (!validate_codegen_declarations(cg, declarations))
+    return false;
 
   fputs("typedef uint32_t RunesError;\n", cg->out);
   fputs("enum {\n  RUNES_ERROR_NONE = 0", cg->out);

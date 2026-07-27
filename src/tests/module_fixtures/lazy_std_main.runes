@@ -1,0 +1,5 @@
+use std.good.answer
+
+f main() {
+    print(answer())
+}

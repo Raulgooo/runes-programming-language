@@ -1,0 +1,59 @@
+use std.os.linux.fd
+use std.os.linux.memory
+use std.os.linux.result.LinuxResult
+use std.os.linux.result.LinuxStatus
+use std.os.linux.syscall
+
+f main() {
+    fd.write_all_text(1, "linux ")
+
+    i64 process_id = syscall.call0(39)
+
+    i32 bad_descriptor = match fd.close(-1) {
+        Success -> 0,
+        Failure(code) -> code,
+    }
+
+    bool mapping_worked = false
+    match memory.map(0, 4096, 3, 34, -1, 0) {
+        Value(pointer) -> {
+            unsafe {
+                *pointer = 42
+                mapping_worked = *pointer == 42
+            }
+            mapping_worked = match memory.unmap(pointer, 4096) {
+                Success -> mapping_worked,
+                Failure(_) -> false,
+            }
+        }
+        Failure(_) -> {
+            mapping_worked = false
+        }
+    }
+
+    [10]u8 null_path = [47, 100, 101, 118, 47, 110, 117, 108, 108, 0]
+    bool read_eof = false
+    match fd.open_at_raw(-100, &null_path[0], 0, 0) {
+        Value(descriptor) -> {
+            [1]u8 buffer = [0]
+            read_eof = match fd.read(descriptor, buffer) {
+                Value(count) -> count == 0,
+                Failure(_) -> false,
+            }
+            fd.close(descriptor)
+        }
+        Failure(_) -> {
+            read_eof = false
+        }
+    }
+
+    print(
+        process_id > 0,
+        " ",
+        bad_descriptor,
+        " ",
+        mapping_worked,
+        " ",
+        read_eof
+    )
+}

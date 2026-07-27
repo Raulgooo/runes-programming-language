@@ -1,0 +1,6 @@
+-- EXPECT FAIL: duplicate #[cfg] attribute
+#[cfg(hosted)]
+#[cfg(target_os = "linux")]
+f value() {}
+
+f main() {}

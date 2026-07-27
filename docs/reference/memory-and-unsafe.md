@@ -173,9 +173,11 @@ still state the provenance and lifetime of returned reference-bearing values.
 
 ## Pointers
 
-`*T` excludes null. `?*T` admits `null`. A non-null pointer widens safely to a
-nullable pointer. `unwrap(nullable)` checks for null and returns `*T`; null
-traps.
+`*T` excludes null. `?*T` admits `null`. `*const T` and `?*const T` carry
+read-only pointee permission. Mutable pointers widen to their read-only form,
+but read-only pointers never become mutable implicitly. A non-null pointer
+widens safely to a nullable pointer. `unwrap(nullable)` checks for null and
+returns the corresponding non-null pointer; null traps.
 
 Pointer copying copies the address. It does not copy, own, or free the pointee.
 Nullable pointers cannot be dereferenced or used in arithmetic.
@@ -191,6 +193,11 @@ unsafe { *pointer = 43 }
 
 `*void` represents an untyped foreign/allocation pointer. Nested pointer types
 such as `**Node` are supported.
+
+Read-only pointer dereference and indexing can read inside `unsafe`, but cannot
+be assignment targets. Read-only slices expose `.ptr` as `*const T`, and
+strings expose `.ptr` as `*const u8`, allowing honest foreign read-only
+pointer/length signatures.
 
 ## Pointer arithmetic and casts
 

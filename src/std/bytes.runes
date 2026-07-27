@@ -3,7 +3,7 @@
 Easy no allocation operations
 please keep it simple
 ---
-use std.core
+use std.core.Option
 
 pub f fill(buffer: []u8, value: u8) {
     for (0..buffer.len) |index| {
@@ -39,12 +39,12 @@ pub f equal(left: []const u8, right: []const u8) = result: bool {
     }
 }
 
-pub f find(buffer: []const u8, byte: u8) = result: core.Option<usize> {
-    result = core.Option.None<usize>()
+pub f find(buffer: []const u8, byte: u8) = result: Option<usize> {
+    result = Option.None<usize>()
 
     for (0..buffer.len) |actual| {
         if buffer[actual] == byte {
-            result = core.Option.Some<usize>(actual)
+            result = Option.Some<usize>(actual)
             break
         }
     }

@@ -15,7 +15,7 @@ identifier = (ASCII-letter | "_") (ASCII-letter | digit | "_")*
 Keywords cannot be used as ordinary identifiers. The complete keyword set is:
 
 ```text
-and as asm bool break catch char const continue dynamic else error extern
+and as asm bool break catch char const continue defer dynamic else error extern
 f f32 f64 false flex for gc i8 i16 i32 i64 if interface loop match method
 mod move null or promote pub regional return self sizeof alignof stack str
 true try type u8 u16 u32 u64 unsafe use usize void volatile while
@@ -38,6 +38,27 @@ Line comments begin with `--`. Block comments begin and end with `---`:
 several lines
 ---
 ```
+
+## Import declarations
+
+```text
+use-declaration = "use" import-path ("as" identifier)?
+import-path = identifier ("." identifier)*
+```
+
+Without `as`, the final path segment becomes the local name. With `as`, the
+following identifier becomes the local name:
+
+```runes
+use std.bytes.find
+use std.bytes.find as find_byte
+use std.core.Option as Maybe
+```
+
+Imports are allowed only at file or module scope and are private to that
+module. `pub use`, grouped imports, and wildcard imports are not accepted.
+Path resolution, visibility, collisions, and module-loading behavior are
+specified in [Modules and names](modules-ffi-tooling.md#modules-and-names).
 
 ## Literals
 
@@ -97,7 +118,9 @@ pointer types.
 type = primitive
      | qualified-name type-arguments?
      | "*" type
+     | "*const" type
      | "?*" type
+     | "?*const" type
      | "[" integer-literal "]" type
      | "[]" type
      | "[]const" type
@@ -113,7 +136,9 @@ i32
 domain.Item
 Box<i32>
 *u8
+*const u8
 ?*Node
+?*const Node
 [16]u8
 []u8
 []const u8
@@ -147,8 +172,9 @@ i32 number, bool ready = (42, true)
 ```
 
 Declarations at file or module scope create globals. Globals use the same
-surface syntax but have additional visibility and lifetime restrictions. Only
-module-local globals are currently supported; `pub` globals are rejected.
+surface syntax but have additional visibility and lifetime restrictions.
+Non-volatile constants may be exported as `pub const T NAME = value`.
+Mutable and volatile public globals are rejected.
 Attributes may precede a global where permitted by the
 [attribute matrix](modules-ffi-tooling.md#attribute-matrix).
 
@@ -362,6 +388,17 @@ return 42
 In a value-returning function, a return expression must match the named result
 type. Both forms perform compiler-managed cleanup. `break` and `continue` apply
 to the nearest loop.
+
+`defer expression` schedules one expression for the end of the current
+lexical block:
+
+```runes
+defer close(descriptor)
+```
+
+Deferred expressions execute in last-in, first-out order on normal block exit,
+`return`, propagated errors, `break`, and `continue`. A return value is
+evaluated before cleanup begins. `defer` is valid only inside a function.
 
 Current backend limitation: a value-producing `if` or `match` cannot be emitted
 directly as the operand of `return`. Assign it to the named result and reach the

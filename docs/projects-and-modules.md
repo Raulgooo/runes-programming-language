@@ -26,6 +26,7 @@ hello/
 [project]
 name = "hello"
 entry = "src/main.runes"
+target = "x86_64-unknown-linux-gnu"
 
 [modules]
 roots = ["src", "modules"]
@@ -46,19 +47,20 @@ Only local path dependencies are implemented. Dependency names must be valid
 Runes identifiers, must be unique, and cannot be `std`. Unknown manifest
 sections and fields are errors. `[project]` requires both `name` and `entry`.
 When `[modules]` is omitted, its root defaults to `src`.
+The optional project `target` is overridden by `runec --target`.
 
 From the project directory:
 
 ```bash
 runec project
-runec check
+runec check --target x86_64-unknown-linux-gnu
 runec run
 runec build -o build/hello
 runec emit-c -o build/hello.c
 ```
 
 `runec project` prints the selected manifest, canonical entry, standard-library
-location, prelude state, module roots, and path dependencies. Pass
+location, target, prelude state, module roots, and path dependencies. Pass
 `--project path/to/runes.toml` to select a manifest explicitly.
 
 ## Local modules
@@ -92,9 +94,13 @@ Nested flat modules use a same-named directory for children. For example,
 `math/constants.runes` or `math/constants/mod.runes`.
 
 Only `pub` declarations cross module boundaries. `use math.answer` imports the
-last path segment as `answer`; aliases, wildcard imports, and re-exports are not
-implemented yet. Qualified access such as `math.answer()` does not require a
-`use` declaration.
+last path segment as `answer`; `use math.answer as compute` imports the same
+declaration under the local name `compute`. Aliases do not change declaration,
+type, generic, or ABI identity.
+
+Import names cannot collide with local declarations or other imports. Grouped
+imports, wildcard imports, and public re-exports are not implemented yet.
+Qualified access such as `math.answer()` does not require a `use` declaration.
 
 ## Path dependencies
 

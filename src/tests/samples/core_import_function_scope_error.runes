@@ -1,0 +1,12 @@
+-- EXPECT FAIL: use declarations are only allowed at module scope
+
+mod values {
+    pub f answer() = result: i32 {
+        result = 42
+    }
+}
+
+f main() {
+    use values.answer
+    print(answer())
+}

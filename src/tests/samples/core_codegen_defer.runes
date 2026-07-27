@@ -1,0 +1,43 @@
+f cleanup(label: str) {
+    print(label)
+}
+
+f choose(early: bool) = result: i32 {
+    defer cleanup("A")
+    {
+        defer cleanup("B")
+        defer cleanup("C")
+        if early {
+            return 7
+        }
+    }
+    result = 8
+}
+
+f stop_loop() {
+    loop {
+        defer cleanup("L")
+        break
+    }
+}
+
+error DeferredFailure = {
+    | Failed
+}
+
+f fail() = outcome: !i32 {
+    defer cleanup("E")
+    outcome = error.DeferredFailure.Failed
+}
+
+f propagate() = outcome: !i32 {
+    defer cleanup("P")
+    outcome = try fail()
+}
+
+f main() {
+    print(choose(true), "|", choose(false), "|")
+    stop_loop()
+    i32 recovered = propagate() catch -1
+    print(recovered)
+}

@@ -1,0 +1,8 @@
+f overwrite(pointer: ?*const u8) {
+    unsafe {
+        *unwrap(pointer) = 7
+    }
+}
+
+f main() {}
+-- expect-error: Cannot assign through a read-only pointer

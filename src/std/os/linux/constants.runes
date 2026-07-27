@@ -1,0 +1,72 @@
+-- Linux userspace ABI constants.
+--
+-- These remain private until Runes implements public module globals. Values
+-- used by another Linux module are temporarily repeated beside their wrapper.
+-- Syscall numbers are architecture-specific and live under arch/x86_64.
+
+-- Standard file descriptors.
+const i32 STDIN_FILENO = 0
+const i32 STDOUT_FILENO = 1
+const i32 STDERR_FILENO = 2
+
+-- seek(2) origins.
+const i32 SEEK_SET = 0
+const i32 SEEK_CUR = 1
+const i32 SEEK_END = 2
+const i32 SEEK_DATA = 3
+const i32 SEEK_HOLE = 4
+
+-- *at(2) special directory descriptor and flags.
+const i32 AT_FDCWD = -100
+const i32 AT_SYMLINK_NOFOLLOW = 256
+const i32 AT_REMOVEDIR = 512
+const i32 AT_SYMLINK_FOLLOW = 1024
+const i32 AT_NO_AUTOMOUNT = 2048
+const i32 AT_EMPTY_PATH = 4096
+
+-- open(2)/openat(2) access and creation flags on Linux x86-64.
+const i32 O_RDONLY = 0
+const i32 O_WRONLY = 1
+const i32 O_RDWR = 2
+const i32 O_CREAT = 64
+const i32 O_EXCL = 128
+const i32 O_NOCTTY = 256
+const i32 O_TRUNC = 512
+const i32 O_APPEND = 1024
+const i32 O_NONBLOCK = 2048
+const i32 O_DSYNC = 4096
+const i32 O_DIRECT = 16384
+const i32 O_DIRECTORY = 65536
+const i32 O_NOFOLLOW = 131072
+const i32 O_CLOEXEC = 524288
+
+-- mmap(2) protection and mapping flags.
+const i32 PROT_NONE = 0
+const i32 PROT_READ = 1
+const i32 PROT_WRITE = 2
+const i32 PROT_EXEC = 4
+
+const i32 MAP_SHARED = 1
+const i32 MAP_PRIVATE = 2
+const i32 MAP_FIXED = 16
+const i32 MAP_ANONYMOUS = 32
+const i32 MAP_GROWSDOWN = 256
+const i32 MAP_DENYWRITE = 2048
+const i32 MAP_EXECUTABLE = 4096
+const i32 MAP_LOCKED = 8192
+const i32 MAP_NORESERVE = 16384
+const i32 MAP_POPULATE = 32768
+const i32 MAP_NONBLOCK = 65536
+const i32 MAP_STACK = 131072
+const i32 MAP_HUGETLB = 262144
+const i32 MAP_SYNC = 524288
+const i32 MAP_FIXED_NOREPLACE = 1048576
+
+-- mremap(2) and msync(2).
+const i32 MREMAP_MAYMOVE = 1
+const i32 MREMAP_FIXED = 2
+const i32 MREMAP_DONTUNMAP = 4
+
+const i32 MS_ASYNC = 1
+const i32 MS_INVALIDATE = 2
+const i32 MS_SYNC = 4

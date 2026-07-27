@@ -1,0 +1,19 @@
+#[link_name("runes_test_const_sum")]
+extern f const_sum(data: *const u8, length: usize) = result: usize
+
+#[link_name("runes_test_const_first")]
+extern f const_first(data: *const u8) = result: u8
+
+f main() {
+    const [3]u8 bytes = [10, 20, 12]
+    []const u8 view = bytes
+    str text = "A"
+    usize total = 0
+    u8 first = 0
+
+    unsafe {
+        total = const_sum(view.ptr, view.len)
+        first = const_first(text.ptr)
+    }
+    print(total, " ", first)
+}

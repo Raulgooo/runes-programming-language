@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+platform_sources=()
+if [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]]; then
+  platform_sources+=(src/platform/linux/x86_64/syscall.S)
+else
+  platform_sources+=(src/platform/unsupported/linux_syscall.c)
+fi
+
 source_file=$(mktemp /tmp/runes-codegen-scale.XXXXXX.runes)
 c_file=$(mktemp /tmp/runes-codegen-scale.XXXXXX.c)
 binary=$(mktemp /tmp/runes-codegen-scale.XXXXXX)
@@ -20,6 +27,7 @@ printf 'f main() { print(function_319()) }\n' >>"$source_file"
 
 ./runes "$source_file" --emit-c "$c_file"
 ${CC:-gcc} -Isrc -std=c11 -w "$c_file" src/runtime.c src/utils/arena.c \
+  "${platform_sources[@]}" \
   -o "$binary"
 test "$("$binary")" = "319"
 
@@ -36,6 +44,7 @@ printf '}\n' >>"$nested_source"
 
 ./runes "$nested_source" --emit-c "$nested_c"
 ${CC:-gcc} -Isrc -std=c11 -w "$nested_c" src/runtime.c src/utils/arena.c \
+  "${platform_sources[@]}" \
   -o "$nested_binary"
 test "$("$nested_binary")" = "deep"
 
@@ -51,5 +60,6 @@ printf 'f main() { print(%s.value(), %s.value()) }\n' \
 
 ./runes "$names_source" --emit-c "$names_c"
 ${CC:-gcc} -Isrc -std=c11 -w "$names_c" src/runtime.c src/utils/arena.c \
+  "${platform_sources[@]}" \
   -o "$names_binary"
 test "$("$names_binary")" = "12"

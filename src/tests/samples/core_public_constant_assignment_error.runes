@@ -1,0 +1,8 @@
+-- EXPECT FAIL: Cannot reassign constant 'ANSWER'
+mod values {
+    pub const i32 ANSWER = 42
+}
+
+f main() {
+    values.ANSWER = 7
+}

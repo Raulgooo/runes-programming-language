@@ -1,0 +1,127 @@
+-- Raw Linux x86-64 syscall boundary.
+--
+-- Arguments use the kernel's 64-bit register width. The returned i64 is the
+-- exact RAX value: nonnegative success, or -errno in the range -1..-4095.
+
+#[link_name("runes_linux_x86_64_syscall6")]
+extern f raw_syscall6(
+    number: u64,
+    argument1: u64,
+    argument2: u64,
+    argument3: u64,
+    argument4: u64,
+    argument5: u64,
+    argument6: u64
+) = result: i64
+
+pub f call0(number: usize) = result: i64 {
+    unsafe {
+        result = raw_syscall6(number as u64, 0, 0, 0, 0, 0, 0)
+    }
+}
+
+pub f call1(number: usize, argument1: u64) = result: i64 {
+    unsafe {
+        result = raw_syscall6(number as u64, argument1, 0, 0, 0, 0, 0)
+    }
+}
+
+pub f call2(
+    number: usize,
+    argument1: u64,
+    argument2: u64
+) = result: i64 {
+    unsafe {
+        result = raw_syscall6(
+            number as u64,
+            argument1,
+            argument2,
+            0,
+            0,
+            0,
+            0
+        )
+    }
+}
+
+pub f call3(
+    number: usize,
+    argument1: u64,
+    argument2: u64,
+    argument3: u64
+) = result: i64 {
+    unsafe {
+        result = raw_syscall6(
+            number as u64,
+            argument1,
+            argument2,
+            argument3,
+            0,
+            0,
+            0
+        )
+    }
+}
+
+pub f call4(
+    number: usize,
+    argument1: u64,
+    argument2: u64,
+    argument3: u64,
+    argument4: u64
+) = result: i64 {
+    unsafe {
+        result = raw_syscall6(
+            number as u64,
+            argument1,
+            argument2,
+            argument3,
+            argument4,
+            0,
+            0
+        )
+    }
+}
+
+pub f call5(
+    number: usize,
+    argument1: u64,
+    argument2: u64,
+    argument3: u64,
+    argument4: u64,
+    argument5: u64
+) = result: i64 {
+    unsafe {
+        result = raw_syscall6(
+            number as u64,
+            argument1,
+            argument2,
+            argument3,
+            argument4,
+            argument5,
+            0
+        )
+    }
+}
+
+pub f call6(
+    number: usize,
+    argument1: u64,
+    argument2: u64,
+    argument3: u64,
+    argument4: u64,
+    argument5: u64,
+    argument6: u64
+) = result: i64 {
+    unsafe {
+        result = raw_syscall6(
+            number as u64,
+            argument1,
+            argument2,
+            argument3,
+            argument4,
+            argument5,
+            argument6
+        )
+    }
+}

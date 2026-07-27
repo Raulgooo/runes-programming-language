@@ -54,3 +54,76 @@ pub method Option<T> {
         }
     }
 }
+
+pub type Result<T, E> =
+    | Ok(T)
+    | Err(E)
+
+-- Result methods are allocation-free and currently operate by value. A large
+-- T or E can therefore be copied when the result, receiver, or payload moves.
+pub method Result<T, E> {
+    f is_ok(self) = result: bool {
+        result = match self {
+            Ok(_) -> true,
+            Err(_) -> false,
+        }
+    }
+
+    f is_err(self) = result: bool {
+        result = match self {
+            Ok(_) -> false,
+            Err(_) -> true,
+        }
+    }
+
+    f unwrap_or(self, fallback: T) = result: T {
+        result = match self {
+            Ok(value) -> value,
+            Err(_) -> fallback,
+        }
+    }
+
+    f map<U>(self, transform: f(T) -> U) = result: Result<U, E> {
+        result = match self {
+            Ok(value) -> Result.Ok<U, E>(transform(value)),
+            Err(failure) -> Result.Err<U, E>(failure),
+        }
+    }
+
+    f map_error<F>(self, transform: f(E) -> F) = result: Result<T, F> {
+        result = match self {
+            Ok(value) -> Result.Ok<T, F>(value),
+            Err(failure) -> Result.Err<T, F>(transform(failure)),
+        }
+    }
+
+    f and_then<U>(
+        self,
+        transform: f(T) -> Result<U, E>
+    ) = result: Result<U, E> {
+        result = match self {
+            Ok(value) -> transform(value),
+            Err(failure) -> Result.Err<U, E>(failure),
+        }
+    }
+}
+
+-- Portable error identities. Platform backends translate their native error
+-- codes into these types instead of exposing errno or syscall details.
+pub type IoError =
+    | EndOfInput
+    | Interrupted
+    | PermissionDenied
+    | NotFound
+    | BrokenPipe
+    | InvalidInput
+    | Unknown
+
+pub type ParseError =
+    | InvalidSyntax(usize)
+    | UnexpectedEnd(usize)
+    | OutOfRange(usize)
+
+pub type AllocationError =
+    | OutOfMemory
+    | CapacityOverflow

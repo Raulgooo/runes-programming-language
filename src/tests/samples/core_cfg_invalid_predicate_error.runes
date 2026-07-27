@@ -1,0 +1,5 @@
+-- EXPECT FAIL: #[cfg] target predicates require a string value
+#[cfg(target_os = 1)]
+f value() {}
+
+f main() {}

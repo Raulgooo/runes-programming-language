@@ -42,6 +42,7 @@ AstNode *ast_new_var_decl(Arena *arena, bool is_const, bool is_volatile,
                           const char *name, AstNode *type, AstNode *init,
                           Attr *attrs) {
   AstNode *n = ast_alloc(arena, AST_VAR_DECL);
+  n->as.var_decl.is_pub = false;
   n->as.var_decl.is_const = is_const;
   n->as.var_decl.is_volatile = is_volatile;
   n->as.var_decl.name = name;
@@ -128,9 +129,11 @@ AstNode *ast_new_mod_decl(Arena *arena, bool is_pub, const char *name,
   return n;
 }
 
-AstNode *ast_new_use_decl(Arena *arena, AstNode *path) {
+AstNode *ast_new_use_decl(Arena *arena, AstNode *path, const char *alias) {
   AstNode *n = ast_alloc(arena, AST_USE_DECL);
   n->as.use_decl.path = path;
+  n->as.use_decl.alias = alias;
+  n->as.use_decl.target_decl = NULL;
   return n;
 }
 
@@ -165,6 +168,12 @@ AstNode *ast_new_block(Arena *arena, AstNode *statements) {
 AstNode *ast_new_return_stmt(Arena *arena, AstNode *value) {
   AstNode *n = ast_alloc(arena, AST_RETURN_STMT);
   n->as.return_stmt.value = value;
+  return n;
+}
+
+AstNode *ast_new_defer_stmt(Arena *arena, AstNode *expression) {
+  AstNode *n = ast_alloc(arena, AST_DEFER_STMT);
+  n->as.defer_stmt.expression = expression;
   return n;
 }
 

@@ -47,10 +47,20 @@ typedef struct GenericMethodInstance {
   struct GenericMethodInstance *next;
 } GenericMethodInstance;
 
+typedef struct ImportBinding {
+  const char *scope_module;
+  const char *local_name;
+  AstNode *use_decl;
+  AstNode *target_decl;
+  const char *target_module;
+  struct ImportBinding *next;
+} ImportBinding;
+
 typedef struct {
   Arena *arena;
   AstNode *program;
   GenericTemplate *templates;
+  ImportBinding *imports;
   GenericInstance *instances;
   GenericMethodPlan *method_plans;
   GenericMethodInstance *method_instances;
@@ -65,6 +75,27 @@ static AstNode *clone_node(Monomorphizer *mono, AstNode *node,
                            Binding *bindings);
 static AstNode *alloc_node(Monomorphizer *mono, AstNode *source);
 static bool is_template_declaration(AstNode *node);
+static GenericTemplate *template_for_node(Monomorphizer *mono,
+                                          AstNode *template);
+
+static ImportBinding *find_import(Monomorphizer *mono, const char *name) {
+  for (ImportBinding *binding = mono->imports; binding;
+       binding = binding->next) {
+    bool same_scope =
+        (!binding->scope_module && !mono->current_module) ||
+        (binding->scope_module && mono->current_module &&
+         strcmp(binding->scope_module, mono->current_module) == 0);
+    if (same_scope && strcmp(binding->local_name, name) == 0)
+      return binding;
+  }
+  return NULL;
+}
+
+static bool template_matches_kind(AstNode *node, bool functions, bool types) {
+  return (functions && node->kind == AST_FUNC_DECL) ||
+         (types &&
+          (node->kind == AST_TYPE_DECL || node->kind == AST_VARIANT_DECL));
+}
 
 static AstNode *copy_inferred_type(Monomorphizer *mono, AstNode *type) {
   if (!type || type->kind != AST_TYPE_EXPR)
@@ -196,15 +227,17 @@ static bool generic_declaration_is_public(AstNode *node) {
 
 static GenericTemplate *find_template(Monomorphizer *mono, const char *name,
                                       bool functions, bool types) {
+  ImportBinding *import = find_import(mono, name);
+  if (import && template_matches_kind(import->target_decl, functions, types))
+    return template_for_node(mono, import->target_decl);
+
   for (GenericTemplate *entry = mono->templates; entry; entry = entry->next) {
     AstNode *node = entry->node;
     bool visible_here =
         (!entry->module && !mono->current_module) ||
         (entry->module && mono->current_module &&
          strcmp(entry->module, mono->current_module) == 0);
-    if (((functions && node->kind == AST_FUNC_DECL) ||
-         (types && (node->kind == AST_TYPE_DECL ||
-                    node->kind == AST_VARIANT_DECL))) &&
+    if (template_matches_kind(node, functions, types) &&
         visible_here && strcmp(declaration_name(node), name) == 0)
       return entry;
   }
@@ -215,12 +248,15 @@ static GenericTemplate *find_qualified_template(Monomorphizer *mono,
                                                 const char *module,
                                                 const char *name,
                                                 bool functions, bool types) {
+  ImportBinding *module_import = find_import(mono, module);
+  if (module_import && module_import->target_decl &&
+      module_import->target_decl->kind == AST_MOD_DECL)
+    module = module_import->target_decl->as.mod_decl.name;
+
   for (GenericTemplate *entry = mono->templates; entry; entry = entry->next) {
     AstNode *node = entry->node;
     if (entry->module && strcmp(entry->module, module) == 0 &&
-        ((functions && node->kind == AST_FUNC_DECL) ||
-         (types && (node->kind == AST_TYPE_DECL ||
-                    node->kind == AST_VARIANT_DECL))) &&
+        template_matches_kind(node, functions, types) &&
         strcmp(declaration_name(node), name) == 0)
       return entry;
   }
@@ -257,6 +293,126 @@ static AstNode *module_declarations(Monomorphizer *mono, const char *module) {
                                   module);
 }
 
+static const char *importable_name(AstNode *node) {
+  if (!node)
+    return NULL;
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return node->as.func_decl.name;
+  case AST_TYPE_DECL:
+    return node->as.type_decl.name;
+  case AST_VARIANT_DECL:
+    return node->as.variant_decl.name;
+  case AST_INTERFACE_DECL:
+    return node->as.interface_decl.name;
+  case AST_ERROR_DECL:
+    return node->as.error_decl.name;
+  case AST_MOD_DECL:
+    return node->as.mod_decl.name;
+  case AST_EXTERN_DECL:
+    return node->as.extern_decl.name;
+  case AST_VAR_DECL:
+    return node->as.var_decl.name;
+  default:
+    return NULL;
+  }
+}
+
+static bool importable_is_public(AstNode *node) {
+  if (!node)
+    return false;
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return node->as.func_decl.is_pub;
+  case AST_TYPE_DECL:
+    return node->as.type_decl.is_pub;
+  case AST_VARIANT_DECL:
+    return node->as.variant_decl.is_pub;
+  case AST_INTERFACE_DECL:
+    return node->as.interface_decl.is_pub;
+  case AST_ERROR_DECL:
+    return node->as.error_decl.is_pub;
+  case AST_MOD_DECL:
+    return node->as.mod_decl.is_pub;
+  case AST_EXTERN_DECL:
+    return true;
+  case AST_VAR_DECL:
+    return node->as.var_decl.is_pub;
+  default:
+    return false;
+  }
+}
+
+static AstNode *find_importable(AstNode *declarations, const char *name,
+                                bool require_public) {
+  for (AstNode *decl = declarations; decl; decl = decl->next) {
+    const char *candidate = importable_name(decl);
+    if (candidate && strcmp(candidate, name) == 0 &&
+        (!require_public || importable_is_public(decl)))
+      return decl;
+  }
+  return NULL;
+}
+
+static AstNode *resolve_import_target(Monomorphizer *mono, AstNode *path,
+                                      const char *scope_module) {
+  if (!path || path->kind != AST_IDENTIFIER)
+    return NULL;
+  AstNode *current = find_importable(
+      module_declarations(mono, scope_module), path->as.identifier.name,
+      false);
+  if (!current && scope_module)
+    current = find_importable(module_declarations(mono, NULL),
+                              path->as.identifier.name, false);
+  if (!current)
+    return NULL;
+
+  for (AstNode *segment = path->next; segment; segment = segment->next) {
+    if (current->kind != AST_MOD_DECL ||
+        segment->kind != AST_IDENTIFIER)
+      return NULL;
+    current = find_importable(current->as.mod_decl.declarations,
+                              segment->as.identifier.name, true);
+    if (!current)
+      return NULL;
+  }
+  return current;
+}
+
+static void collect_imports(Monomorphizer *mono, AstNode *declarations,
+                            const char *scope_module) {
+  for (AstNode *node = declarations; node; node = node->next) {
+    if (node->kind == AST_USE_DECL) {
+      AstNode *target =
+          resolve_import_target(mono, node->as.use_decl.path, scope_module);
+      if (!target)
+        continue;
+      AstNode *last = node->as.use_decl.path;
+      while (last->next)
+        last = last->next;
+      ImportBinding *binding =
+          arena_alloc(mono->arena, sizeof(*binding));
+      binding->scope_module = scope_module;
+      binding->local_name =
+          node->as.use_decl.alias ? node->as.use_decl.alias
+                                  : last->as.identifier.name;
+      binding->use_decl = node;
+      binding->target_decl = target;
+      binding->target_module =
+          target->kind == AST_MOD_DECL ? target->as.mod_decl.name : NULL;
+      GenericTemplate *template = template_for_node(mono, target);
+      if (template)
+        binding->target_module = template->module;
+      binding->next = mono->imports;
+      mono->imports = binding;
+      node->as.use_decl.target_decl = target;
+    }
+    if (node->kind == AST_MOD_DECL)
+      collect_imports(mono, node->as.mod_decl.declarations,
+                      node->as.mod_decl.name);
+  }
+}
+
 static bool append_text(char *buffer, size_t capacity, size_t *used,
                         const char *format, ...) {
   if (*used >= capacity)
@@ -291,7 +447,9 @@ static bool encode_type(AstNode *type, char *buffer, size_t capacity,
     break;
   case TYPE_PTR:
     if (!append_text(buffer, capacity, used,
-                     type->as.type_expr.nullable ? "o" : "p") ||
+                     type->as.type_expr.nullable
+                         ? (type->as.type_expr.readonly ? "k" : "o")
+                         : (type->as.type_expr.readonly ? "c" : "p")) ||
         !encode_type(type->as.type_expr.inner, buffer, capacity, used))
       return false;
     break;
@@ -453,7 +611,8 @@ static bool infer_unify(Monomorphizer *mono, AstNode *parameters,
       return false;
     break;
   case TYPE_PTR:
-    if (formal->as.type_expr.nullable != actual->as.type_expr.nullable)
+    if (formal->as.type_expr.nullable != actual->as.type_expr.nullable ||
+        formal->as.type_expr.readonly != actual->as.type_expr.readonly)
       return false;
     return infer_unify(mono, parameters, formal->as.type_expr.inner,
                        actual->as.type_expr.inner, bindings, site);
@@ -779,6 +938,12 @@ static void infer_generic_method_call(Monomorphizer *mono, AstNode *call,
   const char *module = owner_type->as.type_expr.kind == TYPE_QUALIFIED
                            ? owner_type->as.type_expr.module
                            : mono->current_module;
+  if (owner_type->as.type_expr.kind == TYPE_NAMED) {
+    GenericTemplate *owner_template =
+        find_template(mono, owner_type->as.type_expr.name, false, true);
+    if (owner_template)
+      module = owner_template->module;
+  }
   for (AstNode *declaration = module_declarations(mono, module);
        declaration; declaration = declaration->next) {
     if (declaration->kind != AST_METHOD_DECL ||
@@ -1007,6 +1172,9 @@ static void infer_calls_in_node(Monomorphizer *mono, AstNode *node,
   }
   case AST_RETURN_STMT:
     infer_calls_in_node(mono, node->as.return_stmt.value, locals);
+    break;
+  case AST_DEFER_STMT:
+    infer_calls_in_node(mono, node->as.defer_stmt.expression, locals);
     break;
   case AST_IF_STMT:
     infer_calls_in_node(mono, node->as.if_stmt.condition, locals);
@@ -1548,6 +1716,7 @@ static AstNode *clone_node(Monomorphizer *mono, AstNode *node,
         clone_attrs(mono, node->as.func_decl.attrs, bindings);
     break;
   case AST_VAR_DECL:
+    copy->as.var_decl.is_pub = node->as.var_decl.is_pub;
     copy->as.var_decl.type =
         clone_node(mono, node->as.var_decl.type, bindings);
     copy->as.var_decl.init =
@@ -1613,6 +1782,8 @@ static AstNode *clone_node(Monomorphizer *mono, AstNode *node,
     break;
   case AST_USE_DECL:
     copy->as.use_decl.path = clone_list(mono, node->as.use_decl.path, bindings);
+    copy->as.use_decl.alias = node->as.use_decl.alias;
+    copy->as.use_decl.target_decl = node->as.use_decl.target_decl;
     break;
   case AST_EXTERN_DECL:
     copy->as.extern_decl.params =
@@ -1632,6 +1803,10 @@ static AstNode *clone_node(Monomorphizer *mono, AstNode *node,
   case AST_RETURN_STMT:
     copy->as.return_stmt.value =
         clone_node(mono, node->as.return_stmt.value, bindings);
+    break;
+  case AST_DEFER_STMT:
+    copy->as.defer_stmt.expression =
+        clone_node(mono, node->as.defer_stmt.expression, bindings);
     break;
   case AST_IF_STMT:
     copy->as.if_stmt.condition =
@@ -1812,6 +1987,7 @@ bool monomorphize_program(Arena *arena, AstNode *program) {
     return false;
   Monomorphizer mono = {.arena = arena, .program = program};
   collect_templates(&mono, program->as.program.declarations, NULL);
+  collect_imports(&mono, program->as.program.declarations, NULL);
 
   LocalType *locals = NULL;
   infer_calls_in_node(&mono, program, &locals);

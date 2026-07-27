@@ -9,9 +9,9 @@ You do not need to already be a standard-library expert. The goal is to build
 the mental model needed to make one small, defensible decision at a time.
 
 This is an explanatory companion to the ordered
-[standard-library implementation plan](implementation-plan.md). The
-implementation plan says **what to build next**. This guide explains **how to
-think about it and why the pieces have that shape**.
+[application-readiness plan](app-readiness-plan.md). The plan says **what to
+build next**. This guide explains **how to think about it and why the pieces
+have that shape**.
 
 Runes is experimental. Examples in this guide describe current v0.1 behavior
 unless a section is explicitly labeled as a proposed library design.
@@ -661,10 +661,10 @@ states and allocation remains unnecessary.
 Positive behavior:
 
 ```runes
-use std.core
+use std.core.Option
 
-core.Option<i32> present = core.Option.Some(42)
-core.Option<i32> absent = core.Option.None<i32>()
+Option<i32> present = Option.Some(42)
+Option<i32> absent = Option.None<i32>()
 
 print(present.is_some())
 print(absent.unwrap_or(7))
@@ -817,9 +817,11 @@ Arenas and GC can reclaim memory. They do not automatically:
 - close a socket;
 - destroy a window or graphics context.
 
-Resource APIs need an explicit lifecycle even in GC code. Runes v0.1 has no
-general `defer` or deterministic destructor feature, so resource-owning APIs
-must remain especially small and explicit.
+Resource APIs need an explicit lifecycle even in GC code. Runes has lexical
+`defer expression`, so callers can schedule `close` or `deinit` at acquisition
+time. It still has no move-only values or deterministic destructors:
+resource-owning handles remain copyable, and libraries must document
+double-close/double-free hazards.
 
 ## 10. Building safe boundaries over unsafe primitives
 
@@ -922,25 +924,26 @@ foundation usually indicate that responsibilities are mixed.
 
 ### Import policy today
 
-Runes can import one public final non-generic member:
+Runes can import one public final member:
 
 ```runes
 use std.bytes.find
 ```
 
-Aliases, grouped imports, wildcard imports, and public re-exports are not
-implemented. Methods remain receiver-based; import the type and call
-`value.method()`.
+Explicit aliases are implemented. Grouped imports, wildcard imports, and
+public re-exports are not. Methods remain receiver-based; import the type and
+call `value.method()`.
 
-Imported generic aliases are a current bootstrap gap because monomorphization
-runs before ordinary imported-member resolution. Until that is fixed, import
-the module and qualify the generic:
+Generic declarations can be imported directly or given an explicit local
+alias:
 
 ```runes
-use std.core
+use std.core.Option as Maybe
 
-core.Option<i32> value = core.Option.Some(42)
+Maybe<i32> value = Maybe.Some(42)
 ```
+
+The alias does not create a distinct type or generic specialization.
 
 Design module paths with the actual current syntax, not with conveniences that
 the compiler does not yet provide.

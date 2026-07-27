@@ -1,6 +1,7 @@
 [project]
 name = "workspace-test"
 entry = "src/main.runes"
+target = "x86_64-unknown-linux-gnu"
 
 [modules]
 roots = ["src", "modules"]

@@ -1,0 +1,82 @@
+mod library {
+    pub type Point = {
+        value: i32
+    }
+
+    pub interface Value {
+        f get(self) = result: i32
+    }
+
+    pub type Number = {
+        value: i32
+    }
+
+    method Value for Number {
+        f get(self) = result: i32 {
+            result = self.value
+        }
+    }
+
+    pub f double(value: i32) = result: i32 {
+        result = value * 2
+    }
+
+    pub f identity<T>(value: T) = result: T {
+        result = value
+    }
+
+    pub error Failure = {
+        | Failed
+    }
+
+    pub mod nested {
+        pub f answer() = result: i32 {
+            result = 42
+        }
+    }
+}
+
+use std.core.Option
+use std.core.Option as Maybe
+use std.bytes.find as find_byte
+use std.bytes as byte_ops
+use library.Point as P
+use library.Value as Readable
+use library.Number as N
+use library.double as twice
+use library.identity as keep
+use library.Failure as Problem
+use library as lib
+use library.nested as tools
+
+f fail() = result: !i32 {
+    result = error.Problem.Failed
+}
+
+f read(value: Readable) = result: i32 {
+    result = value.get()
+}
+
+f main() {
+    Option<i32> present = Option.Some(21)
+    Maybe<i32> absent = Maybe.None<i32>()
+    Option<i32> doubled = present.map<i32>(twice)
+    P point = P(value: 7)
+    N number = N(value: 17)
+    [4]u8 bytes = [3, 5, 7, 9]
+    i32 failure = fail() catch -1
+
+    print(
+        present.unwrap_or(-1), " ",
+        absent.is_none(), " ",
+        doubled.unwrap_or(-1), " ",
+        point.value, " ",
+        keep(11), " ",
+        lib.identity(13), " ",
+        find_byte(bytes, 7).unwrap_or(99), " ",
+        byte_ops.starts_with(bytes, bytes), " ",
+        tools.answer(), " ",
+        failure, " ",
+        read(number)
+    )
+}

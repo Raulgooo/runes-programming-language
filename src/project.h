@@ -9,6 +9,7 @@ typedef struct {
   char *root;
   char *name;
   char *entry;
+  char *target;
   char **module_roots;
   size_t module_root_count;
   char **dependency_names;

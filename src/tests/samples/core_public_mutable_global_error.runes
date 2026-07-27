@@ -1,0 +1,2 @@
+-- EXPECT FAIL: only non-volatile const module globals can be public
+pub i32 mutable_value = 1

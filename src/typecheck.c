@@ -215,6 +215,8 @@ static bool declaration_is_pub(AstNode *decl) {
     return decl->as.mod_decl.is_pub;
   case AST_EXTERN_DECL:
     return true;
+  case AST_VAR_DECL:
+    return decl->as.var_decl.is_pub;
   default:
     return false;
   }
@@ -251,6 +253,56 @@ static AstNode *use_target_declaration(TypeChecker *tc, AstNode *path) {
                                segment->as.identifier.name);
   }
   return current;
+}
+
+static SymbolKind declaration_symbol_kind(AstNode *declaration) {
+  if (!declaration)
+    return SYM_VAR;
+  switch (declaration->kind) {
+  case AST_FUNC_DECL:
+    return SYM_FUNC;
+  case AST_TYPE_DECL:
+  case AST_VARIANT_DECL:
+  case AST_INTERFACE_DECL:
+  case AST_ERROR_DECL:
+    return SYM_TYPE;
+  case AST_MOD_DECL:
+    return SYM_MOD;
+  case AST_EXTERN_DECL:
+    return declaration->as.extern_decl.is_func ? SYM_FUNC : SYM_VAR;
+  default:
+    return SYM_VAR;
+  }
+}
+
+static void typechecker_bind_use_alias(TypeChecker *tc, AstNode *use) {
+  AstNode *target = use_target_declaration(tc, use->as.use_decl.path);
+  AstNode *last = use->as.use_decl.path;
+  while (last && last->next)
+    last = last->next;
+  if (!target)
+    target = use->as.use_decl.target_decl;
+  if (!target || !last)
+    return;
+
+  const char *local_name = use->as.use_decl.alias
+                               ? use->as.use_decl.alias
+                               : last->as.identifier.name;
+  Symbol *alias = symbol_table_lookup_local(tc->st, local_name);
+  if (!alias) {
+    Symbol imported = {
+        .name = local_name,
+        .kind = declaration_symbol_kind(target),
+        .node = target,
+        .type = target->resolved_type,
+        .is_pub = false};
+    symbol_table_define(tc->st, imported);
+    alias = symbol_table_lookup_local(tc->st, local_name);
+  }
+  if (alias) {
+    alias->node = target;
+    alias->type = target->resolved_type;
+  }
 }
 
 // ── Phase 3 helpers ──────────────────────────────────────────────────────────
@@ -774,13 +826,17 @@ Type *typechecker_resolve_type_expr(TypeChecker *tc, AstNode *node) {
       return tc->tctx->type_error;
     }
     case TYPE_PTR:
-      return node->as.type_expr.nullable
-                 ? type_new_nullable_pointer(
-                       tc->tctx, typechecker_resolve_type_expr(
-                                     tc, node->as.type_expr.inner))
-                 : type_new_pointer(tc->tctx,
-                                    typechecker_resolve_type_expr(
-                                        tc, node->as.type_expr.inner));
+      {
+        Type *inner =
+            typechecker_resolve_type_expr(tc, node->as.type_expr.inner);
+        if (node->as.type_expr.nullable)
+          return node->as.type_expr.readonly
+                     ? type_new_nullable_readonly_pointer(tc->tctx, inner)
+                     : type_new_nullable_pointer(tc->tctx, inner);
+        return node->as.type_expr.readonly
+                   ? type_new_readonly_pointer(tc->tctx, inner)
+                   : type_new_pointer(tc->tctx, inner);
+      }
     case TYPE_ARRAY: {
       if (!node->as.type_expr.size ||
           node->as.type_expr.size->kind != AST_INT_LITERAL) {
@@ -938,6 +994,15 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
     symbol_table_push(tc->st);
     typechecker_collect_decls(tc, decl->as.mod_decl.declarations);
     symbol_table_pop(tc->st);
+  }
+
+  // Populate imported aliases before resolving function signatures. Resolver
+  // symbols already point at the imported declaration, while module recursion
+  // above has now assigned nominal types to those declarations.
+  for (decl = decl_head; decl; decl = decl->next) {
+    if (decl->kind != AST_USE_DECL)
+      continue;
+    typechecker_bind_use_alias(tc, decl);
   }
 
   // Pass 1.5: Populate Type fields (now that all type objects exist)
@@ -1145,6 +1210,16 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
     } else if (decl->kind == AST_EXTERN_DECL) {
       Symbol *sym =
           symbol_table_lookup_local(tc->st, decl->as.extern_decl.name);
+      if (!sym) {
+        Symbol local = {
+            .name = decl->as.extern_decl.name,
+            .kind = decl->as.extern_decl.is_func ? SYM_FUNC : SYM_VAR,
+            .node = decl,
+            .is_pub = true};
+        symbol_table_define(tc->st, local);
+        sym =
+            symbol_table_lookup_local(tc->st, decl->as.extern_decl.name);
+      }
       if (sym) {
         if (decl->as.extern_decl.is_func) {
           Type *ret_t =
@@ -1522,7 +1597,7 @@ static bool is_assignable_expr(AstNode *expr) {
 static bool expression_is_readonly_storage(AstNode *expr) {
   if (!expr)
     return false;
-  if (expr->kind == AST_IDENTIFIER && expr->resolved_decl &&
+  if (expr->resolved_decl &&
       expr->resolved_decl->kind == AST_VAR_DECL)
     return expr->resolved_decl->as.var_decl.is_const;
   if (expr->kind == AST_FIELD_EXPR)
@@ -1530,6 +1605,21 @@ static bool expression_is_readonly_storage(AstNode *expr) {
   if (expr->kind == AST_INDEX_EXPR)
     return expression_is_readonly_storage(expr->as.index.target);
   return false;
+}
+
+static bool assignment_through_readonly_pointer(AstNode *target) {
+  if (!target)
+    return false;
+  AstNode *owner = NULL;
+  if (target->kind == AST_UNARY_EXPR && target->as.unary.op == TOKEN_STAR)
+    owner = target->as.unary.expr;
+  else if (target->kind == AST_INDEX_EXPR)
+    owner = target->as.index.target;
+  else if (target->kind == AST_FIELD_EXPR)
+    owner = target->as.field.target;
+  return owner && owner->resolved_type &&
+         owner->resolved_type->kind == TY_POINTER &&
+         owner->resolved_type->as.pointer.readonly;
 }
 
 static bool invalid_mutable_slice_coercion(Type *target, AstNode *value) {
@@ -2020,6 +2110,18 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       }
     }
     Type *lty = typechecker_infer_expr(tc, expr->as.assign.target);
+    if (assignment_through_readonly_pointer(expr->as.assign.target)) {
+      typechecker_error(tc, expr->line, expr->col,
+                        "Cannot assign through a read-only pointer");
+    }
+    if (expr->as.assign.target->kind != AST_IDENTIFIER &&
+        expr->as.assign.target->resolved_decl &&
+        expr->as.assign.target->resolved_decl->kind == AST_VAR_DECL &&
+        expr->as.assign.target->resolved_decl->as.var_decl.is_const) {
+      typechecker_error(
+          tc, expr->line, expr->col, "Cannot reassign constant '%s'",
+          expr->as.assign.target->resolved_decl->as.var_decl.name);
+    }
     Type *rty = typechecker_infer_expr(tc, expr->as.assign.value);
     validate_slice_coercion(tc, lty, expr->as.assign.value, expr->line,
                             expr->col);
@@ -2132,7 +2234,11 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
                           "unwrap requires a nullable pointer");
         inferred = tc->tctx->type_error;
       } else {
-        inferred = type_new_pointer(tc->tctx, arg_t->as.pointer.inner);
+        inferred = arg_t->as.pointer.readonly
+                       ? type_new_readonly_pointer(tc->tctx,
+                                                   arg_t->as.pointer.inner)
+                       : type_new_pointer(tc->tctx,
+                                          arg_t->as.pointer.inner);
       }
       break;
     }
@@ -2599,9 +2705,15 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         }
         // Array-to-pointer decay: &([N]T) → *T, not *[N]T
         if (inner_t->kind == TY_ARRAY) {
-          inferred = type_new_pointer(tc->tctx, inner_t->as.array.inner);
+          inferred = expression_is_readonly_storage(expr->as.unary.expr)
+                         ? type_new_readonly_pointer(tc->tctx,
+                                                     inner_t->as.array.inner)
+                         : type_new_pointer(tc->tctx,
+                                            inner_t->as.array.inner);
         } else {
-          inferred = type_new_pointer(tc->tctx, inner_t);
+          inferred = expression_is_readonly_storage(expr->as.unary.expr)
+                         ? type_new_readonly_pointer(tc->tctx, inner_t)
+                         : type_new_pointer(tc->tctx, inner_t);
         }
       } else if (expr->as.unary.op == TOKEN_MINUS) {
         if (!type_is_numeric(inner_t)) {
@@ -2884,7 +2996,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
                             "String pointer access requires an unsafe block");
           inferred = tc->tctx->type_error;
         } else {
-          inferred = type_new_pointer(tc->tctx, tc->tctx->type_u8);
+          inferred = type_new_readonly_pointer(tc->tctx, tc->tctx->type_u8);
         }
       } else if (strcmp(fname, "len") == 0) {
         inferred = tc->tctx->type_usize;
@@ -2905,13 +3017,10 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       if (strcmp(fname, "len") == 0) {
         inferred = tc->tctx->type_usize;
       } else if (strcmp(fname, "ptr") == 0) {
-        if (base_t->as.slice.readonly) {
-          typechecker_error(tc, expr->line, expr->col,
-                            "Read-only slice pointers require explicit FFI conversion");
-          inferred = tc->tctx->type_error;
-        } else {
-          inferred = type_new_pointer(tc->tctx, base_t->as.slice.inner);
-        }
+        inferred = base_t->as.slice.readonly
+                       ? type_new_readonly_pointer(tc->tctx,
+                                                   base_t->as.slice.inner)
+                       : type_new_pointer(tc->tctx, base_t->as.slice.inner);
       } else {
         typechecker_error(tc, expr->line, expr->col,
                           "Unknown property '%s' on slice", fname);
@@ -3242,18 +3351,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
     return;
   switch (node->kind) {
   case AST_USE_DECL: {
-    AstNode *target = use_target_declaration(tc, node->as.use_decl.path);
-    AstNode *last = node->as.use_decl.path;
-    while (last && last->next)
-      last = last->next;
-    if (target && last) {
-      Symbol *alias =
-          symbol_table_lookup_local(tc->st, last->as.identifier.name);
-      if (alias) {
-        alias->node = target;
-        alias->type = target->resolved_type;
-      }
-    }
+    typechecker_bind_use_alias(tc, node);
     break;
   }
 
@@ -3521,6 +3619,15 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
     }
     break;
   }
+
+  case AST_DEFER_STMT:
+    if (tc->function_depth == 0) {
+      typechecker_error(tc, node->line, node->col,
+                        "defer is only allowed inside a function");
+    }
+    if (node->as.defer_stmt.expression)
+      typechecker_infer_expr(tc, node->as.defer_stmt.expression);
+    break;
 
   case AST_BLOCK: {
     symbol_table_push(tc->st);
@@ -3918,6 +4025,9 @@ static void check_unresolved_types(TypeChecker *tc, AstNode *node) {
     break;
   case AST_RETURN_STMT:
     check_unresolved_types(tc, node->as.return_stmt.value);
+    break;
+  case AST_DEFER_STMT:
+    check_unresolved_types(tc, node->as.defer_stmt.expression);
     break;
   case AST_IF_STMT:
     check_unresolved_types(tc, node->as.if_stmt.condition);
@@ -4453,6 +4563,10 @@ static void analyze_provenance_statements(AstNode *node, AstNode *function,
       function->memory_provenance |= value;
       break;
     }
+    case AST_DEFER_STMT:
+      analyze_provenance_statements(node->as.defer_stmt.expression, function,
+                                    realm);
+      break;
     case AST_BLOCK:
       analyze_provenance_statements(node->as.block.statements, function,
                                     realm);
@@ -4848,6 +4962,9 @@ static void validate_provenance(TypeChecker *tc, AstNode *node,
                           "Stack-backed interface cannot escape a function");
       break;
     }
+    case AST_DEFER_STMT:
+      validate_promotion_sources(tc, node->as.defer_stmt.expression, realm);
+      break;
     case AST_PROMOTE_EXPR:
       validate_promotion_sources(tc, node, realm);
       break;

@@ -1,0 +1,11 @@
+-- EXPECT FAIL: 'pub use' is not implemented
+
+mod values {
+    pub f answer() = result: i32 {
+        result = 42
+    }
+}
+
+pub use values.answer
+
+f main() {}

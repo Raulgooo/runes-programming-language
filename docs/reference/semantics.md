@@ -28,7 +28,9 @@ owning string and is not necessarily NUL-terminated.
 ### Constructed types
 
 - `*T`: non-null pointer to `T`;
+- `*const T`: non-null read-only pointer to `T`;
 - `?*T`: nullable pointer to `T`;
+- `?*const T`: nullable read-only pointer to `T`;
 - `[N]T`: fixed inline array with positive literal length `N`;
 - `[]T`: mutable borrowed slice;
 - `[]const T`: read-only borrowed slice;
@@ -92,12 +94,17 @@ The implemented safe coercions include:
 | `[N]T` storage/view | `[]const T` | Read-only view |
 | `[]T` | `[]const T` | Drops mutation permission |
 | `*T` | `?*T` | Adds nullability |
+| `*T` | `*const T` | Drops pointee mutation permission |
 | concrete value | satisfied interface | Builds data/vtable interface value |
 | success `T` or matching error | `!T` | Builds fallible result |
 
 No coercion may increase mutability, invent non-nullness, or extend storage
 lifetime. A read-only slice cannot become mutable. A nullable pointer cannot
 become non-null without `unwrap`.
+
+The `.ptr` property of `[]T` has type `*T`; the `.ptr` property of
+`[]const T` has type `*const T`. A string's `.ptr` has type `*const u8`.
+Mutation through a read-only pointer is rejected even inside `unsafe`.
 
 ### Explicit `as` conversions
 

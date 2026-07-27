@@ -1,0 +1,123 @@
+use std.core.Result
+use std.core.IoError
+use std.core.ParseError
+use std.core.AllocationError
+
+type Record = {
+    value: i32,
+    marker: u64,
+}
+
+type Problem = {
+    code: i32,
+}
+
+type LargeRecord = {
+    first: u64,
+    second: u64,
+    third: u64,
+    fourth: u64,
+    fifth: u64,
+    sixth: u64,
+    seventh: u64,
+    eighth: u64,
+}
+
+f double(value: i32) = result: i64 {
+    result = (value * 2) as i64
+}
+
+f problem_code(problem: Problem) = result: i32 {
+    result = problem.code
+}
+
+f require_positive(value: i32) = result: Result<i64, Problem> {
+    if value > 0 {
+        result = Result.Ok<i64, Problem>(value as i64)
+    } else {
+        Problem problem = Problem(code: 9)
+        result = Result.Err<i64, Problem>(problem)
+    }
+}
+
+f main() {
+    Result<i32, Problem> okay = Result.Ok<i32, Problem>(21)
+    Problem original_problem = Problem(code: 7)
+    Result<i32, Problem> failed =
+        Result.Err<i32, Problem>(original_problem)
+
+    Result<i64, Problem> mapped = okay.map<i64>(double)
+    Result<i32, i32> mapped_error = failed.map_error<i32>(problem_code)
+    Result<i64, Problem> chained = okay.and_then<i64>(require_positive)
+
+    Record record = Record(value: 12, marker: 99)
+    Result<Record, Problem> record_result =
+        Result.Ok<Record, Problem>(record)
+    Record fallback = Record(value: -1, marker: 0)
+    Record recovered_record = record_result.unwrap_or(fallback)
+    LargeRecord large = LargeRecord(
+        first: 1,
+        second: 2,
+        third: 3,
+        fourth: 4,
+        fifth: 5,
+        sixth: 6,
+        seventh: 7,
+        eighth: 8
+    )
+    LargeRecord large_fallback = LargeRecord(
+        first: 0,
+        second: 0,
+        third: 0,
+        fourth: 0,
+        fifth: 0,
+        sixth: 0,
+        seventh: 0,
+        eighth: 0
+    )
+    Result<LargeRecord, Problem> large_result =
+        Result.Ok<LargeRecord, Problem>(large)
+    LargeRecord recovered_large = large_result.unwrap_or(large_fallback)
+    i64 mapped_value = match mapped {
+        Ok(value) -> value,
+        Err(_) -> -1,
+    }
+    i32 mapped_error_value = match mapped_error {
+        Ok(_) -> -1,
+        Err(value) -> value,
+    }
+    i64 chained_value = match chained {
+        Ok(value) -> value,
+        Err(_) -> -1,
+    }
+    bool io_error_works = match IoError.BrokenPipe() {
+        BrokenPipe -> true,
+        _ -> false,
+    }
+    bool parse_error_works = match ParseError.InvalidSyntax(3) {
+        InvalidSyntax(position) -> position == 3,
+        _ -> false,
+    }
+    bool allocation_error_works = match AllocationError.CapacityOverflow() {
+        CapacityOverflow -> true,
+        _ -> false,
+    }
+
+    print(
+        okay.is_ok(), " ",
+        okay.is_err(), " ",
+        failed.is_ok(), " ",
+        failed.is_err(), " ",
+        failed.unwrap_or(5), " ",
+        mapped_value, " ",
+        mapped_error_value, " ",
+        chained_value, " ",
+        recovered_record.value, " ",
+        recovered_record.marker, " ",
+        sizeof(LargeRecord), " ",
+        recovered_large.eighth, " ",
+        io_error_works, " ",
+        parse_error_works, " ",
+        allocation_error_works
+    )
+}

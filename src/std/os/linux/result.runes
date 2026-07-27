@@ -1,0 +1,44 @@
+-- Linux syscall results preserve the kernel errno number.
+--
+-- Built-in !T errors are nominal error-set members and cannot carry an errno
+-- payload, so the raw Linux boundary uses these explicit result variants.
+
+pub type LinuxResult<T> =
+    | Value(T)
+    | Failure(i32)
+
+pub type LinuxStatus =
+    | Success
+    | Failure(i32)
+
+pub f is_error(raw: i64) = result: bool {
+    result = raw < 0 and raw >= -4095
+}
+
+pub f errno_from_raw(raw: i64) = result: i32 {
+    result = (0 - raw) as i32
+}
+
+pub f usize_from_raw(raw: i64) = result: LinuxResult<usize> {
+    if is_error(raw) {
+        result = LinuxResult.Failure<usize>(errno_from_raw(raw))
+    } else {
+        result = LinuxResult.Value<usize>(raw as usize)
+    }
+}
+
+pub f i32_from_raw(raw: i64) = result: LinuxResult<i32> {
+    if is_error(raw) {
+        result = LinuxResult.Failure<i32>(errno_from_raw(raw))
+    } else {
+        result = LinuxResult.Value<i32>(raw as i32)
+    }
+}
+
+pub f status_from_raw(raw: i64) = result: LinuxStatus {
+    if is_error(raw) {
+        result = LinuxStatus.Failure(errno_from_raw(raw))
+    } else {
+        result = LinuxStatus.Success()
+    }
+}

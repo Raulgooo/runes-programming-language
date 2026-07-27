@@ -15,7 +15,7 @@ f main() {
     unsafe {
         *Text text = make_text()
         print(text.value.len, " ", text.value == "hello\0世界")
-        raw_free(text.value.ptr)
+        raw_free(text.value.ptr as *void)
         raw_free(text)
     }
 }

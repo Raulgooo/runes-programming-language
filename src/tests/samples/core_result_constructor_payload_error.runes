@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Variant arm 'Ok' expects payload type i32, got bool
+use std.core.Result
+
+f main() {
+    Result<i32, bool> invalid = Result.Ok<i32, bool>(true)
+}

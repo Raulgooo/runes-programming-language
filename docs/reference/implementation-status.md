@@ -8,6 +8,11 @@ on every target.
 
 - Hosted C11 is the only backend.
 - Linux x86-64 with GCC or Clang is the primary tested target.
+- Raw Linux x86-64 syscalls use an external assembly register bridge. The
+  command driver selects target-specific link inputs from the resolved target.
+- Explicit targets are selected by CLI, manifest, or host default. The current
+  exact triples are `x86_64-unknown-linux-gnu`,
+  `x86_64-unknown-linux-none`, and `x86_64-unknown-runes-none`.
 - There is no native object-code backend.
 - The freestanding/kernel profile is incomplete and requires manual runtime and
   ABI work.
@@ -23,12 +28,13 @@ on every target.
 ## Visibility gaps
 
 - Extern declarations are exposed across their containing module.
-- Module globals cannot currently be public.
+- Constant module globals can be public with `pub const`. Mutable and volatile
+  public globals remain rejected.
 - Method visibility markers are parsed but not consistently enforced.
 - Fields and variant arms follow their containing type; they have no separate
   visibility.
 - `use` is private and cannot re-export.
-- Import aliases and wildcard imports are unavailable.
+- Grouped imports and wildcard imports are unavailable.
 
 These are implementation gaps, not recommendations for long-term API design.
 
@@ -64,9 +70,12 @@ library surface is:
 - `std.core`: `Option<T>`, its initial methods, and `UnwrapError`;
 - `std.bytes`: allocation-free `fill`, `copy`, `equal`, `find`, and
   `starts_with`;
-- `std.os`: an exported but currently empty module.
+- `std.os.linux`: raw syscall, errno-preserving result, descriptor, and virtual
+  memory operations for Linux x86-64.
 
 `std.io` is an empty source placeholder and is not exported by the `std` root.
+Target selection and declaration-level `#[cfg]` are implemented. The library
+has not yet built the portable `std.io` selection layer over them.
 See the [current standard-library reference](standard-library.md) for exact
 signatures and behavior. A broad general-purpose standard library does not
 yet exist.
@@ -81,8 +90,8 @@ Not currently supplied as complete safe library APIs:
 - graphics, numerical arrays, tensors, or ML APIs;
 - package registry or remote package client.
 
-Unsafe FFI remains necessary for raw operating-system input until safe wrappers
-are implemented.
+The Linux layer encapsulates its syscall FFI, but its mapping and raw-path
+operations still require caller-maintained pointer and lifetime invariants.
 
 ## Unsupported language features
 
@@ -95,10 +104,11 @@ v0.1 deliberately has no:
 - const generics, higher-kinded types, specialization, or variance;
 - runtime generic type erasure;
 - async/await or language concurrency model;
-- `defer`, deterministic destructors, or general cleanup construct;
+- deterministic destructors or compiler-enforced move-only resources
+  (`defer expression` exists as an explicit scoped cleanup mechanism);
 - wrapping/saturating arithmetic syntax or unchecked indexing;
 - pipeline syntax;
-- import aliases, wildcard imports, or public re-exports.
+- grouped imports, wildcard imports, or public re-exports.
 
 ## Lexical limitations
 
@@ -126,19 +136,24 @@ effects in separate statements instead of depending on host C evaluation order.
   metadata, file icons, and LSP startup;
 - diagnostics are compiler-oriented and do not yet have stable error codes.
 
-## Deferred import ergonomics
+## Remaining import ergonomics
 
 The current `use module.member` form can import one public function, type,
 interface, error set, or child module after its root module is present in the
-module graph. It has no alias, grouped-import, or public re-export syntax, and
-`use` does not independently load an arbitrary filesystem module.
+module graph. `use path as alias` supports explicit local aliases, including
+direct imports and aliases of generic declarations. Aliases retain the
+original declaration and specialization identity.
 
-Future language-design work should evaluate, without committing v0.1 to a
-specific syntax:
+It has no grouped-import or public re-export syntax, and `use` does not
+independently load an arbitrary filesystem module.
 
-- import aliases for resolving collisions and shortening qualified names;
+Planned follow-up work should evaluate:
+
 - grouped imports from one module;
 - explicit public re-exports for package façade modules;
+- canonical full-path module identity in every compiler phase;
+- contextual inference that removes unnecessary constructor and method type
+  arguments;
 - allowing `use` to resolve/load a module without a separate `mod`
   declaration, while preserving deterministic module identity and ambiguity
   diagnostics.
@@ -149,8 +164,8 @@ lookup, complicate generic/interface dispatch, and create avoidable name
 collisions. Users should import the owning type or interface and invoke the
 method through its receiver.
 
-This is a design note only. No parser, resolver, or visibility behavior is
-scheduled or changed by this entry.
+The ordered implementation plan is tracked in the internal
+[import ergonomics plan](../internal/language-design/import-ergonomics-plan.md).
 
 ## Status discipline
 

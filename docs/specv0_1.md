@@ -13,7 +13,9 @@ requirements are in
    external modules.
 2. The compiler lexes, parses, monomorphizes, resolves, type-checks, and emits
    C11.
-3. The supported target is hosted Linux x86-64 through GCC or Clang.
+3. The bootstrap compiler accepts `x86_64-unknown-linux-gnu`,
+   `x86_64-unknown-linux-none`, and `x86_64-unknown-runes-none`. Hosted Linux
+   through GCC or Clang remains the primary executable target.
 4. Only a root declaration exactly matching `f main()` is the process entry.
    It has no parameters, type parameters, or return value.
 5. `main` may call every memory realm. A non-root function named `main` is
@@ -50,7 +52,8 @@ representation but excludes surrogate values and values above `U+10FFFF`.
 
 Constructed types are:
 
-- non-null pointer `*T` and nullable pointer `?*T`;
+- mutable non-null pointer `*T`, read-only non-null pointer `*const T`, and
+  nullable forms `?*T` and `?*const T`;
 - fixed array `[N]T`, where `N` is a positive integer literal;
 - mutable slice `[]T` and read-only slice `[]const T`;
 - tuple `(T, U, ...)`;
@@ -67,7 +70,8 @@ Unresolved types are errors.
 Variables have explicit types or use `name := expression` inference. `const`
 storage is not assignable. `volatile` storage preserves volatile access in
 generated C and requires an unsafe context when accessed through raw pointers.
-Variables may be local or module-global; module globals are currently private.
+Variables may be local or module-global. A non-volatile module constant may be
+exported as `pub const`; mutable and volatile globals remain private.
 
 Primitive, fixed-array, tuple, struct, and variant values copy by value.
 Pointers, strings, slices, interfaces, and closures contain references and copy
@@ -113,6 +117,11 @@ A void function omits the return declaration. An explicit `return` performs
 all compiler-managed arena and GC cleanup. Reaching the end returns the current
 named result. `return expression` validates the expression against and returns
 through the named result type. Fallible functions use a named `!T` result.
+
+`defer expression` registers lexical cleanup inside a function. Deferred
+expressions execute in reverse registration order on normal scope exit,
+`return`, fallible propagation, `break`, and `continue`. A return expression
+is evaluated before its deferred cleanup executes.
 
 A named-result function may use one same-line expression body without braces;
 the named result must still be assigned on every path. All general
@@ -277,6 +286,11 @@ re-entering a module that is still loading is a cycle and is rejected.
 
 Members are private unless `pub`. Qualified access uses dot-separated paths.
 `use path.member` imports the final public member into the current scope.
+`use path.member as alias` selects an explicit local name for the same
+declaration. Aliasing does not create a new declaration, nominal type, generic
+specialization, or ABI identity. An import name may not collide with another
+declaration in the same scope. Imports are module-scope declarations and are
+private to that module.
 
 Projects use a strict `runes.toml` with a required project name and entry,
 optional module roots, and named local path dependencies. A dependency creates
@@ -284,10 +298,24 @@ a top-level module namespace. The reserved `std` namespace is loaded from the
 configured, environment, development, or installed standard-library root.
 Normal driver builds load the runtime prelude unless `--no-prelude` is used.
 
+A declaration may carry `#[cfg(predicate)]`. False declarations are removed
+before external-module loading, monomorphization, and name resolution.
+Predicates are `target_arch`, `target_os`, and `target_env` string comparisons;
+bare `hosted` and `freestanding`; and composition with `all`, `any`, and
+`not`. CLI target selection overrides a manifest target; absent both, the
+supported host target is the default.
+
+After semantic analysis, executable builds emit only functions and foreign
+declarations reachable from `main` and eager global initialization. This
+prevents unused platform modules from creating linker dependencies. The
+standard namespace materializes top-level children from actual `std.<child>`
+references; explicit project modules remain eagerly parsed and checked.
+
 Visibility is enforced for functions, types/variants, interfaces, error sets,
 and child modules. Fields and variant arms follow their containing type. v0.1
-currently exposes extern declarations, keeps module globals private, and does
-not consistently enforce method visibility or support public `use` re-exports.
+currently exposes extern declarations, permits public constants but keeps
+mutable globals private, and does not consistently enforce method visibility or support grouped imports,
+wildcard imports, or public `use` re-exports.
 
 ## 16. Foreign and systems ABI
 
@@ -317,7 +345,7 @@ target-specific.
 v0.1 has a standard-library namespace and local path project dependencies, but
 no complete standard library, registry/package fetcher, version solver, or
 lockfile. It also has no variadics, overloads, const generics, async, macros,
-cleanup/defer construct, deterministic destructors, public foreign GC-root API,
+deterministic destructors, move-only resources, public foreign GC-root API,
 native object backend, or complete freestanding runtime.
 
 Pipeline syntax is deferred. No incomplete linear pipe form is part of v0.1.

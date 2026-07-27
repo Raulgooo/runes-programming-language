@@ -7,10 +7,13 @@ Read them in this order:
 
 1. [Understanding Runes by building its standard library](building-guide.md)
    explains the language and library-design reasoning.
-2. [Standard-library implementation plan](implementation-plan.md) defines the
-   concrete milestones, acceptance criteria, and test requirements.
+2. [Application-readiness plan](app-readiness-plan.md) is the active ordered
+   plan for I/O, text, containers, files, processes, networking, and graphical
+   application foundations.
 3. [Standard-library and ecosystem roadmap](roadmap.md) records the broader
    long-term library surface.
+4. [Platform boundary and portable I/O plan](platform-io-plan.md) defines how
+   `std.io` will select an OS backend without runtime platform checks.
 
 Public language documentation remains in the main `docs/guide/` and
 `docs/reference/` trees. The APIs that work today are documented in the
@@ -18,15 +21,17 @@ Public language documentation remains in the main `docs/guide/` and
 
 ## Current implementation checkpoint
 
-- `std.core` implements and tests `Option<T>`, `UnwrapError`, `is_some`,
-  `is_none`, `unwrap_or`, `unwrap`, and `map`;
+- `std.core` implements and tests `Option<T>`, `Result<T, E>`, their initial
+  methods, `UnwrapError`, and the portable `IoError`, `ParseError`, and
+  `AllocationError` vocabulary;
 - `std.bytes` implements and tests `fill`, exact `copy`, `equal`, `find`, and
   `starts_with`;
-- `std.os` is exported but empty;
+- `std.os.linux` implements the initial Linux x86-64 syscall, descriptor, and
+  virtual-memory boundary;
 - `std.io` exists only as an empty, unexported placeholder;
-- raw Linux I/O, safe I/O, owning containers, and owning text remain future
+- portable safe I/O, owning containers, and owning text remain future
   milestones.
 
-The current compiler still requires module-qualified generic use in this
-layer. Code uses `use std.core` and `core.Option<T>` until imported generic
-aliases are handled before monomorphization.
+Generic declarations can now be imported directly or aliased. Foundation code
+can use `use std.core.Option` or `use std.core.Option as Maybe` without changing
+the underlying generic type identity.

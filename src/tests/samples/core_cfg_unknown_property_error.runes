@@ -1,0 +1,5 @@
+-- EXPECT FAIL: unknown #[cfg] target property
+#[cfg(target_cpu = "x86_64")]
+f value() {}
+
+f main() {}

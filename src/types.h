@@ -39,6 +39,7 @@ typedef struct {
 typedef struct {
   Type *inner;
   bool nullable;
+  bool readonly; /* pointer grants read access but not mutation */
 } PointerType;
 
 typedef struct {
@@ -156,7 +157,9 @@ typedef struct {
 void type_context_init(TypeContext *ctx, Arena *arena);
 Type *type_new_primitive(TypeContext *ctx, const char *name);
 Type *type_new_pointer(TypeContext *ctx, Type *inner);
+Type *type_new_readonly_pointer(TypeContext *ctx, Type *inner);
 Type *type_new_nullable_pointer(TypeContext *ctx, Type *inner);
+Type *type_new_nullable_readonly_pointer(TypeContext *ctx, Type *inner);
 Type *type_new_array(TypeContext *ctx, Type *inner, size_t size);
 Type *type_new_slice(TypeContext *ctx, Type *inner, bool readonly);
 Type *type_new_tuple(TypeContext *ctx, Type **elems, int count);

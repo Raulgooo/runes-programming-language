@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+platform_sources=()
+if [[ $(uname -s) == Linux && $(uname -m) == x86_64 ]]; then
+  platform_sources+=(src/platform/linux/x86_64/syscall.S)
+else
+  platform_sources+=(src/platform/unsupported/linux_syscall.c)
+fi
+
 runes_source=$(mktemp /tmp/runes-differential.XXXXXX.runes)
 generated_c=$(mktemp /tmp/runes-differential-generated.XXXXXX.c)
 runes_binary=$(mktemp /tmp/runes-differential-runes.XXXXXX)
@@ -54,7 +61,7 @@ C
 
 ./runes "$runes_source" --emit-c "$generated_c"
 ${CC:-gcc} -Isrc -std=c11 -Wall -Wextra -Werror "$generated_c" \
-  src/runtime.c src/utils/arena.c -o "$runes_binary"
+  src/runtime.c src/utils/arena.c "${platform_sources[@]}" -o "$runes_binary"
 ${CC:-gcc} -std=c11 -Wall -Wextra -Werror "$reference_source" \
   -o "$reference_binary"
 

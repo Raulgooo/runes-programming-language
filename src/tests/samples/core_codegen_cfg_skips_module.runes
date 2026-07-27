@@ -1,0 +1,6 @@
+#[cfg(target_os = "runes")]
+mod module_that_does_not_exist
+
+f main() {
+    print("cfg skipped missing module")
+}

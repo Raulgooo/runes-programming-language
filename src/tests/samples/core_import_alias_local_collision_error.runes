@@ -1,0 +1,15 @@
+-- EXPECT FAIL: import name 'answer' conflicts with an existing declaration
+
+mod values {
+    pub f answer() = result: i32 {
+        result = 42
+    }
+}
+
+use values.answer
+
+f answer() = result: i32 {
+    result = 7
+}
+
+f main() {}

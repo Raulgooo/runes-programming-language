@@ -1,0 +1,16 @@
+-- EXPECT FAIL: import name 'number' conflicts with an existing declaration
+
+mod values {
+    pub f first() = result: i32 {
+        result = 1
+    }
+
+    pub f second() = result: i32 {
+        result = 2
+    }
+}
+
+use values.first as number
+use values.second as number
+
+f main() {}

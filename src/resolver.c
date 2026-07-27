@@ -146,6 +146,8 @@ static bool node_is_pub(AstNode *node) {
     return node->as.mod_decl.is_pub;
   case AST_EXTERN_DECL:
     return true;
+  case AST_VAR_DECL:
+    return node->as.var_decl.is_pub;
   default:
     return false;
   }
@@ -220,7 +222,8 @@ static void collect_decls(Resolver *r, AstNode *node) {
       break;
     }
     case AST_VAR_DECL:
-      define_symbol(r, node, node->as.var_decl.name, SYM_VAR, false);
+      define_symbol(r, node, node->as.var_decl.name, SYM_VAR,
+                    node->as.var_decl.is_pub);
       break;
     case AST_MOD_DECL:
       define_symbol(r, node, node->as.mod_decl.name, SYM_MOD,
@@ -237,18 +240,26 @@ static void collect_decls(Resolver *r, AstNode *node) {
   while (node) {
     if (node->kind == AST_USE_DECL) {
       Symbol *target = find_symbol_in_path(r, node->as.use_decl.path);
-      if (target) {
+      AstNode *target_node =
+          target ? target->node : node->as.use_decl.target_decl;
+      if (target_node) {
         AstNode *last = node->as.use_decl.path;
         while (last->next)
           last = last->next;
-        const char *alias = last->as.identifier.name;
-        // Only define if not already present in this local scope
-        // (to avoid conflicts with local mod definitions in the same file)
-        if (!symbol_table_lookup_local(r->st, alias)) {
-          Symbol imported = {.name = alias,
-                             .kind = target->kind,
-                             .node = target->node,
-                             .is_pub = false};
+        const char *alias = node->as.use_decl.alias
+                                ? node->as.use_decl.alias
+                                : last->as.identifier.name;
+        if (symbol_table_lookup_local(r->st, alias)) {
+          error(r, node->line, node->col,
+                "import name '%s' conflicts with an existing declaration",
+                alias);
+        } else {
+          Symbol imported = {
+              .name = alias,
+              .kind = target ? target->kind
+                             : get_node_sym_kind(target_node),
+              .node = target_node,
+              .is_pub = false};
           symbol_table_define(r->st, imported);
         }
       } else {
@@ -374,6 +385,10 @@ static void resolve_node(Resolver *r, AstNode *node) {
     if (node->as.return_stmt.value) {
       resolve_node(r, node->as.return_stmt.value);
     }
+    break;
+
+  case AST_DEFER_STMT:
+    resolve_node(r, node->as.defer_stmt.expression);
     break;
 
   case AST_ASSIGN:

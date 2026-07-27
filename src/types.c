@@ -42,11 +42,24 @@ Type *type_new_pointer(TypeContext *ctx, Type *inner) {
   t->kind = TY_POINTER;
   t->as.pointer.inner = inner;
   t->as.pointer.nullable = false;
+  t->as.pointer.readonly = false;
+  return t;
+}
+
+Type *type_new_readonly_pointer(TypeContext *ctx, Type *inner) {
+  Type *t = type_new_pointer(ctx, inner);
+  t->as.pointer.readonly = true;
   return t;
 }
 
 Type *type_new_nullable_pointer(TypeContext *ctx, Type *inner) {
   Type *t = type_new_pointer(ctx, inner);
+  t->as.pointer.nullable = true;
+  return t;
+}
+
+Type *type_new_nullable_readonly_pointer(TypeContext *ctx, Type *inner) {
+  Type *t = type_new_readonly_pointer(ctx, inner);
   t->as.pointer.nullable = true;
   return t;
 }
@@ -165,6 +178,7 @@ bool type_equals(Type *a, Type *b) {
 
   case TY_POINTER:
     return a->as.pointer.nullable == b->as.pointer.nullable &&
+           a->as.pointer.readonly == b->as.pointer.readonly &&
            type_equals(a->as.pointer.inner, b->as.pointer.inner);
 
   case TY_ARRAY:
@@ -273,6 +287,8 @@ bool type_is_assignable(Type *target, Type *source) {
   // TY_UNKNOWN (unresolved recursive type), allow assignment.
   if (target->kind == TY_POINTER && source->kind == TY_POINTER) {
     if (!target->as.pointer.nullable && source->as.pointer.nullable)
+      return false;
+    if (!target->as.pointer.readonly && source->as.pointer.readonly)
       return false;
     bool target_void = target->as.pointer.inner->kind == TY_PRIMITIVE &&
                        strcmp(target->as.pointer.inner->as.primitive.name,

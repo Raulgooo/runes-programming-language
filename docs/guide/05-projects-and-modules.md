@@ -74,12 +74,33 @@ f main() {
 }
 ```
 
+Use an alias to resolve a collision or choose a clearer local name:
+
+```runes
+use math.double as twice
+
+f main() {
+    print(twice(21))
+}
+```
+
+Modules and generic types can also be aliased:
+
+```runes
+use std.core.Option as Maybe
+use std.bytes as byte_ops
+
+Maybe<i32> value = Maybe.Some(42)
+```
+
 `use` does not load an arbitrary file. The root module must already exist
 through `mod`, `std`, or a manifest dependency. It also does not copy code; it
 adds a local name for the same declaration.
 
-Aliases, wildcard imports, and public re-exports are not implemented. A `use`
-is private to the scope containing it.
+An imported name cannot collide with a declaration or another import in the
+same scope. Grouped imports, wildcard imports, and public re-exports are not
+implemented. A `use` is allowed at file or module scope and is private to that
+module; it is not allowed inside a function.
 
 ## Public and private declarations
 
@@ -145,7 +166,7 @@ parent declaration would also need `pub`.
 | Child module | `mod name` | `pub mod name` | Enforced |
 | Struct fields/variant arms | no per-member marker | inherited | Accessible when the type is accessible |
 | Extern function/variable | no working private form | always exposed | Visibility gap |
-| Module-level variable | private | no working public form | Visibility gap |
+| Module-level constant | private or `pub const` | public constants work | Mutable globals remain private |
 | Method | marker is parsed | not consistently enforced | Visibility gap |
 | `use` | private import | no re-export | Re-export missing |
 

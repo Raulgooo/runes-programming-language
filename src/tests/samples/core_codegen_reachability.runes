@@ -1,0 +1,22 @@
+mod unused_platform {
+    #[link_name("runes_test_unreachable_external")]
+    extern f raw_operation(value: usize) = result: usize
+
+    pub f operation(value: usize) = result: usize {
+        unsafe {
+            result = raw_operation(value)
+        }
+    }
+}
+
+f answer() = result: i32 {
+    result = 42
+}
+
+f also_unused() = result: i32 {
+    result = 99
+}
+
+f main() {
+    print(answer())
+}

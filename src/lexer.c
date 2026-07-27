@@ -197,6 +197,8 @@ static TokenKind identifier_kind(Lexer *L) {
     }
     break;
   case 'd':
+    if (L->current - L->start > 1 && L->start[1] == 'e')
+      return check_keyword(L, 2, 3, "fer", TOKEN_DEFER);
     return check_keyword(L, 1, 6, "ynamic", TOKEN_DYNAMIC);
   case 'e':
     if (L->current - L->start > 1) {
@@ -914,6 +916,8 @@ const char *token_kind_to_string(TokenKind kind) {
     return "continue";
   case TOKEN_RETURN:
     return "return";
+  case TOKEN_DEFER:
+    return "defer";
   case TOKEN_TRY:
     return "try";
   case TOKEN_CATCH:

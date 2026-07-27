@@ -6,8 +6,10 @@
 #include "monomorphize.h"
 #include "parser.h"
 #include "project.h"
+#include "reachability.h"
 #include "resolver.h"
 #include "symbol_table.h"
+#include "target.h"
 #include "typecheck.h"
 #include "utils/strtab.h"
 #include <stdio.h>
@@ -22,9 +24,11 @@ typedef struct {
   bool with_prelude;
   bool no_prelude;
   bool project_info;
+  bool target_info;
   const char *emit_c_filename;
   const char *project_filename;
   const char *stdlib_path;
+  const char *target_name;
   const char **filenames;
   int file_count;
   const char **module_paths;
@@ -42,6 +46,8 @@ typedef struct {
   size_t file_capacity;
   const char **module_paths;
   size_t module_path_count;
+  const RunesTarget *target;
+  bool defer_external_modules;
   bool had_error;
 } SourceLoader;
 
@@ -49,6 +55,196 @@ static void source_loader_oom(SourceLoader *loader) {
   if (!loader->had_error)
     fprintf(stderr, "Out of memory while loading Runes source files\n");
   loader->had_error = true;
+}
+
+static void cfg_error(SourceLoader *loader, const char *path, AstNode *node,
+                      const char *message) {
+  fprintf(stderr, "[Cfg Error] %s:%u:%u: %s\n", path, node ? node->line : 0,
+          node ? node->col : 0, message);
+  loader->had_error = true;
+}
+
+static bool cfg_string_equals(AstNode *node, const char *expected) {
+  return node && node->kind == AST_STRING_LITERAL &&
+         node->as.string_literal.length == strlen(expected) &&
+         memcmp(node->as.string_literal.value, expected,
+                node->as.string_literal.length) == 0;
+}
+
+static bool evaluate_cfg(SourceLoader *loader, const char *path, AstNode *expr,
+                         bool *value) {
+  if (!expr) {
+    cfg_error(loader, path, expr, "#[cfg] requires a predicate");
+    return false;
+  }
+
+  if (expr->kind == AST_IDENTIFIER) {
+    if (strcmp(expr->as.identifier.name, "hosted") == 0) {
+      *value = loader->target->hosted;
+      return true;
+    }
+    if (strcmp(expr->as.identifier.name, "freestanding") == 0) {
+      *value = !loader->target->hosted;
+      return true;
+    }
+    cfg_error(loader, path, expr, "unknown bare #[cfg] predicate");
+    return false;
+  }
+
+  AstNode *left = NULL;
+  AstNode *right = NULL;
+  if (expr->kind == AST_ASSIGN) {
+    left = expr->as.assign.target;
+    right = expr->as.assign.value;
+  } else if (expr->kind == AST_BINARY_EXPR &&
+             expr->as.binary.op == TOKEN_EQ_EQ) {
+    left = expr->as.binary.left;
+    right = expr->as.binary.right;
+  }
+  if (left || right) {
+    if (!left || left->kind != AST_IDENTIFIER ||
+        !right || right->kind != AST_STRING_LITERAL) {
+      cfg_error(loader, path, expr,
+                "#[cfg] target predicates require a string value");
+      return false;
+    }
+    const char *actual = NULL;
+    if (strcmp(left->as.identifier.name, "target_arch") == 0)
+      actual = runes_target_arch_name(loader->target);
+    else if (strcmp(left->as.identifier.name, "target_os") == 0)
+      actual = runes_target_os_name(loader->target);
+    else if (strcmp(left->as.identifier.name, "target_env") == 0)
+      actual = runes_target_env_name(loader->target);
+    else {
+      cfg_error(loader, path, left, "unknown #[cfg] target property");
+      return false;
+    }
+    *value = cfg_string_equals(right, actual);
+    return true;
+  }
+
+  if (expr->kind == AST_CALL_EXPR &&
+      expr->as.call.callee &&
+      expr->as.call.callee->kind == AST_IDENTIFIER) {
+    const char *name = expr->as.call.callee->as.identifier.name;
+    AstNode *argument = expr->as.call.args;
+    if (strcmp(name, "not") == 0) {
+      if (!argument || argument->next) {
+        cfg_error(loader, path, expr, "#[cfg] not(...) takes one predicate");
+        return false;
+      }
+      bool inner = false;
+      if (!evaluate_cfg(loader, path, argument, &inner))
+        return false;
+      *value = !inner;
+      return true;
+    }
+    if (strcmp(name, "all") == 0 || strcmp(name, "any") == 0) {
+      if (!argument) {
+        cfg_error(loader, path, expr,
+                  "#[cfg] all(...) and any(...) require predicates");
+        return false;
+      }
+      bool all = strcmp(name, "all") == 0;
+      bool aggregate = all;
+      for (; argument; argument = argument->next) {
+        bool item = false;
+        if (!evaluate_cfg(loader, path, argument, &item))
+          return false;
+        aggregate = all ? aggregate && item : aggregate || item;
+      }
+      *value = aggregate;
+      return true;
+    }
+  }
+
+  cfg_error(loader, path, expr, "invalid #[cfg] predicate");
+  return false;
+}
+
+static void set_kind_attrs(AstNode *node, Attr *attrs) {
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    node->as.func_decl.attrs = attrs;
+    break;
+  case AST_VAR_DECL:
+    node->as.var_decl.attrs = attrs;
+    break;
+  case AST_TYPE_DECL:
+    node->as.type_decl.attrs = attrs;
+    break;
+  case AST_EXTERN_DECL:
+    node->as.extern_decl.attrs = attrs;
+    break;
+  default:
+    break;
+  }
+}
+
+static bool declaration_cfg_enabled(SourceLoader *loader, const char *path,
+                                    AstNode *node, bool *enabled) {
+  Attr *cfg = NULL;
+  Attr **link = &node->decl_attrs;
+  while (*link) {
+    Attr *attribute = *link;
+    if (strcmp(attribute->name, "cfg") != 0) {
+      link = &attribute->next;
+      continue;
+    }
+    if (cfg) {
+      cfg_error(loader, path, node, "duplicate #[cfg] attribute");
+      return false;
+    }
+    cfg = attribute;
+    *link = attribute->next;
+  }
+  set_kind_attrs(node, node->decl_attrs);
+  if (!cfg) {
+    *enabled = true;
+    return true;
+  }
+  return evaluate_cfg(loader, path, cfg->arg, enabled);
+}
+
+static bool prune_cfg_list(SourceLoader *loader, const char *path,
+                           AstNode **head);
+
+static bool prune_cfg_children(SourceLoader *loader, const char *path,
+                               AstNode *node) {
+  switch (node->kind) {
+  case AST_MOD_DECL:
+    return prune_cfg_list(loader, path, &node->as.mod_decl.declarations);
+  case AST_FUNC_DECL:
+    if (node->as.func_decl.body)
+      return prune_cfg_children(loader, path, node->as.func_decl.body);
+    return true;
+  case AST_BLOCK:
+    return prune_cfg_list(loader, path, &node->as.block.statements);
+  case AST_UNSAFE_BLOCK:
+    return prune_cfg_children(loader, path, node->as.unsafe_block.body);
+  default:
+    return true;
+  }
+}
+
+static bool prune_cfg_list(SourceLoader *loader, const char *path,
+                           AstNode **head) {
+  AstNode **link = head;
+  while (*link) {
+    AstNode *node = *link;
+    bool enabled = true;
+    if (!declaration_cfg_enabled(loader, path, node, &enabled))
+      return false;
+    if (!enabled) {
+      *link = node->next;
+      node->next = NULL;
+      continue;
+    }
+    if (!prune_cfg_children(loader, path, node))
+      return false;
+    link = &node->next;
+  }
+  return true;
 }
 
 static char *path_directory(const char *path) {
@@ -364,9 +560,12 @@ static AstNode *load_source_program(SourceLoader *loader, const char *path,
     loader->had_error = true;
     return NULL;
   }
+  if (!prune_cfg_list(loader, path, &program->as.program.declarations))
+    return NULL;
   size_t index = loader->file_count - 1;
   loader->programs[index] = program;
-  if (!load_external_modules(loader, program->as.program.declarations,
+  if (!loader->defer_external_modules &&
+      !load_external_modules(loader, program->as.program.declarations,
                              module_base))
     return NULL;
   loader->loading[index] = false;
@@ -384,9 +583,11 @@ static void print_usage(const char *prog) {
   fprintf(stderr, "  --project FILE Use an explicit runes.toml manifest\n");
   fprintf(stderr, "  --module-path DIR Add a module search root\n");
   fprintf(stderr, "  --stdlib DIR Use DIR as the standard library root\n");
+  fprintf(stderr, "  --target TRIPLE Select the compilation target\n");
   fprintf(stderr, "  --prelude Load the standard runtime declarations\n");
   fprintf(stderr, "  --no-prelude Do not load runtime declarations\n");
   fprintf(stderr, "  --project-info Print resolved project configuration\n");
+  fprintf(stderr, "  --target-info Print the resolved target triple\n");
 }
 
 static Config parse_args(int argc, char **argv) {
@@ -410,6 +611,8 @@ static Config parse_args(int argc, char **argv) {
       config.no_prelude = true;
     } else if (strcmp(argv[i], "--project-info") == 0) {
       config.project_info = true;
+    } else if (strcmp(argv[i], "--target-info") == 0) {
+      config.target_info = true;
     } else if (strcmp(argv[i], "--emit-c") == 0) {
       if (i + 1 >= argc) {
         fprintf(stderr, "--emit-c requires an output filename\n");
@@ -435,6 +638,12 @@ static Config parse_args(int argc, char **argv) {
         exit(1);
       }
       config.stdlib_path = argv[++i];
+    } else if (strcmp(argv[i], "--target") == 0) {
+      if (i + 1 >= argc) {
+        fprintf(stderr, "--target requires a target triple\n");
+        exit(1);
+      }
+      config.target_name = argv[++i];
     } else if (argv[i][0] == '-') {
       fprintf(stderr, "Unknown option: %s\n", argv[i]);
       print_usage(argv[0]);
@@ -541,7 +750,8 @@ static bool append_program_declarations(AstNode **program,
 }
 
 static AstNode *load_named_root_module(SourceLoader *loader, Arena *arena,
-                                       const char *name, const char *root) {
+                                       const char *name, const char *root,
+                                       bool defer_children) {
   char *module_file = NULL;
   char *module_base = NULL;
   if (regular_file_exists(root)) {
@@ -567,7 +777,10 @@ static AstNode *load_named_root_module(SourceLoader *loader, Arena *arena,
     loader->had_error = true;
     return NULL;
   }
+  bool saved_defer = loader->defer_external_modules;
+  loader->defer_external_modules = defer_children;
   AstNode *loaded = load_source_program(loader, canonical, module_base);
+  loader->defer_external_modules = saved_defer;
   free(canonical);
   free(module_base);
   if (!loaded)
@@ -580,12 +793,291 @@ static AstNode *load_named_root_module(SourceLoader *loader, Arena *arena,
   return wrapper;
 }
 
+static bool materialize_std_child(SourceLoader *loader, AstNode *standard,
+                                  const char *root, const char *name,
+                                  bool *changed) {
+  if (!standard || standard->kind != AST_MOD_DECL || !name)
+    return true;
+  AstNode *child = standard->as.mod_decl.declarations;
+  while (child &&
+         (child->kind != AST_MOD_DECL ||
+          strcmp(child->as.mod_decl.name, name) != 0))
+    child = child->next;
+  if (!child || !child->as.mod_decl.is_external)
+    return true;
+
+  ModuleLocation location;
+  if (!locate_module(loader, name, root, &location))
+    return false;
+  char *canonical = realpath(location.source_path, NULL);
+  if (!canonical) {
+    perror("realpath");
+    loader->had_error = true;
+    free(location.source_path);
+    free(location.child_base);
+    return false;
+  }
+  bool saved_defer = loader->defer_external_modules;
+  loader->defer_external_modules = false;
+  AstNode *loaded =
+      load_source_program(loader, canonical, location.child_base);
+  loader->defer_external_modules = saved_defer;
+  free(canonical);
+  free(location.source_path);
+  free(location.child_base);
+  if (!loaded)
+    return false;
+  child->as.mod_decl.declarations = loaded->as.program.declarations;
+  child->as.mod_decl.is_external = false;
+  *changed = true;
+  return true;
+}
+
+static bool scan_std_references(SourceLoader *loader, AstNode *standard,
+                                const char *root, AstNode *node,
+                                bool *changed);
+
+static bool scan_std_reference_list(SourceLoader *loader, AstNode *standard,
+                                    const char *root, AstNode *node,
+                                    bool *changed) {
+  for (; node; node = node->next)
+    if (!scan_std_references(loader, standard, root, node, changed))
+      return false;
+  return true;
+}
+
+static bool scan_std_field_reference(SourceLoader *loader, AstNode *standard,
+                                     const char *root, AstNode *field,
+                                     bool *changed) {
+  if (!field || field->kind != AST_FIELD_EXPR)
+    return true;
+  AstNode *target = field->as.field.target;
+  if (target && target->kind == AST_IDENTIFIER &&
+      strcmp(target->as.identifier.name, "std") == 0)
+    return materialize_std_child(loader, standard, root,
+                                 field->as.field.field, changed);
+  return scan_std_field_reference(loader, standard, root, target, changed);
+}
+
+static bool scan_std_references(SourceLoader *loader, AstNode *standard,
+                                const char *root, AstNode *node,
+                                bool *changed) {
+  if (!node)
+    return true;
+  switch (node->kind) {
+  case AST_PROGRAM:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.program.declarations, changed);
+  case AST_MOD_DECL:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.mod_decl.declarations, changed);
+  case AST_USE_DECL: {
+    AstNode *first = node->as.use_decl.path;
+    AstNode *second = first ? first->next : NULL;
+    if (first && second && first->kind == AST_IDENTIFIER &&
+        second->kind == AST_IDENTIFIER &&
+        strcmp(first->as.identifier.name, "std") == 0)
+      return materialize_std_child(loader, standard, root,
+                                   second->as.identifier.name, changed);
+    return true;
+  }
+  case AST_FUNC_DECL:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.func_decl.params, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.func_decl.ret_type, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.func_decl.body, changed);
+  case AST_METHOD_DECL:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.method_decl.type_args, changed) &&
+           scan_std_reference_list(loader, standard, root,
+                                   node->as.method_decl.methods, changed);
+  case AST_INTERFACE_DECL:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.interface_decl.methods, changed);
+  case AST_TYPE_DECL:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.type_decl.fields, changed);
+  case AST_VARIANT_DECL:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.variant_decl.arms, changed);
+  case AST_VARIANT_ARM:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.variant_arm.fields, changed);
+  case AST_FIELD_DECL:
+    return scan_std_references(loader, standard, root,
+                               node->as.field_decl.type, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.field_decl.default_val, changed);
+  case AST_EXTERN_DECL:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.extern_decl.params, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.extern_decl.ret_type, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.extern_decl.var_type, changed);
+  case AST_PARAM:
+    return scan_std_references(loader, standard, root, node->as.param.type,
+                               changed);
+  case AST_VAR_DECL:
+    return scan_std_references(loader, standard, root, node->as.var_decl.type,
+                               changed) &&
+           scan_std_references(loader, standard, root, node->as.var_decl.init,
+                               changed);
+  case AST_BLOCK:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.block.statements, changed);
+  case AST_RETURN_STMT:
+    return scan_std_references(loader, standard, root,
+                               node->as.return_stmt.value, changed);
+  case AST_DEFER_STMT:
+    return scan_std_references(loader, standard, root,
+                               node->as.defer_stmt.expression, changed);
+  case AST_IF_STMT:
+    return scan_std_references(loader, standard, root,
+                               node->as.if_stmt.condition, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.if_stmt.then_branch, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.if_stmt.else_branch, changed);
+  case AST_WHILE_STMT:
+    return scan_std_references(loader, standard, root,
+                               node->as.while_stmt.condition, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.while_stmt.body, changed);
+  case AST_FOR_STMT:
+    return scan_std_references(loader, standard, root,
+                               node->as.for_stmt.iter, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.for_stmt.body, changed);
+  case AST_LOOP_STMT:
+    return scan_std_references(loader, standard, root,
+                               node->as.loop_stmt.body, changed);
+  case AST_UNSAFE_BLOCK:
+    return scan_std_references(loader, standard, root,
+                               node->as.unsafe_block.body, changed);
+  case AST_MATCH_STMT:
+    return scan_std_references(loader, standard, root,
+                               node->as.match_stmt.subject, changed) &&
+           scan_std_reference_list(loader, standard, root,
+                                   node->as.match_stmt.arms, changed);
+  case AST_MATCH_ARM:
+    return scan_std_references(loader, standard, root,
+                               node->as.match_arm.pattern, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.match_arm.guard, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.match_arm.body, changed);
+  case AST_BINARY_EXPR:
+    return scan_std_references(loader, standard, root, node->as.binary.left,
+                               changed) &&
+           scan_std_references(loader, standard, root, node->as.binary.right,
+                               changed);
+  case AST_UNARY_EXPR:
+    return scan_std_references(loader, standard, root, node->as.unary.expr,
+                               changed);
+  case AST_ASSIGN:
+    return scan_std_references(loader, standard, root, node->as.assign.target,
+                               changed) &&
+           scan_std_references(loader, standard, root, node->as.assign.value,
+                               changed);
+  case AST_CALL_EXPR:
+    return scan_std_references(loader, standard, root, node->as.call.callee,
+                               changed) &&
+           scan_std_reference_list(loader, standard, root,
+                                   node->as.call.type_args, changed) &&
+           scan_std_reference_list(loader, standard, root,
+                                   node->as.call.args, changed);
+  case AST_INDEX_EXPR:
+    return scan_std_references(loader, standard, root, node->as.index.target,
+                               changed) &&
+           scan_std_references(loader, standard, root, node->as.index.index,
+                               changed);
+  case AST_FIELD_EXPR:
+    return scan_std_field_reference(loader, standard, root, node, changed) &&
+           scan_std_references(loader, standard, root, node->as.field.target,
+                               changed);
+  case AST_RANGE_EXPR:
+    return scan_std_references(loader, standard, root,
+                               node->as.range_expr.start, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.range_expr.end, changed);
+  case AST_CAST_EXPR:
+    return scan_std_references(loader, standard, root, node->as.cast.expr,
+                               changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.cast.target_type, changed);
+  case AST_PROMOTE_EXPR:
+    return scan_std_references(loader, standard, root,
+                               node->as.promote.expr, changed);
+  case AST_TRY_EXPR:
+    return scan_std_references(loader, standard, root,
+                               node->as.try_expr.expr, changed);
+  case AST_CATCH_EXPR:
+    return scan_std_references(loader, standard, root,
+                               node->as.catch_expr.expr, changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.catch_expr.handler, changed);
+  case AST_ARRAY_LITERAL:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.array_literal.elems, changed);
+  case AST_TUPLE_EXPR:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.tuple_expr.elems, changed);
+  case AST_NAMED_ARG:
+    return scan_std_references(loader, standard, root,
+                               node->as.named_arg.value, changed);
+  case AST_TUPLE_DESTRUCTURE:
+    return scan_std_reference_list(loader, standard, root,
+                                   node->as.tuple_destructure.targets,
+                                   changed) &&
+           scan_std_references(loader, standard, root,
+                               node->as.tuple_destructure.init, changed);
+  case AST_TYPE_EXPR:
+    if (node->as.type_expr.module &&
+        strncmp(node->as.type_expr.module, "std.", 4) == 0) {
+      const char *child = node->as.type_expr.module + 4;
+      size_t length = strcspn(child, ".");
+      char name[256];
+      if (length && length < sizeof(name)) {
+        memcpy(name, child, length);
+        name[length] = '\0';
+        if (!materialize_std_child(loader, standard, root, name, changed))
+          return false;
+      }
+    }
+    return scan_std_references(loader, standard, root,
+                               node->as.type_expr.inner, changed) &&
+           scan_std_reference_list(loader, standard, root,
+                                   node->as.type_expr.elems, changed) &&
+           scan_std_reference_list(loader, standard, root,
+                                   node->as.type_expr.type_args, changed);
+  default:
+    return true;
+  }
+}
+
+static bool materialize_standard_references(SourceLoader *loader,
+                                            AstNode *program,
+                                            AstNode *standard,
+                                            const char *root) {
+  bool changed;
+  do {
+    changed = false;
+    if (!scan_std_references(loader, standard, root, program, &changed))
+      return false;
+  } while (changed);
+  return true;
+}
+
 int main(int argc, char **argv) {
   Config config = parse_args(argc, argv);
   bool had_error = false;
   RunesProject project;
   runes_project_init(&project);
   bool has_project = false;
+  RunesTarget target;
   char *discovered_manifest = NULL;
   char *stdlib_root = NULL;
   char **module_paths = NULL;
@@ -601,6 +1093,25 @@ int main(int argc, char **argv) {
       goto early_cleanup;
     }
     has_project = true;
+  }
+  const char *target_name =
+      config.target_name
+          ? config.target_name
+          : project.target ? project.target : runes_target_host_triple();
+  if (!target_name) {
+    fprintf(stderr,
+            "Cannot infer a supported host target; pass --target explicitly\n");
+    had_error = true;
+    goto early_cleanup;
+  }
+  if (!runes_target_parse(target_name, &target)) {
+    fprintf(stderr, "Unsupported target triple: %s\n", target_name);
+    had_error = true;
+    goto early_cleanup;
+  }
+  if (config.target_info) {
+    printf("%s\n", target.triple);
+    goto early_cleanup;
   }
   if (config.file_count == 0 && !config.project_info) {
     if (!has_project) {
@@ -683,6 +1194,7 @@ int main(int argc, char **argv) {
     printf("manifest: %s\n", project.manifest_path);
     printf("project: %s\n", project.name);
     printf("entry: %s\n", project.entry);
+    printf("target: %s\n", target.triple);
     printf("stdlib: %s\n", stdlib_root ? stdlib_root : "<not found>");
     printf("prelude: %s\n", config.with_prelude ? "enabled" : "disabled");
     for (size_t i = 0; i < module_path_count; i++)
@@ -705,10 +1217,12 @@ int main(int argc, char **argv) {
 
   AstNode *program = NULL;
   AstNode **next_decl = NULL;
+  AstNode *standard_module = NULL;
   SourceLoader loader = {.arena = &arena,
                          .strtab = &strtab,
                          .module_paths = (const char **)module_paths,
-                         .module_path_count = module_path_count};
+                         .module_path_count = module_path_count,
+                         .target = &target};
 
   if (config.lex_only) {
     for (int i = 0; i < config.file_count; i++) {
@@ -782,7 +1296,9 @@ int main(int argc, char **argv) {
    */
   if (inject_std_namespace) {
     AstNode *standard =
-        load_named_root_module(&loader, &arena, "std", stdlib_root);
+        load_named_root_module(&loader, &arena, "std", stdlib_root, true);
+    standard_module =
+        standard ? standard->as.program.declarations : NULL;
     if (!standard ||
         !append_program_declarations(&program, &next_decl, standard)) {
       had_error = true;
@@ -838,12 +1354,19 @@ int main(int argc, char **argv) {
   for (size_t i = 0; i < project.dependency_count; i++) {
     AstNode *dependency =
         load_named_root_module(&loader, &arena, project.dependency_names[i],
-                               project.dependency_paths[i]);
+                               project.dependency_paths[i], false);
     if (!dependency ||
         !append_program_declarations(&program, &next_decl, dependency)) {
       had_error = true;
       goto cleanup;
     }
+  }
+
+  if (standard_module &&
+      !materialize_standard_references(&loader, program, standard_module,
+                                       stdlib_root)) {
+    had_error = true;
+    goto cleanup;
   }
 
   if (config.dump_ast && program) {
@@ -886,6 +1409,8 @@ int main(int argc, char **argv) {
     had_error = true;
     goto cleanup;
   }
+
+  reachability_mark(program);
 
   if (config.emit_c_filename) {
     FILE *out = fopen(config.emit_c_filename, "wb");

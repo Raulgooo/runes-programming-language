@@ -234,6 +234,7 @@ void runes_project_destroy(RunesProject *project) {
   free(project->root);
   free(project->name);
   free(project->entry);
+  free(project->target);
   for (size_t i = 0; i < project->module_root_count; i++)
     free(project->module_roots[i]);
   free(project->module_roots);
@@ -332,16 +333,19 @@ bool runes_project_load(RunesProject *project, const char *manifest_path) {
     char *key = trim(text);
     char *value = trim(equals + 1);
     if (section == SECTION_PROJECT &&
-        (strcmp(key, "name") == 0 || strcmp(key, "entry") == 0)) {
+        (strcmp(key, "name") == 0 || strcmp(key, "entry") == 0 ||
+         strcmp(key, "target") == 0)) {
       char *parsed = parse_quoted_string(value);
-      char **target =
-          strcmp(key, "name") == 0 ? &project->name : &project->entry;
-      if (!parsed || *target) {
+      char **field = strcmp(key, "name") == 0
+                         ? &project->name
+                         : strcmp(key, "entry") == 0 ? &project->entry
+                                                     : &project->target;
+      if (!parsed || *field) {
         free(parsed);
         manifest_error(canonical, line, "invalid or duplicate project field");
         ok = false;
       } else {
-        *target = parsed;
+        *field = parsed;
       }
     } else if (section == SECTION_MODULES && strcmp(key, "roots") == 0) {
       if (project->module_root_count ||

@@ -1,0 +1,176 @@
+-- Linux x86-64 file-descriptor operations.
+--
+-- Raw descriptors are i32 values. This module deliberately does not pretend
+-- they are owned resources: Runes does not yet have move-only values or drop.
+
+use std.os.linux.syscall
+use std.os.linux.result as linux_result
+use std.os.linux.result.LinuxResult
+use std.os.linux.result.LinuxStatus
+
+const usize SYS_READ = 0
+const usize SYS_WRITE = 1
+const usize SYS_CLOSE = 3
+const usize SYS_LSEEK = 8
+const usize SYS_DUP = 32
+const usize SYS_DUP2 = 33
+const usize SYS_OPENAT = 257
+
+const i32 EINTR = 4
+const i32 EIO = 5
+
+f read_pointer(
+    descriptor: i32,
+    pointer: *u8,
+    length: usize
+) = outcome: LinuxResult<usize> {
+    i64 raw = 0
+    unsafe {
+        raw = syscall.call3(
+            SYS_READ,
+            descriptor as u64,
+            pointer as u64,
+            length as u64
+        )
+    }
+    outcome = linux_result.usize_from_raw(raw)
+}
+
+f write_pointer(
+    descriptor: i32,
+    pointer: *u8,
+    length: usize
+) = outcome: LinuxResult<usize> {
+    i64 raw = 0
+    unsafe {
+        raw = syscall.call3(
+            SYS_WRITE,
+            descriptor as u64,
+            pointer as u64,
+            length as u64
+        )
+    }
+    outcome = linux_result.usize_from_raw(raw)
+}
+
+pub f read(
+    descriptor: i32,
+    buffer: []u8
+) = outcome: LinuxResult<usize> {
+    outcome = read_pointer(descriptor, buffer.ptr, buffer.len)
+}
+
+pub f write(
+    descriptor: i32,
+    buffer: []u8
+) = outcome: LinuxResult<usize> {
+    outcome = write_pointer(descriptor, buffer.ptr, buffer.len)
+}
+
+pub f write_text(
+    descriptor: i32,
+    text: str
+) = outcome: LinuxResult<usize> {
+    unsafe {
+        outcome = write_pointer(
+            descriptor,
+            text.ptr as *u8,
+            text.len
+        )
+    }
+}
+
+pub f write_all_text(
+    descriptor: i32,
+    text: str
+) = outcome: LinuxStatus {
+    usize total = 0
+    while total < text.len {
+        LinuxResult<usize> attempt
+        unsafe {
+            attempt = write_pointer(
+                descriptor,
+                (text.ptr + total) as *u8,
+                text.len - total
+            )
+        }
+
+        match attempt {
+            Value(written) -> {
+                if written == 0 {
+                    outcome = LinuxStatus.Failure(EIO)
+                    return
+                }
+                total = total + written
+            }
+            Failure(code) -> {
+                if code != EINTR {
+                    outcome = LinuxStatus.Failure(code)
+                    return
+                }
+            }
+        }
+    }
+    outcome = LinuxStatus.Success()
+}
+
+pub f close(descriptor: i32) = outcome: LinuxStatus {
+    outcome = linux_result.status_from_raw(
+        syscall.call1(SYS_CLOSE, descriptor as u64)
+    )
+}
+
+pub f seek(
+    descriptor: i32,
+    offset: i64,
+    origin: i32
+) = outcome: LinuxResult<usize> {
+    outcome = linux_result.usize_from_raw(
+        syscall.call3(
+            SYS_LSEEK,
+            descriptor as u64,
+            offset as u64,
+            origin as u64
+        )
+    )
+}
+
+pub f duplicate(descriptor: i32) = outcome: LinuxResult<i32> {
+    outcome = linux_result.i32_from_raw(
+        syscall.call1(SYS_DUP, descriptor as u64)
+    )
+}
+
+pub f duplicate_to(
+    descriptor: i32,
+    destination: i32
+) = outcome: LinuxResult<i32> {
+    outcome = linux_result.i32_from_raw(
+        syscall.call2(
+            SYS_DUP2,
+            descriptor as u64,
+            destination as u64
+        )
+    )
+}
+
+-- path must point to a NUL-terminated byte sequence that remains valid for the
+-- duration of the call. A safe path/string adapter belongs above this layer.
+pub f open_at_raw(
+    directory: i32,
+    path: *u8,
+    flags: i32,
+    mode: u32
+) = outcome: LinuxResult<i32> {
+    i64 raw = 0
+    unsafe {
+        raw = syscall.call4(
+            SYS_OPENAT,
+            directory as u64,
+            path as u64,
+            flags as u64,
+            mode as u64
+        )
+    }
+    outcome = linux_result.i32_from_raw(raw)
+}

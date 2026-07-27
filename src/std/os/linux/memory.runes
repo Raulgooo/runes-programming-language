@@ -1,0 +1,74 @@
+-- Linux x86-64 virtual-memory operations.
+--
+-- These wrappers expose kernel primitives, not an allocator. Callers remain
+-- responsible for mapping ownership, valid ranges, alignment, and protection.
+
+use std.os.linux.syscall
+use std.os.linux.result as linux_result
+use std.os.linux.result.LinuxResult
+use std.os.linux.result.LinuxStatus
+
+const usize SYS_MMAP = 9
+const usize SYS_MPROTECT = 10
+const usize SYS_MUNMAP = 11
+
+pub f map(
+    address: usize,
+    length: usize,
+    protection: i32,
+    flags: i32,
+    descriptor: i32,
+    offset: usize
+) = outcome: LinuxResult<*u8> {
+    i64 raw = syscall.call6(
+        SYS_MMAP,
+        address as u64,
+        length as u64,
+        protection as u64,
+        flags as u64,
+        descriptor as u64,
+        offset as u64
+    )
+
+    if linux_result.is_error(raw) {
+        outcome = LinuxResult.Failure<*u8>(
+            linux_result.errno_from_raw(raw)
+        )
+    } else {
+        unsafe {
+            outcome = LinuxResult.Value<*u8>((raw as u64) as *u8)
+        }
+    }
+}
+
+pub f unmap(
+    address: *u8,
+    length: usize
+) = outcome: LinuxStatus {
+    i64 raw = 0
+    unsafe {
+        raw = syscall.call2(
+            SYS_MUNMAP,
+            address as u64,
+            length as u64
+        )
+    }
+    outcome = linux_result.status_from_raw(raw)
+}
+
+pub f protect(
+    address: *u8,
+    length: usize,
+    protection: i32
+) = outcome: LinuxStatus {
+    i64 raw = 0
+    unsafe {
+        raw = syscall.call3(
+            SYS_MPROTECT,
+            address as u64,
+            length as u64,
+            protection as u64
+        )
+    }
+    outcome = linux_result.status_from_raw(raw)
+}

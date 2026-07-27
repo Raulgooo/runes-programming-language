@@ -147,9 +147,46 @@ void test_generic_syntax() {
     arena_destroy(&arena);
 }
 
+void test_import_alias_syntax() {
+    printf("Running test_import_alias_syntax...\n");
+    Arena arena;
+    assert(arena_init(&arena));
+
+    const char *source =
+        "use std.core.Option as Maybe\n"
+        "use std.bytes.find\n";
+
+    StrTab strtab;
+    strtab_init(&strtab, &arena);
+    Lexer lexer;
+    lexer_init(&lexer, source, &strtab);
+    Parser parser;
+    parser_init(&parser, &lexer, &arena, "import_alias_test.runes", source);
+    AstNode *program = parser_parse(&parser);
+    assert(program != NULL && !parser.had_error);
+
+    AstNode *aliased = program->as.program.declarations;
+    assert(aliased && aliased->kind == AST_USE_DECL);
+    assert(aliased->as.use_decl.alias &&
+           strcmp(aliased->as.use_decl.alias, "Maybe") == 0);
+    assert(strcmp(aliased->as.use_decl.path->as.identifier.name, "std") == 0);
+    assert(strcmp(aliased->as.use_decl.path->next->as.identifier.name,
+                  "core") == 0);
+    assert(strcmp(aliased->as.use_decl.path->next->next->as.identifier.name,
+                  "Option") == 0);
+
+    AstNode *plain = aliased->next;
+    assert(plain && plain->kind == AST_USE_DECL);
+    assert(plain->as.use_decl.alias == NULL);
+
+    printf("test_import_alias_syntax passed!\n");
+    arena_destroy(&arena);
+}
+
 int main() {
     test_attributes();
     test_bare_return_stops_at_newline();
     test_generic_syntax();
+    test_import_alias_syntax();
     return 0;
 }

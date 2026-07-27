@@ -81,6 +81,10 @@ typedef struct {
   int gc_root_capacity;
   int loop_gc_root_starts[64];
   int loop_codegen_depth;
+  AstNode **deferred;
+  int deferred_count;
+  int deferred_capacity;
+  int loop_defer_starts[64];
   const char *current_prefix;
 } Codegen;
 

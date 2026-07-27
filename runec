@@ -25,6 +25,7 @@ Project options:
   --project FILE     Use an explicit runes.toml manifest.
   --module-path DIR  Add a module search root; may be repeated.
   --stdlib DIR       Use DIR as the standard library root.
+  --target TRIPLE    Compile for an explicit target triple.
   --no-prelude       Build without the runtime prelude.
 
 Environment:
@@ -45,6 +46,7 @@ output=""
 with_prelude=true
 project=""
 stdlib=""
+target=""
 module_paths=()
 while (($#)); do
   case "$1" in
@@ -63,6 +65,11 @@ while (($#)); do
     --stdlib)
       (($# >= 2)) || { echo "runec: --stdlib requires a path" >&2; exit 2; }
       stdlib=$2
+      shift 2
+      ;;
+    --target)
+      (($# >= 2)) || { echo "runec: --target requires a triple" >&2; exit 2; }
+      target=$2
       shift 2
       ;;
     -o|--output)
@@ -101,6 +108,7 @@ else
 fi
 [[ -z "$project" ]] || compiler_args+=(--project "$project")
 [[ -z "$stdlib" ]] || compiler_args+=(--stdlib "$stdlib")
+[[ -z "$target" ]] || compiler_args+=(--target "$target")
 for path in "${module_paths[@]}"; do
   compiler_args+=(--module-path "$path")
 done
@@ -127,6 +135,13 @@ fi
 
 cc=${CC:-gcc}
 read -r -a env_cflags <<< "${CFLAGS:-}"
+platform_sources=()
+resolved_target=$("$COMPILER" "${compiler_args[@]}" --target-info)
+if [[ "$resolved_target" == x86_64-unknown-linux-* ]]; then
+  platform_sources+=("$ROOT/src/platform/linux/x86_64/syscall.S")
+else
+  platform_sources+=("$ROOT/src/platform/unsupported/linux_syscall.c")
+fi
 
 if [[ "$COMMAND" == build ]]; then
   output=${output:-"$ROOT/build/$name"}
@@ -135,7 +150,7 @@ if [[ "$COMMAND" == build ]]; then
   "$COMPILER" "${compiler_args[@]}" "${inputs[@]}" --emit-c "$c_file"
   "$cc" -I"$ROOT/src" -std=c11 -O2 -Wall -Wextra "${env_cflags[@]}" \
     "$c_file" "$ROOT/src/runtime.c" "$ROOT/src/utils/arena.c" \
-    -lm "${tail_args[@]}" -o "$output"
+    "${platform_sources[@]}" -lm "${tail_args[@]}" -o "$output"
   printf '%s\n' "$output"
   exit 0
 fi
@@ -146,5 +161,6 @@ c_file="$temp_dir/$name.c"
 binary="$temp_dir/$name"
 "$COMPILER" "${compiler_args[@]}" "${inputs[@]}" --emit-c "$c_file"
 "$cc" -I"$ROOT/src" -std=c11 -O2 -Wall -Wextra "${env_cflags[@]}" \
-  "$c_file" "$ROOT/src/runtime.c" "$ROOT/src/utils/arena.c" -lm -o "$binary"
+  "$c_file" "$ROOT/src/runtime.c" "$ROOT/src/utils/arena.c" \
+  "${platform_sources[@]}" -lm -o "$binary"
 "$binary" "${tail_args[@]}"

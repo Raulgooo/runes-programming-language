@@ -4,8 +4,9 @@ Status: design and implementation roadmap. None of the modules described here
 are part of the compiler-required runtime unless explicitly identified in
 `v0.1-runtime-requirements.md`.
 
-For the concrete starting sequence, module layout, initial APIs, and acceptance
-gates, see the [standard-library implementation plan](implementation-plan.md).
+For the active implementation sequence, dependencies, initial APIs, and
+acceptance gates, see the
+[application-readiness plan](app-readiness-plan.md).
 
 The objective is an ergonomic library ecosystem capable of supporting compiler
 bootstrapping, command-line tools, servers, desktop applications, games,
@@ -24,8 +25,11 @@ Runes should use four clearly separated layers:
    graphics, databases, numerical computing, ML, audio, and UI frameworks.
 4. **Application libraries**: domain-specific code and product policy.
 
-Only layer 1 is linked automatically by `runec`. Everything else should be
-normal Runes source or an explicit native dependency.
+The intended architecture links layer 1 automatically; everything else should
+be reachable normal Runes source or an explicit native dependency. During the
+current bootstrap, the compiler emits the loaded standard-library tree and
+therefore also links the selected platform syscall bridge. Reachability-based
+module loading and emission are tracked in the application-readiness plan.
 
 ## 2. Ergonomic design requirements
 

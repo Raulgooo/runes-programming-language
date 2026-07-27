@@ -158,8 +158,9 @@ void ast_print_ext(AstNode *node, int level) {
   case AST_VAR_DECL:
     print_attrs(node->as.var_decl.attrs, level);
     indent(level);
-    printf("VarDecl name='%s' is_const=%s is_volatile=%s\n",
+    printf("VarDecl name='%s' is_pub=%s is_const=%s is_volatile=%s\n",
            node->as.var_decl.name ? node->as.var_decl.name : "(null)",
+           node->as.var_decl.is_pub ? "true" : "false",
            node->as.var_decl.is_const ? "true" : "false",
            node->as.var_decl.is_volatile ? "true" : "false");
     if (node->as.var_decl.type) {
@@ -247,7 +248,8 @@ void ast_print_ext(AstNode *node, int level) {
     break;
 
   case AST_USE_DECL:
-    printf("UseDecl\n");
+    printf("UseDecl alias='%s'\n",
+           node->as.use_decl.alias ? node->as.use_decl.alias : "(null)");
     ast_print_ext(node->as.use_decl.path, level + 1);
     break;
 
@@ -382,6 +384,11 @@ void ast_print_ext(AstNode *node, int level) {
     if (node->as.return_stmt.value) {
       ast_print_ext(node->as.return_stmt.value, level + 1);
     }
+    break;
+
+  case AST_DEFER_STMT:
+    printf("DeferStmt\n");
+    ast_print_ext(node->as.defer_stmt.expression, level + 1);
     break;
 
   case AST_ASSIGN:

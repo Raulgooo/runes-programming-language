@@ -107,6 +107,7 @@ typedef enum {
   // statements
   AST_BLOCK,
   AST_RETURN_STMT,
+  AST_DEFER_STMT,
   AST_IF_STMT,
   AST_WHILE_STMT,
   AST_FOR_STMT,
@@ -185,6 +186,8 @@ typedef struct AstNode {
   struct AstNode *resolved_decl; // Declaration selected during resolution
   uint32_t memory_provenance;
   struct AstNode *enclosing_function;
+  Attr *decl_attrs; // complete declaration attributes, including #[cfg]
+  bool codegen_reachable; // set after type checking by reachability analysis
 
   union {
 
@@ -221,6 +224,7 @@ typedef struct AstNode {
 
     // i32 x = 5   /   const i32 MAX = 512   /   volatile *u32 uart = ...
     struct {
+      bool is_pub;
       bool is_const;
       bool is_volatile;
       const char *name;
@@ -295,9 +299,12 @@ typedef struct AstNode {
       struct AstNode *declarations; // linked list
     } mod_decl;
 
-    // use kernel.arch.x86.read_cr3
+    // use kernel.arch.x86.read_cr3 as read_control
     struct {
       struct AstNode *path; // linked list of AST_IDENTIFIER segments
+      const char *alias;    // explicit local name, or NULL for final segment
+      struct AstNode
+          *target_decl; // declaration bound before generic specialization
     } use_decl;
 
     // extern f memset(ptr: *u8, val: i32, len: usize)
@@ -329,6 +336,10 @@ typedef struct AstNode {
     struct {
       struct AstNode *value; // NULL for bare return
     } return_stmt;
+
+    struct {
+      struct AstNode *expression; // evaluated when the enclosing scope exits
+    } defer_stmt;
 
     // if x > 0 { ... } else if ... { ... } else { ... }
     // also used as expression: str s = if cond { "a" } else { "b" }
@@ -594,7 +605,7 @@ AstNode *ast_new_error_decl(Arena *arena, bool is_pub, const char *name,
                             AstNode *variants);
 AstNode *ast_new_mod_decl(Arena *arena, bool is_pub, const char *name,
                           AstNode *declarations);
-AstNode *ast_new_use_decl(Arena *arena, AstNode *path);
+AstNode *ast_new_use_decl(Arena *arena, AstNode *path, const char *alias);
 AstNode *ast_new_extern_decl(Arena *arena, bool is_func, const char *name,
                              AstNode *params, const char *ret_name,
                              AstNode *ret_type, AstNode *var_type);
@@ -603,6 +614,7 @@ AstNode *ast_new_param(Arena *arena, const char *name, AstNode *type);
 // statements
 AstNode *ast_new_block(Arena *arena, AstNode *statements);
 AstNode *ast_new_return_stmt(Arena *arena, AstNode *value);
+AstNode *ast_new_defer_stmt(Arena *arena, AstNode *expression);
 AstNode *ast_new_if_stmt(Arena *arena, AstNode *condition, AstNode *then_branch,
                          AstNode *else_branch);
 AstNode *ast_new_while_stmt(Arena *arena, AstNode *condition, AstNode *body);

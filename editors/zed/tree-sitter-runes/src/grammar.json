@@ -523,6 +523,10 @@
         },
         {
           "type": "STRING",
+          "value": "defer"
+        },
+        {
+          "type": "STRING",
           "value": "match"
         },
         {

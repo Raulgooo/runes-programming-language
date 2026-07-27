@@ -54,7 +54,7 @@ library APIs.
 
 - arrays: `.len`, integer indexing, ranges, iteration;
 - slices: `.len`, mutable `.ptr`, indexing, ranges, iteration;
-- read-only slice raw pointers require an explicit FFI conversion policy;
+- read-only slices expose `*const T` pointers for honest FFI signatures;
 - strings: `.len`, byte indexing, ranges, unsafe `.ptr`;
 - structs: declared fields and methods;
 - interfaces: declared methods;
@@ -188,7 +188,7 @@ library work.
 | Modules | inline/external modules, visibility, qualified paths, private `use`, canonical loading |
 | Projects | strict `runes.toml`, module roots, local path dependencies, automatic `std` namespace |
 | Memory | stack checking, raw ownership, nested arenas, deep promotion, precise scoped GC, flex realm |
-| Pointers | non-null/nullable pointers, address-of, unwrap, checked slices, unsafe arithmetic/casts |
+| Pointers | mutable/read-only and non-null/nullable pointers, address-of, unwrap, checked slices, unsafe arithmetic/casts |
 | Systems | extern functions/globals, selected ABI/layout attributes, volatile/MMIO, inline assembly |
 | Backend | readable C11 emission, GCC/Clang build driver, runtime linking |
 | Tooling | check/run/build/emit-C/project commands, Zed and VS Code highlighting, test/fuzz targets |
@@ -211,11 +211,12 @@ Language/tooling:
 
 - no variadic functions or function overloading;
 - no async language/runtime;
-- no `defer`, deterministic destructors, or general cleanup construct;
+- no deterministic destructors or move-only resources; explicit lexical
+  `defer expression` cleanup is available;
 - no const generics, higher-kinded types, specialization, or variance;
 - no wrapping/saturating arithmetic forms or unchecked indexing;
-- no import aliases, wildcard imports, or public re-exports;
-- extern visibility is always public, global visibility is private-only, and
+- no grouped imports, wildcard imports, or public re-exports;
+- extern visibility is always public, only constant globals can be public, and
   method visibility is incomplete;
 - no automatic C-string conversion or lifetime extension;
 - no pipeline syntax in v0.1;
