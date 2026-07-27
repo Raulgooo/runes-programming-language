@@ -14,6 +14,7 @@ tested on Linux x86-64 with GCC and Clang.
 | Install the compiler and run a first program | [Getting started](getting-started.md) |
 | Learn Runes progressively | [Learn Runes handbook](guide/README.md) |
 | Look up exact syntax or semantics | [Complete language reference](reference/README.md) |
+| See the standard library that works today | [Current standard-library reference](reference/standard-library.md) |
 | Read the normative language rules | [Runes v0.1 specification](specv0_1.md) |
 | Configure modules and a `runes.toml` project | [Projects and modules](projects-and-modules.md) |
 | Understand what is implemented or incomplete | [Implementation status](reference/implementation-status.md) |
@@ -49,6 +50,7 @@ you need every accepted form, restriction, or runtime rule.
 | Realm-sensitive `alloc()`, ownership, cleanup, and raw allocation | [Allocation](reference/allocation.md) |
 | Realms, provenance, lifetimes, promotion, GC, pointers, and unsafe operations | [Memory and unsafe](reference/memory-and-unsafe.md) |
 | Modules, projects, visibility, FFI, ABI attributes, builtins, and commands | [Modules, FFI, and tooling](reference/modules-ffi-tooling.md) |
+| Implemented `std.core` and `std.bytes` APIs | [Standard library](reference/standard-library.md) |
 | Backend, platform, visibility, library, and tooling limitations | [Implementation status](reference/implementation-status.md) |
 
 The [feature coverage matrix](feature-matrix.md) maps language features to

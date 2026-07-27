@@ -182,45 +182,50 @@ language tooling.
 
 ## Current state
 
-The standard-library namespace exists, but very little library code has been
-written:
+The standard-library namespace now contains its first tested foundations:
 
-- `src/std/mod.runes` declares the `core` and `os` modules;
-- `src/std/core.runes` is empty;
-- `src/std/os.runes` is empty;
+- `src/std/mod.runes` exports `core`, `bytes`, and the empty `os` module;
+- `src/std/core.runes` implements `Option<T>` and its initial methods;
+- `src/std/bytes.runes` implements allocation-free byte-slice utilities;
+- `src/std/io.runes` and `src/std/os.runes` are empty placeholders;
 - `src/std/prelude.runes` contains compiler/runtime ABI declarations, not
   application-level library APIs.
 
 The prelude must remain limited to compiler-required runtime contracts.
 Ordinary library APIs should be imported explicitly from `std`.
 
-## Target source layout
+## Current source layout
 
-Start with:
+The checked-in layout is:
 
 ```text
 src/std/
 ├── mod.runes
 ├── prelude.runes
 ├── core.runes
-├── core/
-│   └── option.runes
 ├── bytes.runes
 ├── io.runes
-├── os.runes
-└── os/
-    └── linux.runes
+└── os.runes
 ```
 
 Responsibilities:
 
 - `prelude.runes`: compiler/runtime contracts only;
-- `core.option`: generic optional values;
+- `core`: generic optional values and future allocation-free foundations;
 - `bytes`: safe operations over borrowed byte slices;
-- `os.linux`: raw unsafe POSIX declarations;
-- `io`: safe wrappers around raw operating-system operations.
+- `os`: currently empty; future explicit platform boundaries;
+- `io`: currently empty and unexported; future safe I/O wrappers.
+
+The `os/linux.runes` backend should be added when the raw Linux I/O milestone
+begins, rather than documented as though it already exists.
 
 ## Milestone 1: add a stdlib test harness
+
+Current status: stdlib samples are integrated into the existing `make test`
+pipeline through `Makefile`. The positive samples are
+`core_codegen_std_option.runes` and `core_codegen_std_bytes.runes`; related
+negative compiler samples use the existing expected-failure loop. A dedicated
+`test-stdlib` target may still be split out when the library grows.
 
 Create:
 
@@ -248,7 +253,10 @@ The harness must:
 
 This comes first so no stdlib API is accepted without executable behavior.
 
-## Milestone 2: implement `std.core.option`
+## Milestone 2: implement `std.core`
+
+Current status: implemented and covered by
+`src/tests/samples/core_codegen_std_option.runes`.
 
 Start with:
 
@@ -264,22 +272,27 @@ Implement only:
 is_some
 is_none
 unwrap_or
+unwrap
 map
 ```
 
-Example target:
+Current import shape:
 
 ```runes
-use std.core.option.Option
+use std.core
 
-f port_from_config(found: bool) = result: Option<u32> {
+f port_from_config(found: bool) = result: core.Option<u32> {
     if found {
-        result = Option.Some(8080)
+        result = core.Option.Some<u32>(8080)
     } else {
-        result = Option.None
+        result = core.Option.None<u32>()
     }
 }
 ```
+
+Importing `std.core.Option` as an unqualified generic is intended but is not
+yet reliable because generic specialization currently precedes ordinary
+import resolution.
 
 Do not begin with `take`, iterators, pointer conversions, or a large collection
 of combinators. First prove:
@@ -296,13 +309,16 @@ matching.
 
 ## Milestone 3: implement `std.bytes`
 
+Current status: implemented and covered by
+`src/tests/samples/core_codegen_std_bytes.runes`.
+
 Build allocation-free operations over `[]u8` and `[]const u8`.
 
 Initial API:
 
 ```text
 fill(buffer: []u8, value: u8)
-copy(destination: []u8, source: []const u8) -> !usize
+copy(destination: []u8, source: []const u8) -> !void
 equal(left: []const u8, right: []const u8) -> bool
 find(buffer: []const u8, byte: u8) -> Option<usize>
 starts_with(buffer: []const u8, prefix: []const u8) -> bool
@@ -317,6 +333,11 @@ primitives. Test:
 - destination-too-small errors;
 - byte search at the start, middle, end, and absent case;
 - rejection of mutation through read-only slices.
+
+`copy` is all-or-error: it copies every source byte or returns
+`DestinationTooSmall` before modifying the destination. Its success count
+would always equal `source.len`, so the exact-copy operation returns `!void`
+rather than a redundant `!usize`.
 
 These functions become the base for parsers, strings, file I/O, protocols, and
 compiler source handling.
@@ -584,8 +605,8 @@ milestone.
 
 ### Milestone 2 of 11: implement `Option<T>`
 
-**What gets built:** `Some(T)`, `None`, `is_some`, `is_none`, `unwrap_or`, and
-`map`.
+**What gets built:** `Some(T)`, `None`, `is_some`, `is_none`, `unwrap_or`,
+`unwrap`, and `map`.
 
 **ELI5:** Give the language a standard box that can either contain one value or
 be empty.

@@ -34,6 +34,7 @@ automatically a language guarantee.
 | `alloc()`, ownership, cleanup, and raw-allocation differences | [Allocation](allocation.md) |
 | Realms, allocation, lifetimes, promotion, GC, pointers, and unsafe operations | [Memory and unsafe](memory-and-unsafe.md) |
 | Modules, projects, visibility, FFI, ABI attributes, builtins, and commands | [Modules, FFI, and tooling](modules-ffi-tooling.md) |
+| Implemented standard-library modules and APIs | [Standard library](standard-library.md) |
 | Supported, partial, unsupported, and platform-dependent behavior | [Implementation status](implementation-status.md) |
 | Normative compact rules | [Specification](../specv0_1.md) |
 | Coverage evidence and documentation ownership | [Feature matrix](../feature-matrix.md) |

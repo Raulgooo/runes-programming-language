@@ -1,0 +1,12 @@
+-- EXPECT FAIL: Cannot assign value of mismatched type
+
+type Status =
+    | Ready
+
+method Status {
+    f is_ready(self) = result: bool {
+        result = 1
+    }
+}
+
+f main() {}

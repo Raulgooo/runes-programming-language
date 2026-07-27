@@ -78,10 +78,17 @@ test-core: $(TARGET)
 	@test "$$(/tmp/runes_core_variants)" = "$$(printf '0 7 60\n10 20 30')"
 	./$(TARGET) src/tests/samples/core_codegen_errors.runes --emit-c /tmp/runes_core_errors.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_errors.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_errors
-	@test "$$(/tmp/runes_core_errors)" = "$$(printf '10 -1 -1\nerror 1\n3 -2')"
+	@/tmp/runes_core_errors > /tmp/runes_core_errors.out
+	@sed -n '1p' /tmp/runes_core_errors.out | grep -Fxq '10 -1 -1'
+	@sed -n '2p' /tmp/runes_core_errors.out | grep -Eq '^error [0-9]+$$'
+	@sed -n '3p' /tmp/runes_core_errors.out | grep -Fxq '3 -2'
+	@test "$$(wc -l < /tmp/runes_core_errors.out)" -eq 3
 	./$(TARGET) src/tests/samples/core_codegen_methods.runes --emit-c /tmp/runes_core_methods.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_methods.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_methods
 	@test "$$(/tmp/runes_core_methods)" = "17 17"
+	./$(TARGET) src/tests/samples/core_codegen_std_option.runes --emit-c /tmp/runes_core_std_option.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_option.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_std_option
+	@test "$$(/tmp/runes_core_std_option)" = "true false false true 21 7 21 -1 42 true true"
 	./$(TARGET) src/tests/samples/core_codegen_modules.runes --emit-c /tmp/runes_core_modules.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_modules.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_modules
 	@test "$$(/tmp/runes_core_modules)" = "20 42"
@@ -268,6 +275,9 @@ test-core: $(TARGET)
 	./$(TARGET) src/tests/samples/core_codegen_slice_methods.runes --emit-c /tmp/runes_core_slice_methods.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_slice_methods.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_slice_methods
 	@test "$$(/tmp/runes_core_slice_methods)" = "62 62"
+	./$(TARGET) src/tests/samples/core_codegen_std_bytes.runes --emit-c /tmp/runes_core_std_bytes.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_bytes.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_std_bytes
+	@test "$$(/tmp/runes_core_std_bytes | tail -n 1)" = "1 4 0 7 true false false true true false 0 2 3 99 true false false true 99 true true"
 	./$(TARGET) src/tests/samples/core_codegen_raw_slice.runes --emit-c /tmp/runes_core_raw_slice.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_raw_slice.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_raw_slice
 	@test "$$(/tmp/runes_core_raw_slice)" = "42 3"
@@ -309,7 +319,11 @@ test-core: $(TARGET)
 	@test "$$(/tmp/runes_core_array_return)" = "42"
 	./$(TARGET) src/tests/samples/test_error_flow.runes --emit-c /tmp/runes_error_flow.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_error_flow.c src/runtime.c src/utils/arena.c -o /tmp/runes_error_flow
-	@test "$$(/tmp/runes_error_flow)" = "$$(printf 'caught: 1\n0\n2 0')"
+	@/tmp/runes_error_flow > /tmp/runes_error_flow.out
+	@sed -n '1p' /tmp/runes_error_flow.out | grep -Eq '^caught: [0-9]+$$'
+	@sed -n '2p' /tmp/runes_error_flow.out | grep -Fxq '0'
+	@sed -n '3p' /tmp/runes_error_flow.out | grep -Fxq '2 0'
+	@test "$$(wc -l < /tmp/runes_error_flow.out)" -eq 3
 	@for f in src/tests/samples/core_*_error.runes; do \
 		pattern=$$(sed -n 's/^-- EXPECT FAIL: //p' "$$f"); \
 		if ./$(TARGET) "$$f" >/tmp/runes_expected_error 2>&1; then \

@@ -499,6 +499,7 @@ typedef struct AstNode {
     // error.MathError.DivByZero
     struct {
       struct AstNode *path; // linked list of AST_IDENTIFIER
+      const char *module;   // owning module retained for generated code
     } error_expr;
 
     // asm { "cli; hlt" }  /  asm { "mov %cr3, %rax" } -> r

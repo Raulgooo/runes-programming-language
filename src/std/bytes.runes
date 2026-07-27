@@ -1,26 +1,64 @@
-[4056]u8 buffer
+
 ---
 Easy no allocation operations
 please keep it simple
 ---
+use std.core
 
-f fill(buffer: []i8, value: i8) {
-    for (buffer) |actual| {
-        buffer[actual] = value
+pub f fill(buffer: []u8, value: u8) {
+    for (0..buffer.len) |index| {
+        buffer[index] = value
     }
 }
-error CopyError = {
+
+pub error CopyError = {
     | DestinationTooSmall
 }
-f copy(destination: []u8, source: []u8) = result:!void {
-    if (destination.len >= source) {
-        for (destination) |active| {
-            destination[actual] = source[actual]
+
+pub f copy(destination: []u8, source: []const u8) = result: !void {
+    if destination.len < source.len {
+        result = error.CopyError.DestinationTooSmall
+        return
+    }
+
+    for (source) |value, index| {
+        destination[index] = value
+    }
+}
+
+pub f equal(left: []const u8, right: []const u8) = result: bool {
+    result = left.len == right.len
+
+    if result {
+        for (left) |value, index| {
+            if value != right[index] {
+                result = false
+                break
+            }
         }
     }
-    else {
-        result = error.CopyError.DestinationTooSmall
+}
 
+pub f find(buffer: []const u8, byte: u8) = result: core.Option<usize> {
+    result = core.Option.None<usize>()
+
+    for (0..buffer.len) |actual| {
+        if buffer[actual] == byte {
+            result = core.Option.Some<usize>(actual)
+            break
+        }
     }
+}
 
+pub f starts_with(buffer: []const u8, prefix: []const u8) = result: bool {
+    result = prefix.len <= buffer.len
+
+    if result {
+        for (0..prefix.len) |index| {
+            if buffer[index] != prefix[index] {
+                result = false
+                break
+            }
+        }
+    }
 }

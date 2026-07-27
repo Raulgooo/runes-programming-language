@@ -1,0 +1,12 @@
+-- EXPECT FAIL: name conflicts with a variant arm
+
+type Status =
+    | Ready
+
+method Status {
+    f Ready(self) = result: bool {
+        result = true
+    }
+}
+
+f main() {}

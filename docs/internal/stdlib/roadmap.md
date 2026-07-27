@@ -65,7 +65,7 @@ The library should adopt consistent naming:
 
 These modules are prerequisites for nearly every other library.
 
-### `core.option`
+### `std.core` option support
 
 - `Option<T>` with `None` and `Some(T)`;
 - `is_some`, `is_none`, `unwrap`, `unwrap_or`, `map`, `and_then`, and `take`;

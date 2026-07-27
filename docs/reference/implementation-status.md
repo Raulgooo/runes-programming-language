@@ -58,8 +58,18 @@ C-string conversion.
 
 ## Standard library
 
-The `std` namespace, module loader, prelude, and a small set of initial modules
-exist. A broad general-purpose standard library does not.
+The `std` namespace, module loader, and prelude exist. The currently tested
+library surface is:
+
+- `std.core`: `Option<T>`, its initial methods, and `UnwrapError`;
+- `std.bytes`: allocation-free `fill`, `copy`, `equal`, `find`, and
+  `starts_with`;
+- `std.os`: an exported but currently empty module.
+
+`std.io` is an empty source placeholder and is not exported by the `std` root.
+See the [current standard-library reference](standard-library.md) for exact
+signatures and behavior. A broad general-purpose standard library does not
+yet exist.
 
 Not currently supplied as complete safe library APIs:
 

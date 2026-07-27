@@ -45,6 +45,7 @@ required_reference=(
   docs/reference/semantics.md
   docs/reference/memory-and-unsafe.md
   docs/reference/modules-ffi-tooling.md
+  docs/reference/standard-library.md
   docs/reference/implementation-status.md
   docs/feature-matrix.md
   docs/contributing-docs.md

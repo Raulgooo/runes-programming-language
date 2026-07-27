@@ -573,7 +573,7 @@ If that sentence is unclear, implementation should not begin.
 
 ### Step 2: define the states
 
-Proposed module `src/std/core/option.runes`:
+Current module `src/std/core.runes`:
 
 ```runes
 pub type Option<T> =
@@ -589,6 +589,7 @@ There is no invalid third state and no sentinel value.
 is_some
 is_none
 unwrap_or
+unwrap
 map
 ```
 
@@ -597,6 +598,7 @@ Each operation has one clear purpose:
 - `is_some`: query presence without extracting;
 - `is_none`: query absence;
 - `unwrap_or`: turn optionality into one definite value;
+- `unwrap`: extract a value or return `UnwrapError.NoValueError`;
 - `map`: transform the payload while preserving absence.
 
 ### Step 4: implement operations with `match`
@@ -626,21 +628,32 @@ method Option<T> {
         }
     }
 
+    f unwrap(self) = result: !T {
+        match self {
+            Some(value) -> {
+                result = value
+            }
+            None -> {
+                result = error.UnwrapError.NoValueError
+            }
+        }
+    }
+
     f map<U>(
         self,
         transform: f(T) -> U
     ) = result: Option<U> {
         result = match self {
-            Some(value) -> Option.Some(transform(value)),
-            None -> Option.None,
+            Some(value) -> Option.Some<U>(transform(value)),
+            None -> Option.None<U>(),
         }
     }
 }
 ```
 
-This is proposed stdlib code and must be checked against module visibility and
-generic-constructor inference as the milestone is implemented. The important
-design is independent of incidental syntax fixes: every method handles both
+The implemented code uses explicit constructor type arguments inside generic
+`map` (`Option.Some<U>(...)` and `Option.None<U>()`). `unwrap` returns `!T` and
+produces `error.UnwrapError.NoValueError` for `None`. Every method handles both
 states and allocation remains unnecessary.
 
 ### Step 5: test behavior, types, and misuse
@@ -648,8 +661,10 @@ states and allocation remains unnecessary.
 Positive behavior:
 
 ```runes
-Option<i32> present = Option.Some(42)
-Option<i32> absent = Option.None
+use std.core
+
+core.Option<i32> present = core.Option.Some(42)
+core.Option<i32> absent = core.Option.None<i32>()
 
 print(present.is_some())
 print(absent.unwrap_or(7))
@@ -907,16 +922,25 @@ foundation usually indicate that responsibilities are mixed.
 
 ### Import policy today
 
-Runes can import one public final member:
+Runes can import one public final non-generic member:
 
 ```runes
-use std.core.option.Option
-use std.io.read_into
+use std.bytes.find
 ```
 
 Aliases, grouped imports, wildcard imports, and public re-exports are not
 implemented. Methods remain receiver-based; import the type and call
 `value.method()`.
+
+Imported generic aliases are a current bootstrap gap because monomorphization
+runs before ordinary imported-member resolution. Until that is fixed, import
+the module and qualify the generic:
+
+```runes
+use std.core
+
+core.Option<i32> value = core.Option.Some(42)
+```
 
 Design module paths with the actual current syntax, not with conveniences that
 the compiler does not yet provide.
@@ -931,7 +955,7 @@ For `Option<T>`:
 ```text
 Some / None
 is_some / is_none
-unwrap_or / map
+unwrap_or / unwrap / map
 ```
 
 For bytes:

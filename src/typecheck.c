@@ -1490,6 +1490,27 @@ static bool has_non_safe_attr(Attr *attrs) {
   return false;
 }
 
+static AstNode *find_module_error_decl(AstNode *declarations,
+                                       const char *module,
+                                       const char *name) {
+  for (AstNode *decl = declarations; decl; decl = decl->next) {
+    if (decl->kind != AST_MOD_DECL)
+      continue;
+    if (strcmp(decl->as.mod_decl.name, module) == 0) {
+      for (AstNode *member = decl->as.mod_decl.declarations; member;
+           member = member->next)
+        if (member->kind == AST_ERROR_DECL &&
+            strcmp(member->as.error_decl.name, name) == 0)
+          return member;
+    }
+    AstNode *nested = find_module_error_decl(
+        decl->as.mod_decl.declarations, module, name);
+    if (nested)
+      return nested;
+  }
+  return NULL;
+}
+
 static bool is_assignable_expr(AstNode *expr) {
   if (!expr)
     return false;
@@ -2158,8 +2179,14 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       AstNode *target = expr->as.call.callee->as.field.target;
       Type *target_t = typechecker_infer_expr(tc, target);
       if (target_t && target_t->kind == TY_VARIANT) {
-        callee_t = target_t;
-        expr->as.call.callee->resolved_type = target_t;
+        const char *member = expr->as.call.callee->as.field.field;
+        for (int i = 0; i < target_t->as.variant.arm_count; i++) {
+          if (strcmp(target_t->as.variant.arm_names[i], member) == 0) {
+            callee_t = target_t;
+            expr->as.call.callee->resolved_type = target_t;
+            break;
+          }
+        }
       }
     }
     if (!callee_t)
@@ -2927,16 +2954,41 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       break;
     }
     Symbol *sym = symbol_table_lookup(tc->st, set->as.identifier.name);
-    if (!sym || !sym->type || sym->type->kind != TY_ERROR) {
+    AstNode *error_decl =
+        expr->resolved_decl && expr->resolved_decl->kind == AST_ERROR_DECL
+            ? expr->resolved_decl
+            : NULL;
+    Type *error_t =
+        sym && sym->type && sym->type->kind == TY_ERROR
+            ? sym->type
+            : error_decl && error_decl->resolved_type &&
+                      error_decl->resolved_type->kind == TY_ERROR
+                  ? error_decl->resolved_type
+                  : NULL;
+    if (sym && sym->type && sym->type->kind == TY_ERROR) {
+      error_decl = sym->node;
+      expr->resolved_decl = sym->node;
+    }
+    if (!error_t && error_decl && expr->as.error_expr.module && tc->program) {
+      AstNode *current = find_module_error_decl(
+          tc->program->as.program.declarations, expr->as.error_expr.module,
+          set->as.identifier.name);
+      if (current && current->resolved_type &&
+          current->resolved_type->kind == TY_ERROR) {
+        error_decl = current;
+        error_t = current->resolved_type;
+        expr->resolved_decl = current;
+      }
+    }
+    if (!error_t) {
       typechecker_error(tc, set->line, set->col,
                         "Unknown error set '%s'", set->as.identifier.name);
       inferred = tc->tctx->type_error;
       break;
     }
-    expr->resolved_decl = sym->node;
     bool found = false;
-    for (int i = 0; i < sym->type->as.error_t.variant_count; i++) {
-      if (strcmp(sym->type->as.error_t.variants[i],
+    for (int i = 0; i < error_t->as.error_t.variant_count; i++) {
+      if (strcmp(error_t->as.error_t.variants[i],
                  member->as.identifier.name) == 0) {
         found = true;
         break;
@@ -2948,7 +3000,7 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
                         member->as.identifier.name);
       inferred = tc->tctx->type_error;
     } else {
-      inferred = sym->type;
+      inferred = error_t;
     }
     break;
   }
@@ -3724,19 +3776,30 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
     // Only thing to check is consistency. methods were already collected.
     // We could check if methods conflict with fields.
     Symbol *sym = symbol_table_lookup(tc->st, node->as.method_decl.type_name);
-    if (sym && sym->type && sym->type->kind == TY_STRUCT) {
-      Type *struct_t = sym->type;
+    if (sym && sym->type &&
+        (sym->type->kind == TY_STRUCT || sym->type->kind == TY_VARIANT)) {
+      Type *owner_t = sym->type;
       AstNode *m_node = node->as.method_decl.methods;
       while (m_node) {
         if (m_node->kind == AST_FUNC_DECL) {
           if (m_node->as.func_decl.attrs)
             validate_systems_attrs(tc, m_node, m_node->as.func_decl.attrs);
           const char *mname = m_node->as.func_decl.name;
-          for (int i = 0; i < struct_t->as.struct_t.field_count; i++) {
-            if (strcmp(struct_t->as.struct_t.field_names[i], mname) == 0) {
-              typechecker_error(tc, m_node->line, m_node->col,
-                                "Method '%s' name conflicts with a field",
-                                mname);
+          if (owner_t->kind == TY_STRUCT) {
+            for (int i = 0; i < owner_t->as.struct_t.field_count; i++) {
+              if (strcmp(owner_t->as.struct_t.field_names[i], mname) == 0) {
+                typechecker_error(tc, m_node->line, m_node->col,
+                                  "Method '%s' name conflicts with a field",
+                                  mname);
+              }
+            }
+          } else {
+            for (int i = 0; i < owner_t->as.variant.arm_count; i++) {
+              if (strcmp(owner_t->as.variant.arm_names[i], mname) == 0) {
+                typechecker_error(
+                    tc, m_node->line, m_node->col,
+                    "Method '%s' name conflicts with a variant arm", mname);
+              }
             }
           }
           // Now check the body of the method
@@ -3758,7 +3821,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
             param_sym.node = p;
 
             if (strcmp(p->as.param.name, "self") == 0 && !p->as.param.type) {
-              param_sym.type = struct_t;
+              param_sym.type = owner_t;
             } else {
               param_sym.type =
                   typechecker_resolve_type_expr(tc, p->as.param.type);
@@ -4823,6 +4886,7 @@ void typechecker_check(TypeChecker *tc, AstNode *program) {
   if (!program || program->kind != AST_PROGRAM)
     return;
 
+  tc->program = program;
   typechecker_collect_decls(tc, program);
 
   AstNode *decl = program->as.program.declarations;

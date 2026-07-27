@@ -1,0 +1,67 @@
+use std.bytes.fill
+use std.bytes.copy
+use std.bytes.equal
+use std.bytes.find
+use std.bytes.starts_with
+
+f main() {
+    [4]u8 source = [1, 2, 3, 4]
+    [6]u8 destination = [9, 9, 9, 9, 9, 9]
+    [4]u8 same = [1, 2, 3, 4]
+    [4]u8 different = [1, 2, 8, 4]
+    [3]u8 too_small = [7, 7, 7]
+    [2]u8 matching_prefix = [1, 2]
+    [2]u8 different_prefix = [1, 8]
+    [5]u8 oversized_prefix = [1, 2, 3, 4, 5]
+    [1]u8 empty_storage = [0]
+
+    fill(destination, 0)
+
+    bool unexpected_error = false
+    copy(destination, source) catch |err| {
+        print(err)
+        unexpected_error = true
+    }
+
+    bool rejected_small_destination = false
+    copy(too_small, source) catch |err| {
+        print(err)
+        rejected_small_destination = true
+    }
+
+    bool empty_equal = false
+    usize empty_find = 99
+    bool source_starts_with_empty = false
+    bool empty_starts_with_empty = false
+    unsafe {
+        []u8 empty = slice(&empty_storage[0], 0)
+        empty_equal = equal(empty, empty)
+        empty_find = find(empty, 1).unwrap_or(99)
+        source_starts_with_empty = starts_with(source, empty)
+        empty_starts_with_empty = starts_with(empty, empty)
+    }
+
+    print(
+        destination[0], " ",
+        destination[3], " ",
+        destination[4], " ",
+        too_small[0], " ",
+        equal(source, same), " ",
+        equal(source, different), " ",
+        equal(source, too_small), " ",
+        empty_equal, " ",
+        rejected_small_destination, " ",
+        unexpected_error, " ",
+        find(source, 1).unwrap_or(99), " ",
+        find(source, 3).unwrap_or(99), " ",
+        find(source, 4).unwrap_or(99), " ",
+        find(source, 8).unwrap_or(99), " ",
+        starts_with(source, matching_prefix), " ",
+        starts_with(source, different_prefix), " ",
+        starts_with(source, oversized_prefix), " ",
+        starts_with(source, source), " ",
+        empty_find, " ",
+        source_starts_with_empty, " ",
+        empty_starts_with_empty
+    )
+}

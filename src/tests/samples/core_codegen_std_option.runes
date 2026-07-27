@@ -1,0 +1,35 @@
+use std.core
+
+f double(value: i32) = result: i32 {
+    result = value * 2
+}
+
+f positive(value: i32) = result: bool {
+    result = value > 0
+}
+
+f main() {
+    core.Option<i32> present = core.Option.Some(21)
+    core.Option<i32> absent = core.Option.None<i32>()
+
+    core.Option<i32> doubled = present.map<i32>(double)
+    core.Option<bool> checked = present.map<bool>(positive)
+    core.Option<i32> untouched = absent.map<i32>(double)
+
+    i32 present_value = present.unwrap() catch -1
+    i32 absent_value = absent.unwrap() catch -1
+
+    print(
+        present.is_some(), " ",
+        present.is_none(), " ",
+        absent.is_some(), " ",
+        absent.is_none(), " ",
+        present.unwrap_or(7), " ",
+        absent.unwrap_or(7), " ",
+        present_value, " ",
+        absent_value, " ",
+        doubled.unwrap_or(-1), " ",
+        checked.unwrap_or(false), " ",
+        untouched.is_none()
+    )
+}

@@ -390,6 +390,7 @@ AstNode *ast_new_catch_expr(Arena *arena, AstNode *expr, const char *err_name,
 AstNode *ast_new_error_expr(Arena *arena, AstNode *path) {
   AstNode *n = ast_alloc(arena, AST_ERROR_EXPR);
   n->as.error_expr.path = path;
+  n->as.error_expr.module = NULL;
   return n;
 }
 

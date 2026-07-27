@@ -235,15 +235,26 @@ static GenericTemplate *template_for_node(Monomorphizer *mono,
   return NULL;
 }
 
+static AstNode *find_module_declarations(AstNode *declarations,
+                                         const char *module) {
+  for (AstNode *node = declarations; node; node = node->next) {
+    if (node->kind != AST_MOD_DECL)
+      continue;
+    if (strcmp(node->as.mod_decl.name, module) == 0)
+      return node->as.mod_decl.declarations;
+    AstNode *nested =
+        find_module_declarations(node->as.mod_decl.declarations, module);
+    if (nested)
+      return nested;
+  }
+  return NULL;
+}
+
 static AstNode *module_declarations(Monomorphizer *mono, const char *module) {
   if (!module)
     return mono->program->as.program.declarations;
-  for (AstNode *node = mono->program->as.program.declarations; node;
-       node = node->next)
-    if (node->kind == AST_MOD_DECL &&
-        strcmp(node->as.mod_decl.name, module) == 0)
-      return node->as.mod_decl.declarations;
-  return NULL;
+  return find_module_declarations(mono->program->as.program.declarations,
+                                  module);
 }
 
 static bool append_text(char *buffer, size_t capacity, size_t *used,
@@ -1275,7 +1286,10 @@ static const char *instantiate(Monomorphizer *mono, AstNode *template,
            function = function->next) {
         if (function->as.func_decl.generic_params)
           continue;
+        const char *saved_method_module = mono->current_module;
+        mono->current_module = template_module;
         *method_tail = clone_node(mono, function, bindings);
+        mono->current_module = saved_method_module;
         method_tail = &(*method_tail)->next;
       }
       if (specialized_method->as.method_decl.methods)
@@ -1344,7 +1358,10 @@ static const char *instantiate_method(Monomorphizer *mono,
     tail = &(*tail)->next;
   *tail = owner_bindings;
 
+  const char *saved_module = mono->current_module;
+  mono->current_module = plan->module;
   AstNode *function = clone_node(mono, plan->method, combined);
+  mono->current_module = saved_module;
   function->as.func_decl.name = instance_name;
   function->as.func_decl.generic_params = NULL;
 
@@ -1716,6 +1733,19 @@ static AstNode *clone_node(Monomorphizer *mono, AstNode *node,
   case AST_ERROR_EXPR:
     copy->as.error_expr.path =
         clone_list(mono, node->as.error_expr.path, bindings);
+    copy->as.error_expr.module = mono->current_module;
+    if (mono->current_module && copy->as.error_expr.path) {
+      const char *set_name = copy->as.error_expr.path->as.identifier.name;
+      for (AstNode *decl =
+               module_declarations(mono, mono->current_module);
+           decl; decl = decl->next) {
+        if (decl->kind == AST_ERROR_DECL &&
+            strcmp(decl->as.error_decl.name, set_name) == 0) {
+          copy->resolved_decl = decl;
+          break;
+        }
+      }
+    }
     break;
   case AST_VOLATILE_EXPR:
     copy->as.volatile_expr.expr =

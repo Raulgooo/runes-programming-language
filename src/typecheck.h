@@ -10,6 +10,7 @@ typedef struct {
   Arena *arena;
   TypeContext *tctx;
   SymbolTable *st;
+  AstNode *program;
 
   uint32_t error_count;
   bool had_error;
