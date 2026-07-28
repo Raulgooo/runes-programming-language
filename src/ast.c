@@ -2,6 +2,77 @@
 #include "utils/arena.h"
 #include <string.h>
 
+const char *memory_realm_name(MemoryRealm realm) {
+  switch (realm) {
+  case REALM_STACK:
+    return "stack";
+  case REALM_ARENA:
+    return "arena";
+  case REALM_HEAP:
+    return "dynamic";
+  case REALM_GC:
+    return "gc";
+  case REALM_FLEX:
+    return "flex";
+  case REALM_MAIN:
+    return "main";
+  }
+  return "unknown";
+}
+
+const char *effective_realm_name(EffectiveRealm realm) {
+  switch (realm) {
+  case EFFECTIVE_REALM_STACK:
+    return "stack";
+  case EFFECTIVE_REALM_DYNAMIC:
+    return "dynamic";
+  case EFFECTIVE_REALM_REGIONAL:
+    return "regional";
+  case EFFECTIVE_REALM_GC:
+    return "gc";
+  }
+  return "unknown";
+}
+
+bool resolve_effective_realm(MemoryRealm declared, EffectiveRealm inherited,
+                             EffectiveRealm *result) {
+  if (!result)
+    return false;
+  switch (declared) {
+  case REALM_STACK:
+    *result = EFFECTIVE_REALM_STACK;
+    return true;
+  case REALM_ARENA:
+    *result = EFFECTIVE_REALM_REGIONAL;
+    return true;
+  case REALM_HEAP:
+  case REALM_MAIN:
+    *result = EFFECTIVE_REALM_DYNAMIC;
+    return true;
+  case REALM_GC:
+    *result = EFFECTIVE_REALM_GC;
+    return true;
+  case REALM_FLEX:
+    *result = inherited;
+    return true;
+  }
+  return false;
+}
+
+MemoryRealm effective_realm_as_memory_realm(EffectiveRealm realm) {
+  switch (realm) {
+  case EFFECTIVE_REALM_STACK:
+    return REALM_STACK;
+  case EFFECTIVE_REALM_DYNAMIC:
+    return REALM_HEAP;
+  case EFFECTIVE_REALM_REGIONAL:
+    return REALM_ARENA;
+  case EFFECTIVE_REALM_GC:
+    return REALM_GC;
+  }
+  return REALM_STACK;
+}
+
 static AstNode *ast_alloc(Arena *arena, AstKind kind) {
   AstNode *n = arena_alloc(arena, sizeof(AstNode));
   memset(n, 0, sizeof(*n));
@@ -25,6 +96,7 @@ AstNode *ast_new_func_decl(Arena *arena, MemoryRealm realm, bool is_pub,
                            AstNode *body, Attr *attrs) {
   AstNode *n = ast_alloc(arena, AST_FUNC_DECL);
   n->as.func_decl.realm = realm;
+  n->as.func_decl.has_declared_realm = false;
   n->as.func_decl.is_pub = is_pub;
   n->as.func_decl.is_main = is_main;
   n->as.func_decl.is_move = false;
@@ -183,6 +255,15 @@ AstNode *ast_new_if_stmt(Arena *arena, AstNode *condition, AstNode *then_branch,
   n->as.if_stmt.condition = condition;
   n->as.if_stmt.then_branch = then_branch;
   n->as.if_stmt.else_branch = else_branch;
+  return n;
+}
+
+AstNode *ast_new_realm_block(Arena *arena, EffectiveRealm realm, AstNode *body,
+                             AstNode *else_branch) {
+  AstNode *n = ast_alloc(arena, AST_REALM_BLOCK);
+  n->as.realm_block.realm = realm;
+  n->as.realm_block.body = body;
+  n->as.realm_block.else_branch = else_branch;
   return n;
 }
 

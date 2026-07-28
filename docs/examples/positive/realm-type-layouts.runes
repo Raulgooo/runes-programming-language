@@ -1,0 +1,24 @@
+type Cell = {
+    value: i32
+}
+
+in gc type Cell = {
+    value: i32
+    traced: bool
+}
+
+f identity(value: Cell) = result: Cell {
+    result = value
+}
+
+dynamic f dynamic_cell() = result: Cell {
+    result = Cell(value: 10)
+}
+
+gc f gc_cell() = result: Cell {
+    result = Cell(value: 20, traced: true)
+}
+
+f main() {
+    print(identity(dynamic_cell()).value, " ", identity(gc_cell()).value)
+}

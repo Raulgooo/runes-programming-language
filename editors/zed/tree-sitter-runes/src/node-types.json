@@ -571,6 +571,10 @@
     "named": false
   },
   {
+    "type": "except",
+    "named": false
+  },
+  {
     "type": "extern",
     "named": false
   },
@@ -631,6 +635,10 @@
     "named": false
   },
   {
+    "type": "in",
+    "named": false
+  },
+  {
     "type": "integer",
     "named": true
   },
@@ -672,6 +680,10 @@
   },
   {
     "type": "pub",
+    "named": false
+  },
+  {
+    "type": "realm",
     "named": false
   },
   {
@@ -748,6 +760,10 @@
   },
   {
     "type": "volatile",
+    "named": false
+  },
+  {
+    "type": "when",
     "named": false
   },
   {

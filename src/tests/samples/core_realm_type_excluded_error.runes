@@ -1,0 +1,11 @@
+-- EXPECT FAIL: type 'Buffer' excludes the regional realm
+
+except(regional) type Buffer = {
+    value: i32
+}
+
+regional f rejected() {
+    Buffer value = Buffer(value: 1)
+}
+
+f main() {}

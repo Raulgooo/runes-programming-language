@@ -1,0 +1,207 @@
+use std.allocation.allocate_array
+use std.allocation.release_array
+use std.allocation.resize_array
+use std.core.AllocationError
+use std.core.Result
+
+#[safe]
+extern f runes_storage_debug_fail_after(count: usize)
+
+#[safe]
+extern f runes_storage_debug_clear_failure()
+
+type Buffer<T> = {
+    data: *T
+    len: usize
+    capacity: usize
+}
+
+in gc type Buffer<T> = {
+    data: *T
+    len: usize
+    capacity: usize
+    traced: bool = true
+}
+
+method Buffer<T> {
+    flex f grow(
+        self: *Buffer<T>,
+        new_capacity: usize
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            match resize_array<T>(
+                self.data,
+                self.len,
+                self.capacity,
+                new_capacity
+            ) {
+                Ok(replacement) -> {
+                    self.data = replacement
+                    self.capacity = new_capacity
+                    outcome = Result.Ok<usize, AllocationError>(new_capacity)
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, AllocationError>(failure)
+                }
+            }
+        }
+    }
+
+    flex f release(self: *Buffer<T>) {
+        unsafe {
+            release_array<T>(self.data)
+        }
+    }
+}
+
+f grow_owned(
+    buffer: *Buffer<i32>,
+    new_capacity: usize
+) = outcome: Result<usize, AllocationError> {
+    unsafe {
+        outcome = buffer.grow(new_capacity)
+    }
+}
+
+dynamic f dynamic_case() = result: i32 {
+    match allocate_array<i32>(2) {
+        Ok(pointer) -> {
+            unsafe {
+                pointer[0] = 10
+                pointer[1] = 20
+            }
+            Buffer<i32> buffer = Buffer<i32>(
+                data: pointer,
+                len: 2,
+                capacity: 2
+            )
+            match grow_owned(&buffer, 4) {
+                Ok(_) -> {
+                    unsafe {
+                        buffer.data[2] = 30
+                        result = buffer.data[0] + buffer.data[1] + buffer.data[2]
+                    }
+                }
+                Err(_) -> {
+                    result = -1
+                }
+            }
+            buffer.release()
+        }
+        Err(_) -> {
+            result = -2
+        }
+    }
+}
+
+regional f regional_case() = result: i32 {
+    match allocate_array<i32>(1) {
+        Ok(pointer) -> {
+            unsafe {
+                pointer[0] = 7
+            }
+            Buffer<i32> buffer = Buffer<i32>(
+                data: pointer,
+                len: 1,
+                capacity: 1
+            )
+            match grow_owned(&buffer, 3) {
+                Ok(_) -> {
+                    unsafe {
+                        buffer.data[1] = 8
+                        result = buffer.data[0] + buffer.data[1]
+                    }
+                }
+                Err(_) -> {
+                    result = -1
+                }
+            }
+            buffer.release()
+        }
+        Err(_) -> {
+            result = -2
+        }
+    }
+}
+
+gc f gc_case() = result: i32 {
+    match allocate_array<i32>(1) {
+        Ok(pointer) -> {
+            unsafe {
+                pointer[0] = 40
+            }
+            Buffer<i32> buffer = Buffer<i32>(
+                data: pointer,
+                len: 1,
+                capacity: 1,
+                traced: true
+            )
+            match grow_owned(&buffer, 2) {
+                Ok(_) -> {
+                    unsafe {
+                        buffer.data[1] = 2
+                        result = buffer.data[0] + buffer.data[1]
+                    }
+                }
+                Err(_) -> {
+                    result = -1
+                }
+            }
+            buffer.release()
+        }
+        Err(_) -> {
+            result = -2
+        }
+    }
+}
+
+dynamic f failure_preserves_buffer() = result: bool {
+    result = false
+    match allocate_array<i32>(1) {
+        Ok(pointer) -> {
+            unsafe {
+                pointer[0] = 99
+            }
+            Buffer<i32> buffer = Buffer<i32>(
+                data: pointer,
+                len: 1,
+                capacity: 1
+            )
+            runes_storage_debug_fail_after(0)
+            match grow_owned(&buffer, 8) {
+                Ok(_) -> {
+                    result = false
+                }
+                Err(_) -> {
+                    unsafe {
+                        bool capacity_preserved = buffer.capacity == 1
+                        bool value_preserved = buffer.data[0] == 99
+                        result = capacity_preserved
+                        if value_preserved {
+                            result = capacity_preserved
+                        } else {
+                            result = false
+                        }
+                    }
+                }
+            }
+            runes_storage_debug_clear_failure()
+            buffer.release()
+        }
+        Err(_) -> {
+            result = false
+        }
+    }
+}
+
+f main() {
+    print(
+        dynamic_case(),
+        " ",
+        regional_case(),
+        " ",
+        gc_case(),
+        " ",
+        failure_preserves_buffer()
+    )
+}

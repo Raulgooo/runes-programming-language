@@ -117,6 +117,8 @@ pub type IoError =
     | NotFound
     | BrokenPipe
     | InvalidInput
+    | WouldBlock
+    | Unsupported
     | Unknown
 
 pub type ParseError =
@@ -127,3 +129,4 @@ pub type ParseError =
 pub type AllocationError =
     | OutOfMemory
     | CapacityOverflow
+    | OwnerUnavailable

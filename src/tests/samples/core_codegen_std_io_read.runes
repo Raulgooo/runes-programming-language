@@ -1,0 +1,33 @@
+use std.io
+use std.core.IoError
+use std.core.Result
+
+f main() {
+    [4]u8 buffer = [0, 0, 0, 0]
+    Result<usize, IoError> input = io.read(buffer)
+    Result<usize, IoError> end = io.read(buffer)
+
+    usize count = match input {
+        Ok(value) -> value,
+        Err(_) -> 0,
+    }
+    bool reached_end = match end {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            EndOfInput -> true,
+            _ -> false,
+        },
+    }
+
+    print(
+        count,
+        " ",
+        buffer[0],
+        " ",
+        buffer[1],
+        " ",
+        buffer[2],
+        " ",
+        reached_end
+    )
+}

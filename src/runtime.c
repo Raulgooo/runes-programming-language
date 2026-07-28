@@ -1,6 +1,13 @@
+#if defined(__linux__) && !defined(RUNES_FREESTANDING)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "runtime.h"
 #include "utils/arena.h"
 
+#if defined(__linux__) && !defined(RUNES_FREESTANDING)
+#include <signal.h>
+#endif
 #include <stdint.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -55,6 +62,9 @@ static _Thread_local size_t runes_gc_scope_depth;
 static _Thread_local RunesGcRoot *runes_gc_roots;
 static _Thread_local RunesGcFrame *runes_gc_frames;
 static _Thread_local size_t runes_gc_no_collect_depth;
+static _Thread_local RunesStorageError runes_storage_error;
+static _Thread_local size_t runes_storage_failure_countdown = SIZE_MAX;
+static RunesStorageStats runes_storage_counters;
 
 typedef struct {
   const void *source;
@@ -77,8 +87,44 @@ static void runes_runtime_fail(const char *message, unsigned line,
   abort();
 }
 
+void runes_runtime_init(void) {
+#if defined(__linux__) && !defined(RUNES_FREESTANDING)
+  struct sigaction action = {0};
+  action.sa_handler = SIG_IGN;
+  if (sigemptyset(&action.sa_mask) != 0 ||
+      sigaction(SIGPIPE, &action, NULL) != 0)
+    runes_runtime_fail("could not establish the SIGPIPE policy", 0, 0);
+#endif
+}
+
 static bool is_power_of_two(size_t value) {
   return value != 0 && (value & (value - 1)) == 0;
+}
+
+static bool storage_layout(size_t count,
+                           const RunesTypeDescriptor *element,
+                           size_t *bytes) {
+  if (!element || !element->size || !is_power_of_two(element->align)) {
+    runes_storage_error = RUNES_STORAGE_CAPACITY_OVERFLOW;
+    return false;
+  }
+  if (count > SIZE_MAX / element->size) {
+    runes_storage_error = RUNES_STORAGE_CAPACITY_OVERFLOW;
+    return false;
+  }
+  *bytes = count * element->size;
+  return true;
+}
+
+static bool storage_forced_failure(void) {
+  if (runes_storage_failure_countdown == SIZE_MAX)
+    return false;
+  if (runes_storage_failure_countdown) {
+    runes_storage_failure_countdown--;
+    return false;
+  }
+  runes_storage_error = RUNES_STORAGE_OUT_OF_MEMORY;
+  return true;
 }
 
 static Arena *active_arena_root(void) {
@@ -249,6 +295,23 @@ void runes_arena_scope_leave(void *opaque_scope) {
   free(scope);
 }
 
+void *runes_regional_alloc(size_t size, size_t align, unsigned line,
+                           unsigned column) {
+  if (!runes_active_arena)
+    runes_runtime_fail("regional allocation requires an active arena", line,
+                       column);
+  if (!is_power_of_two(align))
+    runes_runtime_fail("allocation alignment must be a power of two", line,
+                       column);
+  if (align < sizeof(void *))
+    align = sizeof(void *);
+  void *result =
+      arena_alloc_aligned(runes_active_arena, size, align);
+  if (!result)
+    runes_runtime_fail("regional allocation failed", line, column);
+  return result;
+}
+
 size_t runes_debug_live_arena_scopes(void) {
   return runes_live_arena_scopes;
 }
@@ -292,8 +355,10 @@ void *runes_raw_alloc(size_t size, unsigned line, unsigned column) {
 
 void *runes_raw_alloc_aligned(size_t size, size_t align, unsigned line,
                               unsigned column) {
-  if (!is_power_of_two(align) || align < sizeof(void *))
+  if (!is_power_of_two(align))
     runes_runtime_fail("invalid raw allocation alignment", line, column);
+  if (align < sizeof(void *))
+    align = sizeof(void *);
   if (size == 0)
     size = 1;
   if (size > SIZE_MAX - (align - 1))
@@ -306,6 +371,162 @@ void *runes_raw_alloc_aligned(size_t size, size_t align, unsigned line,
 }
 
 void runes_raw_free(void *pointer) { free(pointer); }
+
+static void *storage_try_allocate_dynamic_bytes(
+    size_t bytes, size_t align) {
+  if (storage_forced_failure())
+    return NULL;
+  if (align < sizeof(void *))
+    align = sizeof(void *);
+  size_t physical = bytes ? bytes : 1;
+  if (physical > SIZE_MAX - (align - 1)) {
+    runes_storage_error = RUNES_STORAGE_CAPACITY_OVERFLOW;
+    return NULL;
+  }
+  size_t padded = (physical + align - 1) & ~(align - 1);
+  void *result = aligned_alloc(align, padded);
+  if (!result) {
+    runes_storage_error = RUNES_STORAGE_OUT_OF_MEMORY;
+    return NULL;
+  }
+  memset(result, 0, physical);
+  runes_storage_error = RUNES_STORAGE_OK;
+  runes_storage_counters.dynamic_allocations++;
+  return result;
+}
+
+void *runes_storage_try_allocate_dynamic(
+    size_t count, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column) {
+  (void)line;
+  (void)column;
+  size_t bytes;
+  if (!storage_layout(count, element, &bytes))
+    return NULL;
+  return storage_try_allocate_dynamic_bytes(bytes, element->align);
+}
+
+void *runes_storage_try_allocate_regional(
+    size_t count, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column) {
+  (void)line;
+  (void)column;
+  size_t bytes;
+  if (!storage_layout(count, element, &bytes))
+    return NULL;
+  if (!runes_active_arena) {
+    runes_storage_error = RUNES_STORAGE_OWNER_UNAVAILABLE;
+    return NULL;
+  }
+  if (storage_forced_failure())
+    return NULL;
+  void *result =
+      arena_alloc_aligned(runes_active_arena, bytes, element->align);
+  if (!result) {
+    runes_storage_error = RUNES_STORAGE_OUT_OF_MEMORY;
+    return NULL;
+  }
+  runes_storage_error = RUNES_STORAGE_OK;
+  runes_storage_counters.regional_allocations++;
+  return result;
+}
+
+void *runes_storage_try_resize_dynamic(
+    void *pointer, size_t initialized, size_t old_capacity,
+    size_t new_capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column) {
+  (void)line;
+  (void)column;
+  size_t old_bytes, new_bytes, initialized_bytes;
+  if (initialized > old_capacity || initialized > new_capacity) {
+    runes_storage_error = RUNES_STORAGE_CAPACITY_OVERFLOW;
+    return NULL;
+  }
+  if (!storage_layout(old_capacity, element, &old_bytes) ||
+      !storage_layout(new_capacity, element, &new_bytes) ||
+      !storage_layout(initialized, element, &initialized_bytes))
+    return NULL;
+  (void)old_bytes;
+  void *replacement =
+      storage_try_allocate_dynamic_bytes(new_bytes, element->align);
+  if (!replacement)
+    return NULL;
+  if (pointer && initialized_bytes)
+    memcpy(replacement, pointer, initialized_bytes);
+  free(pointer);
+  if (pointer)
+    runes_storage_counters.dynamic_releases++;
+  return replacement;
+}
+
+void *runes_storage_try_resize_regional(
+    void *pointer, size_t initialized, size_t old_capacity,
+    size_t new_capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column) {
+  size_t old_bytes, new_bytes, initialized_bytes;
+  if (initialized > old_capacity || initialized > new_capacity) {
+    runes_storage_error = RUNES_STORAGE_CAPACITY_OVERFLOW;
+    return NULL;
+  }
+  if (!storage_layout(old_capacity, element, &old_bytes) ||
+      !storage_layout(new_capacity, element, &new_bytes) ||
+      !storage_layout(initialized, element, &initialized_bytes))
+    return NULL;
+  (void)old_bytes;
+  (void)new_bytes;
+  if (!runes_active_arena ||
+      (pointer && !arena_owns_direct(runes_active_arena, pointer))) {
+    runes_storage_error = RUNES_STORAGE_OWNER_UNAVAILABLE;
+    return NULL;
+  }
+  void *replacement = runes_storage_try_allocate_regional(
+      new_capacity, element, line, column);
+  if (!replacement)
+    return NULL;
+  if (pointer && initialized_bytes)
+    memcpy(replacement, pointer, initialized_bytes);
+  return replacement;
+}
+
+void runes_storage_release_dynamic(void *pointer) {
+  if (pointer) {
+    free(pointer);
+    runes_storage_counters.dynamic_releases++;
+  }
+}
+
+void runes_storage_release_regional(void *pointer, unsigned line,
+                                    unsigned column) {
+  (void)line;
+  (void)column;
+  if (pointer && (!runes_active_arena ||
+                  !arena_owns_direct(runes_active_arena, pointer))) {
+    runes_storage_error = RUNES_STORAGE_OWNER_UNAVAILABLE;
+    return;
+  }
+  runes_storage_error = RUNES_STORAGE_OK;
+}
+
+void runes_storage_release_gc(void *pointer) {
+  (void)pointer;
+  runes_storage_error = RUNES_STORAGE_OK;
+}
+
+RunesStorageError runes_storage_last_error(void) {
+  return runes_storage_error;
+}
+
+RunesStorageStats runes_storage_stats(void) {
+  return runes_storage_counters;
+}
+
+void runes_storage_debug_fail_after(size_t successful_allocations) {
+  runes_storage_failure_countdown = successful_allocations;
+}
+
+void runes_storage_debug_clear_failure(void) {
+  runes_storage_failure_countdown = SIZE_MAX;
+}
 
 void runes_gc_scope_enter(unsigned line, unsigned column) {
   gc_claim_owner(line, column);
@@ -422,22 +643,35 @@ void runes_gc_collect(void) {
   runes_gc_threshold = next > 1024 * 1024 ? next : 1024 * 1024;
 }
 
-void *runes_gc_alloc(size_t size, size_t align,
-                     const RunesTypeDescriptor *descriptor, unsigned line,
-                     unsigned column) {
+static void *gc_allocate(size_t size, size_t align,
+                         const RunesTypeDescriptor *descriptor,
+                         size_t initialized_sequence, bool fallible,
+                         unsigned line, unsigned column) {
   gc_claim_owner(line, column);
-  if (!is_power_of_two(align))
+  if (!is_power_of_two(align)) {
+    if (fallible) {
+      runes_storage_error = RUNES_STORAGE_CAPACITY_OVERFLOW;
+      return NULL;
+    }
     runes_runtime_fail("invalid GC allocation alignment", line, column);
+  }
   if (align < sizeof(void *))
     align = sizeof(void *);
   if (size == 0)
     size = 1;
+  if (fallible && storage_forced_failure())
+    return NULL;
   if (!runes_gc_no_collect_depth &&
       (runes_gc_allocated_bytes > runes_gc_threshold ||
        size > runes_gc_threshold - runes_gc_allocated_bytes))
     runes_gc_collect();
-  if (size > SIZE_MAX - (align - 1))
+  if (size > SIZE_MAX - (align - 1)) {
+    if (fallible) {
+      runes_storage_error = RUNES_STORAGE_CAPACITY_OVERFLOW;
+      return NULL;
+    }
     runes_runtime_fail("GC allocation size overflow", line, column);
+  }
   void *allocation = malloc(size + align - 1);
   RunesGcObject *object = malloc(sizeof(*object));
   if (!allocation || !object) {
@@ -454,14 +688,20 @@ void *runes_gc_alloc(size_t size, size_t align,
   if (!allocation || !object) {
     free(allocation);
     free(object);
+    if (fallible) {
+      runes_storage_error = RUNES_STORAGE_OUT_OF_MEMORY;
+      return NULL;
+    }
     runes_runtime_fail("GC allocation failed", line, column);
   }
   uintptr_t address = ((uintptr_t)allocation + align - 1) & ~(align - 1);
   void *payload = (void *)address;
   memset(payload, 0, size);
-  bool descriptor_sequence = descriptor && descriptor->size &&
-                             size > descriptor->size &&
-                             size % descriptor->size == 0;
+  bool explicit_sequence = initialized_sequence != SIZE_MAX;
+  bool descriptor_sequence =
+      explicit_sequence ||
+      (descriptor && descriptor->size && size > descriptor->size &&
+       size % descriptor->size == 0);
   *object = (RunesGcObject){.next = runes_gc_objects,
                            .transient_next = NULL,
                            .descriptor = descriptor,
@@ -470,9 +710,12 @@ void *runes_gc_alloc(size_t size, size_t align,
                            .size = size,
                            .sequence_element =
                                descriptor_sequence ? descriptor : NULL,
-                           .sequence_length = descriptor_sequence
-                                                  ? size / descriptor->size
-                                                  : 0,
+                           .sequence_length =
+                               explicit_sequence
+                                   ? initialized_sequence
+                                   : (descriptor_sequence
+                                          ? size / descriptor->size
+                                          : 0),
                            .marked = false,
                            .transient = false,
                            .transient_owner = NULL};
@@ -480,7 +723,57 @@ void *runes_gc_alloc(size_t size, size_t align,
   gc_make_transient(object, runes_gc_frames);
   runes_gc_object_count++;
   runes_gc_allocated_bytes += size;
+  if (fallible) {
+    runes_storage_error = RUNES_STORAGE_OK;
+    runes_storage_counters.gc_allocations++;
+  }
   return payload;
+}
+
+void *runes_gc_alloc(size_t size, size_t align,
+                     const RunesTypeDescriptor *descriptor, unsigned line,
+                     unsigned column) {
+  return gc_allocate(size, align, descriptor, SIZE_MAX, false, line, column);
+}
+
+void *runes_storage_try_allocate_gc(
+    size_t count, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column) {
+  size_t bytes;
+  if (!storage_layout(count, element, &bytes))
+    return NULL;
+  return gc_allocate(bytes, element->align, element, 0, true, line, column);
+}
+
+void *runes_storage_try_resize_gc(
+    void *pointer, size_t initialized, size_t old_capacity,
+    size_t new_capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column) {
+  size_t old_bytes, new_bytes, initialized_bytes;
+  if (initialized > old_capacity || initialized > new_capacity) {
+    runes_storage_error = RUNES_STORAGE_CAPACITY_OVERFLOW;
+    return NULL;
+  }
+  if (!storage_layout(old_capacity, element, &old_bytes) ||
+      !storage_layout(new_capacity, element, &new_bytes) ||
+      !storage_layout(initialized, element, &initialized_bytes))
+    return NULL;
+  (void)old_bytes;
+  RunesGcObject *old_object = pointer ? gc_find_object(pointer) : NULL;
+  if (pointer && (!old_object || old_object->payload != pointer)) {
+    runes_storage_error = RUNES_STORAGE_OWNER_UNAVAILABLE;
+    return NULL;
+  }
+  runes_gc_no_collect_depth++;
+  void *replacement =
+      gc_allocate(new_bytes, element->align, element, initialized, true, line,
+                  column);
+  runes_gc_no_collect_depth--;
+  if (!replacement)
+    return NULL;
+  if (pointer && initialized_bytes)
+    memcpy(replacement, pointer, initialized_bytes);
+  return replacement;
 }
 
 RunesGcStats runes_gc_stats(void) {

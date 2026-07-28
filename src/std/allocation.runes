@@ -1,0 +1,53 @@
+-- Typed, fallible, realm-sensitive backing-storage operations.
+--
+-- Fresh allocation follows the effective realm. Resize and release are
+-- intended to be called by an owning type's methods, whose specialization
+-- executes in the receiver's persistent owner realm. The runtime rejects a
+-- pointer that is not owned by that selected backend.
+
+use std.core.AllocationError
+use std.core.Result
+
+pub flex f allocate_array<T>(
+    count: usize
+) = outcome: Result<*T, AllocationError> {
+    ?*T pointer = try_allocate(count) as ?*T
+    if pointer == null {
+        AllocationError failure = match storage_error() {
+            2 -> AllocationError.CapacityOverflow(),
+            3 -> AllocationError.OwnerUnavailable(),
+            _ -> AllocationError.OutOfMemory(),
+        }
+        outcome = Result.Err<*T, AllocationError>(failure)
+    } else {
+        outcome = Result.Ok<*T, AllocationError>(unwrap(pointer))
+    }
+}
+
+pub flex f resize_array<T>(
+    pointer: *T,
+    initialized: usize,
+    old_capacity: usize,
+    new_capacity: usize
+) = outcome: Result<*T, AllocationError> {
+    ?*T replacement = resize(
+        pointer,
+        initialized,
+        old_capacity,
+        new_capacity
+    ) as ?*T
+    if replacement == null {
+        AllocationError failure = match storage_error() {
+            2 -> AllocationError.CapacityOverflow(),
+            3 -> AllocationError.OwnerUnavailable(),
+            _ -> AllocationError.OutOfMemory(),
+        }
+        outcome = Result.Err<*T, AllocationError>(failure)
+    } else {
+        outcome = Result.Ok<*T, AllocationError>(unwrap(replacement))
+    }
+}
+
+pub flex f release_array<T>(pointer: *T) {
+    release(pointer)
+}

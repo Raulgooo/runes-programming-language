@@ -153,41 +153,28 @@ A normal Runes function may contain an unsafe block. Calling that normal
 function remains safe because the wrapper is responsible for checking its
 contract.
 
-The planned standard-library byte API follows this shape:
+The standard library now applies this pattern in `std.io`. Application code
+uses portable typed results:
 
 ```runes
-extern f read(fd: i32, buffer: *u8, count: usize) = result: i64
+use std.io
+use std.core.IoError
+use std.core.Result
 
-error IoError = {
-    | ReadFailed
-    | InvalidCount
-}
-
-pub f read_into(fd: i32, buffer: []u8) = result: !usize {
-    unsafe {
-        i64 count = read(fd, buffer.ptr, buffer.len)
-        if count < 0 {
-            result = error.IoError.ReadFailed
-        } else if count as usize > buffer.len {
-            result = error.IoError.InvalidCount
-        } else {
-            result = count as usize
-        }
-    }
-}
+[64]u8 buffer = []
+Result<usize, IoError> input = io.read(buffer)
+Result<usize, IoError> output = io.write_line("ready")
 ```
 
-The raw pointer and length come from one slice, so safe callers cannot disagree
-about them. A production wrapper must also translate platform error state,
-retry interrupted reads where appropriate, preserve partial reads, and define
-EOF behavior.
+The raw pointer and length come from one slice inside the platform layer, so
+safe callers cannot disagree about them. The implementation translates
+platform errors, retries interruption, completes partial writes, and reports
+EOF as `IoError.EndOfInput`. Hosted Linux x86-64 is currently the only backend.
 
-This API is roadmap code, not yet implemented in `std.io`.
+## Raw terminal input
 
-## Current raw terminal input
-
-Until the standard library wrapper exists, Linux programs can call `read`
-directly:
+Target-specific or experimental Linux programs can still call `read` directly,
+but ordinary applications should prefer `std.io`:
 
 ```runes
 extern f read(fd: i32, buffer: *u8, count: usize) = result: i64

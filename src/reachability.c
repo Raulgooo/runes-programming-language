@@ -83,6 +83,8 @@ static void visit_node(AstNode *node) {
   case AST_UNSAFE_BLOCK:
     visit_node(node->as.unsafe_block.body);
     break;
+  case AST_REALM_BLOCK:
+    break;
   case AST_ARRAY_LITERAL:
     visit_list(node->as.array_literal.elems);
     break;

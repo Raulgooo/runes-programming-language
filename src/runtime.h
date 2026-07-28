@@ -31,8 +31,26 @@ typedef struct {
   size_t collections;
 } RunesGcStats;
 
+typedef enum {
+  RUNES_STORAGE_OK = 0,
+  RUNES_STORAGE_OUT_OF_MEMORY = 1,
+  RUNES_STORAGE_CAPACITY_OVERFLOW = 2,
+  RUNES_STORAGE_OWNER_UNAVAILABLE = 3,
+} RunesStorageError;
+
+typedef struct {
+  size_t dynamic_allocations;
+  size_t dynamic_releases;
+  size_t regional_allocations;
+  size_t gc_allocations;
+} RunesStorageStats;
+
+void runes_runtime_init(void);
+
 void *runes_arena_scope_enter(unsigned line, unsigned column);
 void runes_arena_scope_leave(void *scope);
+void *runes_regional_alloc(size_t size, size_t align, unsigned line,
+                           unsigned column);
 size_t runes_debug_live_arena_scopes(void);
 size_t runes_debug_live_arena_roots(void);
 
@@ -44,6 +62,35 @@ void *runes_raw_alloc(size_t size, unsigned line, unsigned column);
 void *runes_raw_alloc_aligned(size_t size, size_t align, unsigned line,
                               unsigned column);
 void runes_raw_free(void *pointer);
+void *runes_storage_try_allocate_dynamic(
+    size_t count, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column);
+void *runes_storage_try_allocate_regional(
+    size_t count, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column);
+void *runes_storage_try_allocate_gc(
+    size_t count, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column);
+void *runes_storage_try_resize_dynamic(
+    void *pointer, size_t initialized, size_t old_capacity,
+    size_t new_capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column);
+void *runes_storage_try_resize_regional(
+    void *pointer, size_t initialized, size_t old_capacity,
+    size_t new_capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column);
+void *runes_storage_try_resize_gc(
+    void *pointer, size_t initialized, size_t old_capacity,
+    size_t new_capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column);
+void runes_storage_release_dynamic(void *pointer);
+void runes_storage_release_regional(void *pointer, unsigned line,
+                                    unsigned column);
+void runes_storage_release_gc(void *pointer);
+RunesStorageError runes_storage_last_error(void);
+RunesStorageStats runes_storage_stats(void);
+void runes_storage_debug_fail_after(size_t successful_allocations);
+void runes_storage_debug_clear_failure(void);
 
 void runes_gc_scope_enter(unsigned line, unsigned column);
 void runes_gc_scope_leave(void);

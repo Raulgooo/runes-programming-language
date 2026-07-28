@@ -1,0 +1,24 @@
+use std.io
+use std.core.IoError
+use std.core.Result
+
+f main() {
+    [8192]u8 buffer = []
+    Result<usize, IoError> input = io.read(buffer)
+    match input {
+        Ok(count) -> {
+            print(
+                count > 0,
+                " ",
+                count <= 8192,
+                " ",
+                buffer[0] == 65,
+                " ",
+                buffer[count - 1] == 65
+            )
+        }
+        Err(_) -> {
+            print(false, " ", false, " ", false, " ", false)
+        }
+    }
+}

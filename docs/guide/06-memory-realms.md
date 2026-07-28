@@ -34,7 +34,7 @@ call selects raw, arena, or GC storage from the active realm. See the
 | `dynamic f` | raw heap | owner calls `raw_free` |
 | `regional f` | new or child arena | entire regional tree freed together |
 | `gc f` | shared scoped GC heap | unreachable objects reclaimed at safepoints |
-| `flex f` | caller's arena/GC, otherwise raw allocation | inherited from caller |
+| `flex f` | compile-time caller specialization; unavailable for allocating stack variants | inherited from caller |
 | root `main` | orchestration/raw fallback | may call every realm |
 
 `f` and `stack f` are equivalent in v0.1. Writing `stack f` can emphasize an
@@ -54,9 +54,10 @@ f sum(values: []const i32) = result: i32 {
 }
 ```
 
-Stack functions may call stack and flex functions. `alloc` is rejected inside
-a stack function. A pointer, slice, interface, or borrowing closure cannot be
-returned when it references the function's local stack storage.
+Stack functions may call stack and flex functions. A flex call that demands an
+allocating stack specialization is rejected. A pointer, slice, interface, or
+borrowing closure cannot be returned when it references the function's local
+stack storage.
 
 ## Dynamic functions
 
@@ -158,15 +159,45 @@ the prelude.
 
 ## Flex functions
 
-A `flex f` follows its caller's active allocation context:
+A directly called `flex f` is specialized for its caller's effective realm:
 
 - called from regional code, allocation uses the caller's arena tree;
 - called from GC code, allocation uses the GC heap and enters a GC frame;
-- otherwise allocation falls back to raw behavior.
+- called from dynamic or root code, allocation uses raw ownership;
+- called from stack code, pure code is valid but owning allocation is rejected.
 
 This is useful for reusable algorithms and standard-library helpers that should
-work in several ownership contexts. It also means their returned ownership and
-lifetime must be documented carefully.
+work in several ownership contexts. Generic and ordinary direct flex calls get
+deterministic realm-specific implementations without a runtime realm branch.
+
+When a genuinely exceptional step differs, use a compile-time realm block:
+
+```runes
+flex f maintain_index() {
+    update_shared_entries()
+    when realm gc {
+        compact_weak_entries()
+    }
+}
+```
+
+The compiler retains the block only in the matching specialization. An
+optional `else` supplies the behavior for every other concrete realm. Prefer
+shared algorithms and realm-aware primitives over repeated realm blocks.
+
+The next layer, for a whole definition that genuinely differs, is an
+`in <realm>` family. `except(...)` records realms where a shared declaration
+is unavailable. Direct function and method calls select exact behavior first
+and then a shared fallback, without a runtime realm branch; see
+[realm declaration modifiers](../reference/syntax.md#realm-declaration-modifiers).
+
+Realm-specialized structs and variants preserve a hidden owner identity when
+they move through parameters and returns. Their receiver methods select from
+that owner variant, rather than silently adopting the current function's
+realm. Ordinary functions that accept such a type are specialized
+automatically for each demanded concrete variant. This is compile-time
+monomorphization; source calls do not pass a realm argument or inspect a
+runtime tag.
 
 ## Legal calls
 

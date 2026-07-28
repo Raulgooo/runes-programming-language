@@ -1,0 +1,16 @@
+-- EXPECT FAIL: 'when realm' requires a statically specialized direct call
+flex f realm_number() = result: i32 {
+    when realm dynamic { result = 2 }
+}
+
+flex f delegated_number() = result: i32 {
+    result = realm_number()
+}
+
+f consume(operation: flex f() -> i32) {
+    print(operation())
+}
+
+f main() {
+    consume(delegated_number)
+}

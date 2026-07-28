@@ -51,6 +51,15 @@ static void cg_error(Codegen *cg, const AstNode *node, const char *message) {
   cg->error_count++;
 }
 
+static bool current_effective_realm(Codegen *cg, EffectiveRealm *realm) {
+  if (!cg->current_function ||
+      cg->current_function->kind != AST_FUNC_DECL ||
+      !cg->current_function->as.func_decl.has_effective_realm)
+    return false;
+  *realm = cg->current_function->as.func_decl.effective_realm;
+  return true;
+}
+
 static void indent(FILE *out, int depth) {
   for (int i = 0; i < depth; i++)
     fputs("  ", out);
@@ -1484,24 +1493,76 @@ static bool emit_expr(Codegen *cg, AstNode *expr) {
     fputc(')', cg->out);
     return true;
   case AST_CAST_EXPR: {
+    const char *storage_builtin = NULL;
+    if (expr->as.cast.expr && expr->as.cast.expr->kind == AST_CALL_EXPR &&
+        expr->as.cast.expr->as.call.callee->kind == AST_IDENTIFIER)
+      storage_builtin =
+          expr->as.cast.expr->as.call.callee->as.identifier.name;
     bool typed_allocation =
         expr->resolved_type && expr->resolved_type->kind == TY_POINTER &&
-        expr->as.cast.expr && expr->as.cast.expr->kind == AST_CALL_EXPR &&
-        expr->as.cast.expr->as.call.callee->kind == AST_IDENTIFIER &&
-        strcmp(expr->as.cast.expr->as.call.callee->as.identifier.name,
-               "alloc") == 0;
-    if (typed_allocation) {
+        storage_builtin && strcmp(storage_builtin, "alloc") == 0;
+    bool typed_storage =
+        expr->resolved_type && expr->resolved_type->kind == TY_POINTER &&
+        storage_builtin &&
+        (strcmp(storage_builtin, "try_allocate") == 0 ||
+         strcmp(storage_builtin, "resize") == 0);
+    if (typed_allocation || typed_storage) {
       Type *allocated = expr->resolved_type->as.pointer.inner;
       char descriptor[1024], c_type[1024];
       if (!descriptor_name(cg, allocated, descriptor, sizeof(descriptor)) ||
           !build_semantic_decl(cg, allocated, "", c_type,
                                sizeof(c_type)))
         return false;
-      fprintf(cg->out, "((%s *)runes_alloc_typed(", c_type);
+      EffectiveRealm realm;
+      bool concrete_alloc = current_effective_realm(cg, &realm);
+      fprintf(cg->out, "((%s *)", c_type);
+      if (typed_storage) {
+        const char *realm_name =
+            concrete_alloc && realm == EFFECTIVE_REALM_DYNAMIC
+                ? "dynamic"
+                : concrete_alloc && realm == EFFECTIVE_REALM_REGIONAL
+                      ? "regional"
+                      : concrete_alloc && realm == EFFECTIVE_REALM_GC
+                            ? "gc"
+                            : NULL;
+        if (!realm_name) {
+          cg_error(cg, expr,
+                   "typed storage requires a concrete non-stack realm");
+          return false;
+        }
+        fprintf(cg->out, "runes_storage_%s_%s(",
+                strcmp(storage_builtin, "try_allocate") == 0
+                    ? "try_allocate"
+                    : "try_resize",
+                realm_name);
+        for (AstNode *argument = expr->as.cast.expr->as.call.args; argument;
+             argument = argument->next) {
+          if (!emit_expr(cg, argument))
+            return false;
+          fputs(", ", cg->out);
+        }
+        fprintf(cg->out, "&%s, %u, %u))", descriptor, expr->line,
+                expr->col);
+        return true;
+      }
+      if (!concrete_alloc)
+        fputs("runes_alloc_typed(", cg->out);
+      else if (realm == EFFECTIVE_REALM_DYNAMIC)
+        fputs("runes_raw_alloc_aligned(", cg->out);
+      else if (realm == EFFECTIVE_REALM_REGIONAL)
+        fputs("runes_regional_alloc(", cg->out);
+      else if (realm == EFFECTIVE_REALM_GC)
+        fputs("runes_gc_alloc(", cg->out);
+      else {
+        cg_error(cg, expr, "stack allocation reached code generation");
+        return false;
+      }
       if (!emit_expr(cg, expr->as.cast.expr->as.call.args))
         return false;
-      fprintf(cg->out, ", _Alignof(%s), &%s, %u, %u))", c_type,
-              descriptor, expr->line, expr->col);
+      fprintf(cg->out, ", _Alignof(%s)", c_type);
+      if (!concrete_alloc || realm == EFFECTIVE_REALM_GC)
+        fprintf(cg->out, ", &%s", descriptor);
+      fprintf(cg->out, ", %u, %u))", expr->line, expr->col);
       return true;
     }
     bool pointer_to_string =
@@ -1731,13 +1792,30 @@ static bool emit_expr(Codegen *cg, AstNode *expr) {
       AstNode *arg = expr->as.call.args;
       if (strcmp(builtin, "alloc") == 0 ||
           strcmp(builtin, "raw_alloc") == 0) {
-        fprintf(cg->out, "%s(", strcmp(builtin, "alloc") == 0
-                                      ? "runes_alloc"
-                                      : "runes_raw_alloc");
+        EffectiveRealm realm;
+        bool concrete_alloc =
+            strcmp(builtin, "alloc") == 0 &&
+            current_effective_realm(cg, &realm);
+        if (!concrete_alloc) {
+          fprintf(cg->out, "%s(", strcmp(builtin, "alloc") == 0
+                                        ? "runes_alloc"
+                                        : "runes_raw_alloc");
+        } else if (realm == EFFECTIVE_REALM_DYNAMIC) {
+          fputs("runes_raw_alloc_aligned(", cg->out);
+        } else if (realm == EFFECTIVE_REALM_REGIONAL) {
+          fputs("runes_regional_alloc(", cg->out);
+        } else if (realm == EFFECTIVE_REALM_GC) {
+          fputs("runes_gc_alloc(", cg->out);
+        } else {
+          cg_error(cg, expr, "stack allocation reached code generation");
+          return false;
+        }
         if (!emit_expr(cg, arg))
           return false;
         if (strcmp(builtin, "alloc") == 0)
           fputs(", _Alignof(max_align_t)", cg->out);
+        if (concrete_alloc && realm == EFFECTIVE_REALM_GC)
+          fputs(", NULL", cg->out);
         fprintf(cg->out, ", %u, %u)", expr->line, expr->col);
         return true;
       }
@@ -1756,6 +1834,32 @@ static bool emit_expr(Codegen *cg, AstNode *expr) {
         if (!emit_expr(cg, arg))
           return false;
         fputc(')', cg->out);
+        return true;
+      }
+      if (strcmp(builtin, "release") == 0) {
+        EffectiveRealm realm;
+        if (!current_effective_realm(cg, &realm) ||
+            realm == EFFECTIVE_REALM_STACK) {
+          cg_error(cg, expr,
+                   "release requires a concrete non-stack storage realm");
+          return false;
+        }
+        if (realm == EFFECTIVE_REALM_DYNAMIC)
+          fputs("runes_storage_release_dynamic((void *)", cg->out);
+        else if (realm == EFFECTIVE_REALM_REGIONAL)
+          fputs("runes_storage_release_regional((void *)", cg->out);
+        else
+          fputs("runes_storage_release_gc((void *)", cg->out);
+        if (!emit_expr(cg, arg))
+          return false;
+        if (realm == EFFECTIVE_REALM_REGIONAL)
+          fprintf(cg->out, ", %u, %u)", expr->line, expr->col);
+        else
+          fputc(')', cg->out);
+        return true;
+      }
+      if (strcmp(builtin, "storage_error") == 0) {
+        fputs("((int32_t)runes_storage_last_error())", cg->out);
         return true;
       }
       if (strcmp(builtin, "slice") == 0 ||
@@ -3494,6 +3598,10 @@ static bool emit_stmt(Codegen *cg, AstNode *stmt, int depth) {
     indent(cg->out, depth);
     fputs("}\n", cg->out);
     return true;
+  case AST_REALM_BLOCK:
+    cg_error(cg, stmt,
+             "'when realm' requires a statically specialized direct call");
+    return false;
   case AST_ASM_EXPR:
     indent(cg->out, depth);
     fputs("__asm__ volatile (", cg->out);
@@ -3612,6 +3720,10 @@ static bool emit_extern_declaration(Codegen *cg, AstNode *decl) {
       strcmp(decl->as.extern_decl.name, "memmove") == 0 ||
       strcmp(decl->as.extern_decl.name, "sqrt") == 0 ||
       strcmp(decl->as.extern_decl.name, "alloc") == 0 ||
+      strcmp(decl->as.extern_decl.name, "try_allocate") == 0 ||
+      strcmp(decl->as.extern_decl.name, "resize") == 0 ||
+      strcmp(decl->as.extern_decl.name, "release") == 0 ||
+      strcmp(decl->as.extern_decl.name, "storage_error") == 0 ||
       strcmp(decl->as.extern_decl.name, "raw_alloc") == 0 ||
       strcmp(decl->as.extern_decl.name, "raw_alloc_aligned") == 0 ||
       strcmp(decl->as.extern_decl.name, "raw_free") == 0)
@@ -3910,11 +4022,18 @@ static bool emit_func(Codegen *cg, AstNode *decl, const char *c_name,
     cg->current_result_c_name = NULL;
   }
   cg->current_error_name = is_fallible ? "__runes_error" : NULL;
+  bool specialized_flex =
+      decl->as.func_decl.realm == REALM_FLEX &&
+      decl->as.func_decl.has_effective_realm;
+  EffectiveRealm flex_realm = decl->as.func_decl.effective_realm;
   cg->current_arena_scope =
       !is_main && decl->as.func_decl.realm == REALM_ARENA;
   cg->current_gc_frame = is_main || decl->as.func_decl.realm == REALM_GC ||
                          decl->as.func_decl.realm == REALM_HEAP ||
-                         decl->as.func_decl.realm == REALM_FLEX;
+                         (decl->as.func_decl.realm == REALM_FLEX &&
+                          (!specialized_flex ||
+                           flex_realm == EFFECTIVE_REALM_DYNAMIC ||
+                           flex_realm == EFFECTIVE_REALM_GC));
   cg->current_gc_scope =
       !is_main && decl->as.func_decl.realm == REALM_GC;
   cg->current_cleanup_used = false;
@@ -3928,11 +4047,16 @@ static bool emit_func(Codegen *cg, AstNode *decl, const char *c_name,
     return false;
   fputs(" {\n", cg->out);
 
+  if (is_main && cg->hosted) {
+    indent(cg->out, 1);
+    fputs("runes_runtime_init();\n", cg->out);
+  }
+
   if (cg->current_gc_frame) {
     indent(cg->out, 1);
     fprintf(cg->out,
             "void *__runes_gc_frame = %s(%u, %u);\n",
-            decl->as.func_decl.realm == REALM_FLEX
+            decl->as.func_decl.realm == REALM_FLEX && !specialized_flex
                 ? "runes_gc_frame_enter_if_active"
                 : "runes_gc_frame_enter",
             decl->line, decl->col);
@@ -4624,6 +4748,10 @@ static bool emit_type_descriptor(Codegen *cg, Type *type,
             "static void %s(void *destination_value, const void "
             "*source_value, RunesCloneContext *context) {\n",
             clone);
+    fputs("  (void)destination_value;\n"
+          "  (void)source_value;\n"
+          "  (void)context;\n",
+          cg->out);
     if (type->kind == TY_POINTER) {
       char inner_descriptor[1024];
       if (!descriptor_name(cg, type->as.pointer.inner, inner_descriptor,
@@ -4707,6 +4835,7 @@ static bool emit_type_descriptor(Codegen *cg, Type *type,
       fprintf(cg->out,
               "  %s *destination = destination_value;\n"
               "  const %s *source = source_value;\n"
+              "  (void)destination;\n"
               "  switch (source->tag) {\n",
               name, name);
       for (int arm = 0; arm < type->as.variant.arm_count; arm++) {
@@ -5096,8 +5225,12 @@ static bool emit_ast_tuple_dependencies(Codegen *cg, AstNode *node) {
           node->resolved_type->kind == TY_POINTER &&
           node->as.cast.expr && node->as.cast.expr->kind == AST_CALL_EXPR &&
           node->as.cast.expr->as.call.callee->kind == AST_IDENTIFIER &&
-          strcmp(node->as.cast.expr->as.call.callee->as.identifier.name,
-                 "alloc") == 0 &&
+          (strcmp(node->as.cast.expr->as.call.callee->as.identifier.name,
+                  "alloc") == 0 ||
+           strcmp(node->as.cast.expr->as.call.callee->as.identifier.name,
+                  "try_allocate") == 0 ||
+           strcmp(node->as.cast.expr->as.call.callee->as.identifier.name,
+                  "resize") == 0) &&
           !emit_type_descriptor(cg, node->resolved_type->as.pointer.inner,
                                 node))
         return false;
@@ -5461,9 +5594,10 @@ static bool emit_declaration_phase(Codegen *cg, AstNode *decl,
   return true;
 }
 
-void codegen_init(Codegen *cg, FILE *out, Arena *arena) {
+void codegen_init(Codegen *cg, FILE *out, Arena *arena, bool hosted) {
   cg->out = out;
   cg->arena = arena;
+  cg->hosted = hosted;
   cg->had_error = false;
   cg->error_count = 0;
   cg->temp_id = 0;
@@ -5557,8 +5691,11 @@ bool codegen_emit_c(Codegen *cg, AstNode *program) {
         "void *);\n"
         "struct RunesTypeDescriptor { size_t size; size_t align; "
         "RunesCloneFunction clone; RunesTraceFunction trace; };\n"
+        "extern void runes_runtime_init(void);\n"
         "extern void *runes_arena_scope_enter(unsigned, unsigned);\n"
         "extern void runes_arena_scope_leave(void *);\n"
+        "extern void *runes_regional_alloc(size_t, size_t, unsigned, "
+        "unsigned);\n"
         "extern void *runes_alloc(size_t, size_t, unsigned, unsigned);\n"
         "extern void *runes_alloc_typed(size_t, size_t, const "
         "RunesTypeDescriptor *, unsigned, unsigned);\n"
@@ -5566,6 +5703,23 @@ bool codegen_emit_c(Codegen *cg, AstNode *program) {
         "extern void *runes_raw_alloc_aligned(size_t, size_t, unsigned, "
         "unsigned);\n"
         "extern void runes_raw_free(void *);\n"
+        "extern void *runes_storage_try_allocate_dynamic(size_t, const "
+        "RunesTypeDescriptor *, unsigned, unsigned);\n"
+        "extern void *runes_storage_try_allocate_regional(size_t, const "
+        "RunesTypeDescriptor *, unsigned, unsigned);\n"
+        "extern void *runes_storage_try_allocate_gc(size_t, const "
+        "RunesTypeDescriptor *, unsigned, unsigned);\n"
+        "extern void *runes_storage_try_resize_dynamic(void *, size_t, "
+        "size_t, size_t, const RunesTypeDescriptor *, unsigned, unsigned);\n"
+        "extern void *runes_storage_try_resize_regional(void *, size_t, "
+        "size_t, size_t, const RunesTypeDescriptor *, unsigned, unsigned);\n"
+        "extern void *runes_storage_try_resize_gc(void *, size_t, size_t, "
+        "size_t, const RunesTypeDescriptor *, unsigned, unsigned);\n"
+        "extern void runes_storage_release_dynamic(void *);\n"
+        "extern void runes_storage_release_regional(void *, unsigned, "
+        "unsigned);\n"
+        "extern void runes_storage_release_gc(void *);\n"
+        "extern int runes_storage_last_error(void);\n"
         "extern void runes_gc_scope_enter(unsigned, unsigned);\n"
         "extern void runes_gc_scope_leave(void);\n"
         "extern void *runes_gc_frame_enter(unsigned, unsigned);\n"

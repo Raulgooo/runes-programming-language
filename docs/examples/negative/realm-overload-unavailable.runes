@@ -1,0 +1,17 @@
+-- EXPECT FAIL: function 'selected' has no regional definition
+
+in dynamic f selected() = result: i32 {
+    result = 1
+}
+
+in gc f selected() = result: i32 {
+    result = 2
+}
+
+regional f unavailable() = result: i32 {
+    result = selected()
+}
+
+f main() {
+    print(unavailable())
+}

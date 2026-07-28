@@ -281,6 +281,8 @@ allocation. A negative compiler test verifies constructor payload typing.
 
 ## Library milestone 2: minimal Linux-backed `std.io`
 
+Status: implemented and tested for hosted Linux x86-64 (2026-07-28).
+
 Export `std.io` with Linux-backed internals and portable signatures.
 
 Initial surface:
@@ -317,6 +319,17 @@ Acceptance:
 - deterministic fake-backend tests cover partial writes and interruption;
 - output compiles with `-Werror`.
 
+The implementation returns `Result<usize, IoError>` from all five operations.
+Integration tests cover stdout, stderr, piped stdin, EOF, an invalid and a
+closed descriptor, and a real closed pipe handled by the hosted runtime's
+process-wide `SIGPIPE` policy. The pipe fixture does not suppress the signal
+itself. A syscall fake deterministically forces interruption,
+partial writes, zero-byte writes, newline-stage failure, every current errno
+mapping, and `EPIPE`. Adversarial tests force impossible oversized backend
+counts and verify that both read and write reject them. Empty buffers, empty
+text, embedded NUL bytes, multibyte UTF-8, and an 8 KiB kernel read are also
+covered. Freestanding targets reject unavailable calls during compilation.
+
 ## Library milestone 3: borrowed text
 
 Extend borrowed `str` operations before building ownership.
@@ -351,13 +364,14 @@ Acceptance:
 
 ## Library milestone 4: typed allocation
 
+Status: implemented and tested as `std.allocation` (2026-07-28).
+
 Provide allocation operations that derive size and alignment from `T`:
 
 ```text
-allocate<T>()
 allocate_array<T>(count)
-resize_array<T>(pointer, old_count, new_count)
-free<T>(pointer)
+resize_array<T>(pointer, initialized, old_capacity, new_capacity)
+release_array<T>(pointer)
 ```
 
 Required behavior:
@@ -371,6 +385,13 @@ Required behavior:
 - allocation failure injection is available to tests.
 
 Do not spread `alloc(sizeof(T)) as *T` throughout every container.
+
+The implementation includes deterministic failure injection and backend
+counters, preserves dynamic storage on failed growth, rejects an unavailable
+regional owner, and passes explicit initialized length to GC sequence
+metadata. The internal proof buffer exercises the same API and owner
+preservation through ordinary functions. This does not complete milestone 5:
+the public `Vec<T>` API is still missing.
 
 ## Library milestone 5: `Vec<T>`
 
@@ -684,7 +705,7 @@ vectors should include independently calculated expected strings.
 The recommended working order is:
 
 1. `Result<T, E>` and portable error vocabulary.
-2. Minimal Linux-backed `std.io`.
+2. Minimal Linux-backed `std.io`. (done)
 3. Borrowed text utilities.
 4. Typed allocation.
 5. Dynamic `Vec<T>`.
@@ -705,15 +726,13 @@ a blocker for the next library sprint.
 
 ## Immediate next sprint
 
-Milestone 1 is complete. Do not begin with `String`, a formatter, or a file
-object. The next focused sprint is milestone 2:
+Milestones 1 and 2 are complete. The next focused sprint is milestone 3:
 
-1. Export `std.io`.
-2. Translate Linux errno into the existing portable `IoError`.
-3. Implement allocation-free stdout/stderr complete writes.
-4. Implement stdin reads into caller-owned mutable slices.
-5. Add fake-backend tests for partial writes and `EINTR`.
-6. Build one fixed-buffer echo/copy CLI with no application `unsafe`.
+1. Specify byte-index and Unicode-scalar-index behavior for borrowed `str`.
+2. Implement UTF-8 validation and scalar iteration without allocation.
+3. Add prefix, suffix, search, and trim views.
+4. Add checked substring views that reject non-scalar boundaries.
+5. Test ASCII, multibyte, invalid external bytes, and empty text.
 
 That sprint proves the high-level boundary before allocation, container, and
 UTF-8 ownership make failures harder to isolate.

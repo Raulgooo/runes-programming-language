@@ -1,0 +1,32 @@
+type Cell<T> = {
+    value: T
+}
+
+in gc type Cell<T> = {
+    value: T
+    traced: bool
+}
+
+type Wrapper<T> = {
+    cell: Cell<T>
+}
+
+except(stack, regional) type HeapOnly = {
+    value: usize
+}
+
+f identity(value: Cell<i32>) = result: Cell<i32> {
+    result = value
+}
+
+dynamic f dynamic_cell() = result: Cell<i32> {
+    result = Cell(value: 1)
+}
+
+gc f gc_cell() = result: Cell<i32> {
+    result = Cell(value: 2, traced: true)
+}
+
+f main() {
+    print(identity(dynamic_cell()).value, identity(gc_cell()).value)
+}

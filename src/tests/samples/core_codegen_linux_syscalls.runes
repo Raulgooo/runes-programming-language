@@ -33,6 +33,7 @@ f main() {
 
     [10]u8 null_path = [47, 100, 101, 118, 47, 110, 117, 108, 108, 0]
     bool read_eof = false
+    bool closed_descriptor_failed = false
     match fd.open_at_raw(-100, &null_path[0], 0, 0) {
         Value(descriptor) -> {
             [1]u8 buffer = [0]
@@ -41,6 +42,10 @@ f main() {
                 Failure(_) -> false,
             }
             fd.close(descriptor)
+            closed_descriptor_failed = match fd.read(descriptor, buffer) {
+                Value(_) -> false,
+                Failure(code) -> code == 9,
+            }
         }
         Failure(_) -> {
             read_eof = false
@@ -54,6 +59,8 @@ f main() {
         " ",
         mapping_worked,
         " ",
-        read_eof
+        read_eof,
+        " ",
+        closed_descriptor_failed
     )
 }

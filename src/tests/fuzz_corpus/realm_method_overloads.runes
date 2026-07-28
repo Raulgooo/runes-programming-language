@@ -1,0 +1,26 @@
+type Box = {
+    value: i32
+}
+
+method Box {
+    flex f read(self) = result: i32 {
+        result = self.value
+    }
+
+    in gc f read(self) = result: i32 {
+        result = self.value
+    }
+}
+
+dynamic f dynamic_read(box: Box) = result: i32 {
+    result = box.read()
+}
+
+gc f gc_read(box: Box) = result: i32 {
+    result = box.read()
+}
+
+f main() {
+    Box box = Box(value: 1)
+    print(dynamic_read(box), gc_read(box))
+}

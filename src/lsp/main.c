@@ -723,6 +723,7 @@ static void handle_completion(const char *id) {
   static const char *items[] = {
       "f",       "type",    "interface", "method",   "error",  "mod",
       "use",     "pub",     "const",     "extern",   "if",     "else",
+      "when",    "realm",    "in",      "except",
       "while",   "for",     "loop",      "match",    "return", "break",
       "continue","try",     "catch",     "unsafe",   "asm",    "promote",
       "stack",   "regional","dynamic",   "gc",       "flex",   "i8",

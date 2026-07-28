@@ -51,6 +51,19 @@ void test_memory_scopes() {
 
   ASSERT_TOKEN(&L, TOKEN_RBRACE, "}");
   ASSERT_TOKEN(&L, TOKEN_EOF, "");
+
+  lexer_init(&L, "when realm in except gc {} else {}", NULL);
+  ASSERT_TOKEN(&L, TOKEN_WHEN, "when");
+  ASSERT_TOKEN(&L, TOKEN_REALM, "realm");
+  ASSERT_TOKEN(&L, TOKEN_IN, "in");
+  ASSERT_TOKEN(&L, TOKEN_EXCEPT, "except");
+  ASSERT_TOKEN(&L, TOKEN_GC, "gc");
+  ASSERT_TOKEN(&L, TOKEN_LBRACE, "{");
+  ASSERT_TOKEN(&L, TOKEN_RBRACE, "}");
+  ASSERT_TOKEN(&L, TOKEN_ELSE, "else");
+  ASSERT_TOKEN(&L, TOKEN_LBRACE, "{");
+  ASSERT_TOKEN(&L, TOKEN_RBRACE, "}");
+  ASSERT_TOKEN(&L, TOKEN_EOF, "");
   printf("test_memory_scopes passed!\n");
 }
 

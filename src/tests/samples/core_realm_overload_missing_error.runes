@@ -1,0 +1,9 @@
+-- EXPECT FAIL: function 'realm_value' has no dynamic definition
+
+in gc f realm_value() = result: i32 {
+    result = 1
+}
+
+f main() {
+    print("%d\n", realm_value())
+}

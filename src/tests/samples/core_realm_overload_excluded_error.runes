@@ -1,0 +1,14 @@
+-- EXPECT FAIL: function 'realm_value' excludes the regional realm
+
+except(stack, regional)
+flex f realm_value() = result: i32 {
+    result = 1
+}
+
+regional f call_excluded() = result: i32 {
+    result = realm_value()
+}
+
+f main() {
+    print(call_excluded())
+}

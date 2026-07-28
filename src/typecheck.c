@@ -12,6 +12,7 @@ void typechecker_init(TypeChecker *tc, Arena *arena, TypeContext *tctx,
   tc->had_error = false;
   tc->expected_ret = NULL;
   tc->current_realm = REALM_MAIN;
+  tc->current_declared_realm = REALM_MAIN;
   tc->loop_depth = 0;
   tc->unsafe_depth = 0;
   tc->function_depth = 0;
@@ -355,21 +356,16 @@ static MemoryRealm strategy_to_realm(MemoryStrategy strategy) {
 }
 
 static const char *realm_name(MemoryRealm r) {
-  switch (r) {
-  case REALM_STACK:
-    return "stack";
-  case REALM_ARENA:
-    return "arena";
-  case REALM_HEAP:
-    return "dynamic";
-  case REALM_GC:
-    return "gc";
-  case REALM_FLEX:
-    return "flex";
-  case REALM_MAIN:
-    return "main";
-  }
-  return "unknown";
+  return memory_realm_name(r);
+}
+
+static MemoryRealm function_body_realm(const AstNode *function) {
+  if (function->as.func_decl.is_main)
+    return REALM_MAIN;
+  if (function->as.func_decl.has_effective_realm)
+    return effective_realm_as_memory_realm(
+        function->as.func_decl.effective_realm);
+  return function->as.func_decl.realm;
 }
 
 // ── Phase 2 helpers ──────────────────────────────────────────────────────────
@@ -1546,6 +1542,8 @@ static bool is_compiler_lowered_extern(const char *name) {
   return strcmp(name, "memset") == 0 || strcmp(name, "memcpy") == 0 ||
          strcmp(name, "memcmp") == 0 || strcmp(name, "memmove") == 0 ||
          strcmp(name, "sqrt") == 0 || strcmp(name, "alloc") == 0 ||
+         strcmp(name, "try_allocate") == 0 ||
+         strcmp(name, "resize") == 0 || strcmp(name, "release") == 0 ||
          strcmp(name, "raw_alloc") == 0 ||
          strcmp(name, "raw_alloc_aligned") == 0 ||
          strcmp(name, "raw_free") == 0;
@@ -2214,6 +2212,49 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       inferred = tc->tctx->type_void;
       break;
     }
+    if (expr->as.call.callee->kind == AST_IDENTIFIER) {
+      const char *builtin = expr->as.call.callee->as.identifier.name;
+      bool try_allocate = strcmp(builtin, "try_allocate") == 0;
+      bool resize = strcmp(builtin, "resize") == 0;
+      bool release = strcmp(builtin, "release") == 0;
+      bool storage_error = strcmp(builtin, "storage_error") == 0;
+      if (try_allocate || resize || release || storage_error) {
+        if (!storage_error && tc->current_realm == REALM_STACK)
+          typechecker_error(tc, expr->line, expr->col,
+                            "storage intrinsic is not available in a stack "
+                            "function");
+        AstNode *argument = expr->as.call.args;
+        int count = 0;
+        for (AstNode *item = argument; item; item = item->next)
+          count++;
+        int expected = try_allocate ? 1 : resize ? 4 : release ? 1 : 0;
+        if (count != expected)
+          typechecker_error(tc, expr->line, expr->col,
+                            "storage intrinsic has the wrong argument count");
+        int index = 0;
+        for (AstNode *item = argument; item; item = item->next, index++) {
+          Type *item_type = typechecker_infer_expr(tc, item);
+          if ((resize || release) && index == 0) {
+            if (type_is_resolved(item_type) &&
+                item_type->kind != TY_POINTER)
+              typechecker_error(tc, item->line, item->col,
+                                "storage pointer argument must be a pointer");
+          } else if (type_is_resolved(item_type) &&
+                     !type_is_integer(item_type)) {
+            typechecker_error(tc, item->line, item->col,
+                              "storage size argument must be an integer");
+          }
+        }
+        if (try_allocate || resize)
+          inferred =
+              type_new_nullable_pointer(tc->tctx, tc->tctx->type_void);
+        else if (storage_error)
+          inferred = tc->tctx->type_i32;
+        else
+          inferred = tc->tctx->type_void;
+        break;
+      }
+    }
     if (expr->as.call.callee->kind == AST_IDENTIFIER &&
         strcmp(expr->as.call.callee->as.identifier.name, "unwrap") == 0) {
       AstNode *arg = expr->as.call.args;
@@ -2332,10 +2373,15 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       }
 
       if (expr->as.call.callee->kind == AST_IDENTIFIER &&
-          strcmp(expr->as.call.callee->as.identifier.name, "alloc") == 0 &&
+          (strcmp(expr->as.call.callee->as.identifier.name, "alloc") == 0 ||
+           strcmp(expr->as.call.callee->as.identifier.name,
+                  "try_allocate") == 0 ||
+           strcmp(expr->as.call.callee->as.identifier.name, "resize") == 0 ||
+           strcmp(expr->as.call.callee->as.identifier.name, "release") == 0) &&
           tc->current_realm == REALM_STACK) {
         typechecker_error(tc, expr->line, expr->col,
-                          "alloc is not available in a stack function");
+                          "%s is not available in a stack function",
+                          expr->as.call.callee->as.identifier.name);
       }
 
       AstNode *arg = expr->as.call.args;
@@ -2647,8 +2693,17 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         source_pointer && target_pointer && !source->as.pointer.nullable &&
         inferred->as.pointer.nullable &&
         type_equals(source->as.pointer.inner, inferred->as.pointer.inner);
+    bool safe_typed_storage_cast =
+        target_pointer && expr->as.cast.expr &&
+        expr->as.cast.expr->kind == AST_CALL_EXPR &&
+        expr->as.cast.expr->as.call.callee->kind == AST_IDENTIFIER &&
+        (strcmp(expr->as.cast.expr->as.call.callee->as.identifier.name,
+                "try_allocate") == 0 ||
+         strcmp(expr->as.cast.expr->as.call.callee->as.identifier.name,
+                "resize") == 0);
     if ((source_pointer || target_pointer) &&
         !type_equals(source, inferred) && !safe_pointer_widening &&
+        !safe_typed_storage_cast &&
         tc->unsafe_depth == 0) {
       typechecker_error(tc, expr->line, expr->col,
                         "Pointer-related casts require an unsafe block");
@@ -3396,18 +3451,22 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
     }
     // Phase 3: realm nesting enforcement
     MemoryRealm saved_realm = tc->current_realm;
+    MemoryRealm saved_declared_realm = tc->current_declared_realm;
     int saved_unsafe_depth = tc->unsafe_depth;
     tc->unsafe_depth = 0;
-    MemoryRealm func_realm = node->as.func_decl.realm;
+    MemoryRealm declared_realm = node->as.func_decl.realm;
+    MemoryRealm func_realm = function_body_realm(node);
 
     if (!node->as.func_decl.is_main) {
-      if (!is_realm_nesting_legal(saved_realm, func_realm)) {
+      if (!is_realm_nesting_legal(saved_declared_realm, declared_realm)) {
         typechecker_error(tc, node->line, node->col,
                           "Cannot nest %s function inside %s realm",
-                          realm_name(func_realm), realm_name(saved_realm));
+                          realm_name(declared_realm),
+                          realm_name(saved_declared_realm));
       }
     }
-    tc->current_realm = node->as.func_decl.is_main ? REALM_MAIN : func_realm;
+    tc->current_realm = func_realm;
+    tc->current_declared_realm = declared_realm;
 
     Scope *function_parent = tc->st->current;
     symbol_table_push(tc->st);
@@ -3459,6 +3518,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
 
     tc->expected_ret = saved_expected_ret;
     tc->current_realm = saved_realm;
+    tc->current_declared_realm = saved_declared_realm;
     tc->unsafe_depth = saved_unsafe_depth;
     tc->function_depth--;
     symbol_table_pop(tc->st);
@@ -3784,6 +3844,11 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
     break;
   }
 
+  case AST_REALM_BLOCK:
+    // Concrete specializations prune these before type checking. An
+    // unresolved flex original is retained only to diagnose erased use.
+    break;
+
   case AST_ASM_EXPR: {
     if (tc->unsafe_depth == 0)
       typechecker_error(tc, node->line, node->col,
@@ -3911,10 +3976,12 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
           }
           // Now check the body of the method
           MemoryRealm saved_realm = tc->current_realm;
+          MemoryRealm saved_declared_realm = tc->current_declared_realm;
           int saved_unsafe_depth = tc->unsafe_depth;
           tc->unsafe_depth = 0;
-          MemoryRealm func_realm = m_node->as.func_decl.realm;
+          MemoryRealm func_realm = function_body_realm(m_node);
           tc->current_realm = func_realm;
+          tc->current_declared_realm = m_node->as.func_decl.realm;
 
           Scope *function_parent = tc->st->current;
           symbol_table_push(tc->st);
@@ -3958,6 +4025,7 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
           }
           tc->expected_ret = saved_expected_ret;
           tc->current_realm = saved_realm;
+          tc->current_declared_realm = saved_declared_realm;
           tc->unsafe_depth = saved_unsafe_depth;
           tc->function_depth--;
           symbol_table_pop(tc->st);
@@ -4180,7 +4248,7 @@ static uint32_t function_default_provenance(AstNode *function) {
       function->resolved_type->kind != TY_FUNCTION ||
       !type_contains_reference(function->resolved_type->as.function.ret, 0))
     return MEM_PROV_NONE;
-  return provenance_for_realm(function->as.func_decl.realm);
+  return provenance_for_realm(function_body_realm(function));
 }
 
 static uint32_t provenance_of_expr(AstNode *expr, MemoryRealm realm);
@@ -4203,6 +4271,9 @@ static uint32_t provenance_of_call(AstNode *expr, MemoryRealm realm) {
   if (callee->kind == AST_IDENTIFIER) {
     const char *name = callee->as.identifier.name;
     if (strcmp(name, "alloc") == 0)
+      return provenance_for_realm(realm);
+    if (strcmp(name, "try_allocate") == 0 ||
+        strcmp(name, "resize") == 0)
       return provenance_for_realm(realm);
     if (strcmp(name, "raw_alloc") == 0 ||
         strcmp(name, "raw_alloc_aligned") == 0)
@@ -4476,7 +4547,7 @@ static void seed_provenance_owners(AstNode *node, AstNode *function) {
                 : param->resolved_type;
         param->memory_provenance =
             type_contains_reference(param_type, 0)
-                ? (node->as.func_decl.realm == REALM_GC && param_type &&
+                ? (function_body_realm(node) == REALM_GC && param_type &&
                            param_type->kind == TY_POINTER
                        ? MEM_PROV_GC
                        : MEM_PROV_BORROWED)
@@ -4614,7 +4685,7 @@ static bool analyze_provenance_functions(AstNode *node) {
       uint32_t before = node->memory_provenance;
       node->memory_provenance = MEM_PROV_NONE;
       analyze_provenance_statements(node->as.func_decl.body, node,
-                                    node->as.func_decl.realm);
+                                    function_body_realm(node));
       if (!node->memory_provenance)
         node->memory_provenance = function_default_provenance(node);
       changed |= before != node->memory_provenance;
@@ -4869,7 +4940,7 @@ static void validate_provenance(TypeChecker *tc, AstNode *node,
     switch (node->kind) {
     case AST_FUNC_DECL:
       validate_provenance(tc, node->as.func_decl.body, node,
-                          node->as.func_decl.realm);
+                          function_body_realm(node));
       break;
     case AST_MOD_DECL:
       validate_provenance(tc, node->as.mod_decl.declarations, function, realm);

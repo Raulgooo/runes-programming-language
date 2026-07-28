@@ -1,0 +1,78 @@
+flex f realm_value() = result: i32 {
+    result = 10
+    when realm regional {
+        result = 30
+    }
+}
+
+in dynamic f realm_value() = result: i32 {
+    result = 20
+}
+
+gc f gc_constant() = result: i32 {
+    result = 40
+}
+
+in gc f realm_value() = result: i32 {
+    result = gc_constant()
+}
+
+flex f identity<T>(value: T) = result: T {
+    result = value
+}
+
+in gc f identity<T>(value: T) = result: T {
+    result = value
+}
+
+flex f countdown(value: i32) = result: i32 {
+    result = value
+    if value > 0 {
+        result = countdown(value - 1)
+    }
+}
+
+in dynamic f countdown(value: i32) = result: i32 {
+    result = value
+    if value > 0 {
+        result = countdown(value - 1)
+    }
+}
+
+in dynamic gc f entered_realm() = result: i32 {
+    result = 0
+    when realm gc {
+        result = 70
+    }
+}
+
+stack f from_stack() = result: i32 {
+    result = realm_value()
+}
+
+dynamic f from_dynamic() = result: i32 {
+    result = realm_value()
+}
+
+regional f from_regional() = result: i32 {
+    result = realm_value()
+}
+
+gc f from_gc() = result: i32 {
+    result = realm_value()
+}
+
+f main() {
+    print(from_stack(), " ",
+          from_dynamic(), " ",
+          from_regional(), " ",
+          from_gc(), " ",
+          identity<i32>(50), " ",
+          from_gc_identity(), " ",
+          countdown(3), " ",
+          entered_realm())
+}
+
+gc f from_gc_identity() = result: i32 {
+    result = identity<i32>(60)
+}

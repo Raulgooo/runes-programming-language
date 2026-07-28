@@ -1,0 +1,59 @@
+flex f keep<T>(value: T) = result: T {
+    when realm gc {
+        result = value
+    }
+    else {
+        result = value
+    }
+}
+
+flex f realm_number() = result: i32 {
+    result = 0
+    when realm stack {
+        result = 1
+    }
+    when realm dynamic {
+        result = 2
+    }
+    when realm regional {
+        result = 3
+    }
+    when realm gc {
+        result = 4
+    }
+    result = keep<i32>(result)
+}
+
+flex f delegated_number() = result: i32 {
+    result = realm_number()
+}
+
+stack f stack_number() = result: i32 {
+    result = delegated_number()
+}
+
+dynamic f dynamic_number() = result: i32 {
+    result = delegated_number()
+}
+
+regional f regional_number() = result: i32 {
+    result = delegated_number()
+}
+
+gc f gc_number() = result: i32 {
+    result = delegated_number()
+}
+
+dynamic f inactive_backend_name() = result: i32 {
+    when realm gc {
+        result = unavailable_gc_backend<i32>()
+    } else {
+        result = 5
+    }
+}
+
+f main() {
+    print(stack_number(), " ", dynamic_number(), " ",
+          regional_number(), " ", gc_number(), " ",
+          inactive_backend_name())
+}

@@ -7,8 +7,10 @@ planned APIs.
 Runes' standard library is still a bootstrap library. It currently provides
 `Option<T>`, `Result<T, E>`, portable foundational error types,
 allocation-free byte-slice operations, and an initial raw Linux x86-64 syscall
-boundary. It does not yet provide portable safe terminal input, files, owning
-strings, growable collections, formatting, networking, or concurrency.
+boundary. It also provides allocation-free safe terminal I/O with portable
+signatures on hosted Linux x86-64 plus typed realm-sensitive backing-storage
+operations. It does not yet provide files, owning strings, a public growable
+collection, formatting, networking, or concurrency.
 
 ## Library layout
 
@@ -16,16 +18,17 @@ strings, growable collections, formatting, networking, or concurrency.
 |---|---|
 | `std.core` | Implemented: `Option<T>`, `Result<T, E>`, their methods, and foundational errors |
 | `std.bytes` | Implemented: byte fill, copy, equality, search, and prefix checking |
+| `std.allocation` | Implemented: typed fallible allocation, owner-sensitive resize, and realm-correct release |
 | `std.os.linux.syscall` | Raw Linux x86-64 syscall calls with zero through six arguments |
 | `std.os.linux.result` | Errno-preserving `LinuxResult<T>` and `LinuxStatus` |
 | `std.os.linux.fd` | Raw descriptor read, write, close, seek, duplication, and `openat` operations |
 | `std.os.linux.memory` | Raw `mmap`, `munmap`, and `mprotect` operations |
 | `std.os.linux.constants` | Private staged Linux ABI constants; ready to migrate to implemented `pub const` |
-| `std.io` | Empty source placeholder; not currently exported by `std` |
+| `std.io` | Safe allocation-free stdin/stdout/stderr operations; hosted Linux x86-64 backend |
 | `std/prelude.runes` | Compiler/runtime ABI declarations, not an application library |
 
 The root [`src/std/mod.runes`](../../src/std/mod.runes) currently exports
-`core`, `bytes`, and `os`.
+`core`, `bytes`, `allocation`, `io`, and `os`.
 
 ## Imports
 
@@ -164,6 +167,8 @@ pub type IoError =
     | NotFound
     | BrokenPipe
     | InvalidInput
+    | WouldBlock
+    | Unsupported
     | Unknown
 
 pub type ParseError =
@@ -174,12 +179,38 @@ pub type ParseError =
 pub type AllocationError =
     | OutOfMemory
     | CapacityOverflow
+    | OwnerUnavailable
 ```
 
 They are portable identities for higher-level library APIs. Platform backends
 must translate native values such as Linux errno rather than expose those
 values as the public error type. These types are foundations; modules may add
 more specific errors when their contracts require them.
+
+## `std.allocation`
+
+`std.allocation` exports typed, fallible, realm-sensitive backing-storage
+operations:
+
+```runes
+allocate_array<T>(count) -> Result<*T, AllocationError>
+resize_array<T>(
+    pointer: *T,
+    initialized: usize,
+    old_capacity: usize,
+    new_capacity: usize
+) -> Result<*T, AllocationError>
+release_array<T>(pointer: *T)
+```
+
+The compiler supplies size, alignment, and GC tracing descriptors from `T`.
+Resize preserves the original allocation on failure. Dynamic release frees
+storage; regional and GC release only relinquish the handle. A regional owner
+that is not the directly active arena produces `OwnerUnavailable`.
+
+These functions are the container-authoring layer. Raw `alloc()` and casts
+remain available for systems code, but ordinary vectors and strings should not
+repeat that unsafe machinery.
 
 ## `std.bytes`
 
@@ -246,6 +277,63 @@ pub error CopyError = {
 `copy` is all-or-error: it never performs a partial copy solely because the
 destination is too small.
 
+## `std.io`
+
+`std.io` is the safe, portable-signature layer over the selected platform
+backend. The first backend is available for
+`x86_64-unknown-linux-gnu`. The module is exported on every target, but its
+operations are absent on targets without an implementation, producing a
+compile-time “module has no member” diagnostic instead of a runtime failure.
+
+```runes
+use std.io
+use std.core.IoError
+use std.core.Result
+
+Result<usize, IoError> output = io.write_line("hello")
+
+[256]u8 buffer = []
+Result<usize, IoError> input = io.read(buffer)
+```
+
+Every current operation is allocation-free and returns
+`Result<usize, IoError>`:
+
+| Function | Behavior |
+|---|---|
+| `write(text)` | Writes every byte of `text` to standard output |
+| `write_line(text)` | Writes `text`, then one newline byte, to standard output |
+| `write_error(text)` | Writes every byte of `text` to standard error |
+| `write_error_line(text)` | Writes `text`, then one newline byte, to standard error |
+| `read(buffer)` | Reads once from standard input into caller-owned mutable storage |
+
+A successful result is the byte count. Writes retry interruption, complete
+partial writes, and convert a zero-byte write into an error so they cannot spin
+forever. A backend-reported count larger than the outstanding request is
+rejected as `Unknown` instead of being trusted. Line writes are complete but
+not atomic: the text may have been written if the separate newline write
+fails.
+
+`read` retries interruption. A nonempty buffer receiving a zero-byte platform
+read returns `Err(IoError.EndOfInput)`. An empty buffer returns `Ok(0)` without
+calling the backend, because a zero-capacity request cannot determine whether
+the input has ended.
+
+The public signatures expose no descriptor, Linux errno, raw pointer, or
+`unsafe` requirement. Known Linux failures map to semantic `IoError` variants;
+unrecognized errno values become `Unknown`. `WouldBlock` may be returned for a
+nonblocking standard descriptor, although this initial layer does not itself
+configure nonblocking mode.
+
+Hosted Linux programs establish an ignore policy for `SIGPIPE` at runtime
+startup. Writing to a pipe whose readers are gone therefore returns
+`Err(IoError.BrokenPipe)` instead of unexpectedly terminating the process.
+Applications do not need to install signal handlers around `std.io` calls.
+Command-line applications may normally treat `BrokenPipe` as a clean early
+exit when a downstream pipeline command, such as `head`, has finished reading.
+Freestanding targets do not install this policy because they have no Linux
+process signals.
+
 ## `std.os.linux`
 
 This is a target-specific kernel boundary, not the portable I/O API. It is
@@ -283,7 +371,7 @@ because built-in nominal error sets cannot carry an errno payload.
 `std.os.linux.fd` currently provides:
 
 - `read(fd, buffer: []u8) -> LinuxResult<usize>`;
-- `write(fd, buffer: []u8) -> LinuxResult<usize>`;
+- `write(fd, buffer: []const u8) -> LinuxResult<usize>`;
 - `write_text(fd, text: str) -> LinuxResult<usize>`;
 - `write_all_text(fd, text: str) -> LinuxStatus`;
 - `close(fd) -> LinuxStatus`;
@@ -299,9 +387,8 @@ Descriptors remain plain `i32` values. Runes does not yet have move-only
 resources or deterministic destruction, so this module does not claim that a
 descriptor is uniquely owned or automatically closed.
 
-The mutable-slice requirement on `write` is now a library migration item:
-read-only slices expose `*const T` for FFI, but this wrapper has not yet changed
-its public signature. `write_text` is available for borrowed strings.
+Descriptor writes accept read-only slices and use `*const u8` at the syscall
+boundary. `write_text` is available for borrowed strings.
 
 ### Virtual memory
 
@@ -326,16 +413,16 @@ than a compiler blocker.
 
 The following are planned but are not current stdlib APIs:
 
-- portable `std.io`, safe stdin/stdout, and general I/O interfaces;
+- `std.io` backends beyond hosted Linux x86-64, general streams, and buffering;
 - typed allocators and allocator capabilities;
 - `RawBox<T>`, `Vec<T>`, arena containers, and GC containers;
 - owning `String` and `StringBuilder`;
 - formatting, filesystem, path, process, networking, async, and threading
   libraries.
 
-The [`print` builtin](modules-ffi-tooling.md) and contracts from
-`std/prelude.runes` are compiler/runtime facilities. Their presence does not
-mean that a general `std.io` module already exists.
+The [`print` builtin](modules-ffi-tooling.md) remains a compiler/runtime
+facility. `std.io` is the typed library boundary applications should use when
+they need explicit success or failure.
 
 ## Executable coverage
 
@@ -343,6 +430,13 @@ Current behavior is exercised by:
 
 - [`core_codegen_std_option.runes`](../../src/tests/samples/core_codegen_std_option.runes);
 - [`core_codegen_std_result.runes`](../../src/tests/samples/core_codegen_std_result.runes);
+- [`core_codegen_std_io_output.runes`](../../src/tests/samples/core_codegen_std_io_output.runes);
+- [`core_codegen_std_io_read.runes`](../../src/tests/samples/core_codegen_std_io_read.runes);
+- [`core_codegen_std_io_large_read.runes`](../../src/tests/samples/core_codegen_std_io_large_read.runes);
+- [`core_codegen_std_io_exact_bytes.runes`](../../src/tests/samples/core_codegen_std_io_exact_bytes.runes);
+- [`core_codegen_std_io_fake.runes`](../../src/tests/samples/core_codegen_std_io_fake.runes);
+- [`core_codegen_std_io_invalid_count.runes`](../../src/tests/samples/core_codegen_std_io_invalid_count.runes);
+- [`core_codegen_std_io_broken_pipe.runes`](../../src/tests/samples/core_codegen_std_io_broken_pipe.runes);
 - [`core_codegen_std_bytes.runes`](../../src/tests/samples/core_codegen_std_bytes.runes);
 - [`core_codegen_linux_syscalls.runes`](../../src/tests/samples/core_codegen_linux_syscalls.runes);
 - expected failures for invalid Result constructor payloads, invalid variant

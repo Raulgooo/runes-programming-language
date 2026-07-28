@@ -164,7 +164,7 @@ void *arena_alloc_aligned(Arena *a, size_t size, size_t align) {
   return aligned;
 }
 
-bool arena_owns(const Arena *a, const void *pointer) {
+bool arena_owns_direct(const Arena *a, const void *pointer) {
   if (!a || !pointer)
     return false;
   uintptr_t address = (uintptr_t)pointer;
@@ -174,6 +174,12 @@ bool arena_owns(const Arena *a, const void *pointer) {
     if (address >= begin && address < end)
       return true;
   }
+  return false;
+}
+
+bool arena_owns(const Arena *a, const void *pointer) {
+  if (arena_owns_direct(a, pointer))
+    return true;
   for (const Arena *child = a->first_child; child;
        child = child->next_sibling) {
     if (arena_owns(child, pointer))

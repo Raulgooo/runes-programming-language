@@ -11,7 +11,8 @@ extern f alloc(size: usize) = result: *void
 
 Although it has function-call syntax, the compiler recognizes `alloc`
 specially for realm checking, provenance tracking, code generation, GC
-descriptors, and runtime selection. It is not a lexical keyword.
+descriptors, and compile-time effective-realm selection. It is not a lexical
+keyword.
 
 ## Realm behavior
 
@@ -21,7 +22,7 @@ descriptors, and runtime selection. It is not a lexical keyword.
 | `dynamic f` | Raw heap | Program must eventually call `raw_free()` |
 | `regional f` | Current call's arena | Outermost regional tree frees it automatically |
 | `gc f` | Traced GC heap | Collector reclaims it after it becomes unreachable |
-| `flex f` | Caller's active arena/GC; otherwise raw | Determined by effective caller |
+| `flex f` | Compile-time effective-realm specialization | Stack rejects owning allocation; other cleanup follows the inferred realm |
 | root `f main()` | Raw fallback | Program must eventually call `raw_free()` |
 
 This selection is automatic. There is no separate `arena_alloc()` or
@@ -172,18 +173,18 @@ flex f make_cell(value: i32) = result: *Cell {
 }
 ```
 
-- a regional caller receives an arena-backed pointer;
-- a GC caller receives a traced pointer;
-- a dynamic or root caller receives a raw-owned pointer.
+- a regional specialization receives an arena-backed pointer;
+- a GC specialization receives a traced pointer;
+- a dynamic or root specialization receives a raw-owned pointer.
 
-Stack functions may currently call flex functions. With no arena or GC active,
-an allocating flex function falls back to raw ownership, so stack callers must
-eventually use `raw_free()`. This is implemented behavior, but it weakens the
-simple intuition that stack functions never cause owning allocation and remains
-a language-design question.
+Direct flex calls are specialized at compile time. A pure flex helper may be
+called from stack code, but an allocating stack specialization is rejected just
+like a direct stack `alloc()` call.
 
-See [`memory-flex.runes`](../examples/positive/memory-flex.runes) for all four
-caller cases.
+See [`memory-flex.runes`](../examples/positive/memory-flex.runes) for the three
+owning caller cases and
+[`flex-stack-alloc.runes`](../examples/negative/flex-stack-alloc.runes) for the
+stack rejection.
 
 ## `alloc()` versus raw allocation
 
@@ -211,3 +212,63 @@ its caller.
 
 The realm qualifier is therefore part of the allocation contract, not merely
 an optimization hint.
+
+## Typed fallible storage
+
+`std.allocation` is the safe foundation for owning containers:
+
+```runes
+use std.allocation.allocate_array
+use std.allocation.resize_array
+use std.allocation.release_array
+use std.core.Result
+
+dynamic f example() {
+    match allocate_array<i32>(4) {
+        Ok(pointer) -> {
+            -- initialize and use pointer[0..4] here
+            release_array<i32>(pointer)
+        }
+        Err(failure) -> {
+            print("allocation failed")
+        }
+    }
+}
+```
+
+The exported operations are:
+
+```runes
+allocate_array<T>(count) -> Result<*T, AllocationError>
+resize_array<T>(
+    pointer,
+    initialized,
+    old_capacity,
+    new_capacity
+) -> Result<*T, AllocationError>
+release_array<T>(pointer)
+```
+
+They derive element size, alignment, and the GC descriptor from `T`. Capacity
+multiplication is checked in the runtime. A failed resize leaves the original
+pointer and contents valid.
+
+Fresh allocation follows the effective execution realm. Resize and release
+are intended to be called from an owning type's receiver-specialized method,
+so lowering follows that value's persistent owner realm even when an ordinary
+function carries the value. Dynamic resize replaces and frees old storage;
+regional resize allocates replacement storage in the same active arena and
+retains the old arena bytes; GC resize allocates a traced sequence and makes
+the old sequence collectible.
+
+Regional replacement from a nested child arena is rejected with
+`OwnerUnavailable`; it never silently changes the storage owner. Stack
+specializations of these owning operations are compile-time errors.
+
+`release_array` releases dynamic backing memory. In regional and GC realms it
+relinquishes the handle without individually freeing backing memory. External
+resources stored in elements still require their own cleanup.
+
+The compiler intrinsics beneath this module (`try_allocate`, `resize`,
+`release`, and `storage_error`) are prelude/runtime contracts. Application
+code should use `std.allocation`, not call them directly.

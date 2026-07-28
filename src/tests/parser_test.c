@@ -183,10 +183,171 @@ void test_import_alias_syntax() {
     arena_destroy(&arena);
 }
 
+void test_realm_block_syntax() {
+    printf("Running test_realm_block_syntax...\n");
+    Arena arena;
+    assert(arena_init(&arena));
+    const char *source =
+        "flex f choose() = result: i32 {\n"
+        "  when realm regional { result = 3 } else { result = 4 }\n"
+        "}\n";
+    StrTab strtab;
+    strtab_init(&strtab, &arena);
+    Lexer lexer;
+    lexer_init(&lexer, source, &strtab);
+    Parser parser;
+    parser_init(&parser, &lexer, &arena, "realm_block_test.runes", source);
+    AstNode *program = parser_parse(&parser);
+    assert(program != NULL && !parser.had_error);
+    AstNode *function = program->as.program.declarations;
+    AstNode *block = function->as.func_decl.body->as.block.statements;
+    assert(block && block->kind == AST_REALM_BLOCK);
+    assert(block->as.realm_block.realm == EFFECTIVE_REALM_REGIONAL);
+    assert(block->as.realm_block.body &&
+           block->as.realm_block.body->kind == AST_BLOCK);
+    assert(block->as.realm_block.else_branch &&
+           block->as.realm_block.else_branch->kind == AST_BLOCK);
+    arena_destroy(&arena);
+    printf("test_realm_block_syntax passed!\n");
+}
+
+static void discard_parser_diagnostic(void *context, const char *filename,
+                                      uint32_t line, uint32_t column,
+                                      const char *message) {
+    (void)context;
+    (void)filename;
+    (void)line;
+    (void)column;
+    (void)message;
+}
+
+static bool parse_has_error(const char *source) {
+    Arena arena;
+    assert(arena_init(&arena));
+    StrTab strtab;
+    strtab_init(&strtab, &arena);
+    Lexer lexer;
+    lexer_init(&lexer, source, &strtab);
+    Parser parser;
+    parser_init(&parser, &lexer, &arena, "realm_family_error.runes", source);
+    parser_set_diagnostic_handler(&parser, discard_parser_diagnostic, NULL);
+    AstNode *program = parser_parse(&parser);
+    bool failed = !program || parser.had_error;
+    arena_destroy(&arena);
+    return failed;
+}
+
+void test_realm_overload_family_syntax() {
+    printf("Running test_realm_overload_family_syntax...\n");
+    Arena arena;
+    assert(arena_init(&arena));
+    const char *source =
+        "#[inline]\n"
+        "pub except(stack) flex f select<T>(value: T) = result: T {\n"
+        "  result = value\n"
+        "}\n"
+        "#[inline]\n"
+        "pub in dynamic except(stack) f select<T>(value: T) = result: T {\n"
+        "  result = value\n"
+        "}\n"
+        "in dynamic type Cache<T> = { value: T }\n"
+        "in gc type Cache<T> = { value: T }\n"
+        "in dynamic interface Ready { f ready(self) = result: bool }\n"
+        "in gc interface Ready { f ready(self) = result: bool }\n"
+        "method Cache<T> {\n"
+        "  flex f len(self) = result: usize { result = 1 }\n"
+        "  in gc f len(self) = result: usize { result = 2 }\n"
+        "}\n"
+        "in dynamic method Box { f clear(self) {} }\n"
+        "in gc method Box { f clear(self) {} }\n";
+    StrTab strtab;
+    strtab_init(&strtab, &arena);
+    Lexer lexer;
+    lexer_init(&lexer, source, &strtab);
+    Parser parser;
+    parser_init(&parser, &lexer, &arena, "realm_family_test.runes", source);
+    AstNode *program = parser_parse(&parser);
+    assert(program != NULL && !parser.had_error);
+
+    AstNode *fallback = program->as.program.declarations;
+    AstNode *dynamic = fallback->next;
+    assert(!fallback->has_overload_realm);
+    assert(fallback->as.func_decl.has_declared_realm);
+    assert(fallback->as.func_decl.is_pub);
+    assert(fallback->decl_attrs != NULL);
+    assert(dynamic->has_overload_realm);
+    assert(!dynamic->as.func_decl.has_declared_realm);
+    assert(dynamic->overload_realm == EFFECTIVE_REALM_DYNAMIC);
+    assert(fallback->excluded_realms ==
+           (1u << EFFECTIVE_REALM_STACK));
+    assert(fallback->realm_family_root == fallback);
+    assert(dynamic->realm_family_root == fallback);
+    assert(fallback->realm_family_fallback == fallback);
+    assert(fallback->realm_family_variants[EFFECTIVE_REALM_DYNAMIC] ==
+           dynamic);
+
+    AstNode *cache_dynamic = dynamic->next;
+    AstNode *cache_gc = cache_dynamic->next;
+    assert(cache_dynamic->realm_family_root == cache_dynamic);
+    assert(cache_dynamic->realm_family_fallback == NULL);
+    assert(cache_dynamic->realm_family_variants[EFFECTIVE_REALM_GC] ==
+           cache_gc);
+
+    AstNode *methods = cache_gc->next->next->next;
+    assert(methods && methods->kind == AST_METHOD_DECL);
+    AstNode *len_fallback = methods->as.method_decl.methods;
+    AstNode *len_gc = len_fallback->next;
+    assert(len_fallback->realm_family_root == len_fallback);
+    assert(len_gc->realm_family_root == len_fallback);
+    assert(len_fallback->realm_family_variants[EFFECTIVE_REALM_GC] == len_gc);
+    AstNode *box_dynamic = methods->next;
+    AstNode *box_gc = box_dynamic->next;
+    assert(box_dynamic->kind == AST_METHOD_DECL);
+    assert(box_dynamic->realm_family_root == box_dynamic);
+    assert(box_dynamic->realm_family_variants[EFFECTIVE_REALM_GC] == box_gc);
+
+    arena_destroy(&arena);
+    printf("test_realm_overload_family_syntax passed!\n");
+}
+
+void test_invalid_realm_overload_families() {
+    printf("Running test_invalid_realm_overload_families...\n");
+    assert(parse_has_error(
+        "in gc f choose() {}\n"
+        "in gc f choose() {}\n"));
+    assert(parse_has_error(
+        "f choose() {}\n"
+        "f choose() {}\n"
+        "in gc f choose() {}\n"));
+    assert(parse_has_error(
+        "pub f choose() {}\n"
+        "in gc f choose() {}\n"));
+    assert(parse_has_error(
+        "f choose<T>() {}\n"
+        "in gc f choose<T, U>() {}\n"));
+    assert(parse_has_error("except(gc) in gc f choose() {}\n"));
+    assert(parse_has_error("except() f choose() {}\n"));
+    assert(parse_has_error("except(stack stack) f choose() {}\n"));
+    assert(parse_has_error("except(stack, stack) f choose() {}\n"));
+    assert(parse_has_error("except(stack, flex) f choose() {}\n"));
+    assert(parse_has_error("except(stack f choose() {}\n"));
+    assert(parse_has_error("in flex f choose() {}\n"));
+    assert(parse_has_error("in gc error Nope = { | Bad }\n"));
+    assert(parse_has_error("in gc const i32 VALUE = 1\n"));
+    assert(parse_has_error(
+        "f outer() {\n"
+        "  in gc f nested() {}\n"
+        "}\n"));
+    printf("test_invalid_realm_overload_families passed!\n");
+}
+
 int main() {
     test_attributes();
     test_bare_return_stops_at_newline();
     test_generic_syntax();
     test_import_alias_syntax();
+    test_realm_block_syntax();
+    test_realm_overload_family_syntax();
+    test_invalid_realm_overload_families();
     return 0;
 }

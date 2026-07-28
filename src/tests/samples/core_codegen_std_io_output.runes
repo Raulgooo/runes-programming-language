@@ -1,0 +1,36 @@
+use std.io
+use std.core.IoError
+use std.core.Result
+
+f has_count(
+    outcome: Result<usize, IoError>,
+    expected: usize
+) = result: bool {
+    result = match outcome {
+        Ok(count) -> count == expected,
+        Err(_) -> false,
+    }
+}
+
+f main() {
+    Result<usize, IoError> first = io.write("alpha")
+    Result<usize, IoError> second = io.write_line(" beta")
+    Result<usize, IoError> third = io.write_error("warning")
+    Result<usize, IoError> fourth = io.write_error_line("!")
+    Result<usize, IoError> fifth = io.write("")
+    Result<usize, IoError> sixth = io.write_line("")
+
+    print(
+        has_count(first, 5),
+        " ",
+        has_count(second, 6),
+        " ",
+        has_count(third, 7),
+        " ",
+        has_count(fourth, 2),
+        " ",
+        has_count(fifth, 0),
+        " ",
+        has_count(sixth, 1)
+    )
+}

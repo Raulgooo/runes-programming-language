@@ -1,0 +1,20 @@
+use std.io
+use std.core.IoError
+use std.core.Result
+
+f is_unknown(outcome: Result<usize, IoError>) = result: bool {
+    result = match outcome {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            Unknown -> true,
+            _ -> false,
+        },
+    }
+}
+
+f main() {
+    [1]u8 buffer = [0]
+    bool write_rejected = is_unknown(io.write("x"))
+    bool read_rejected = is_unknown(io.read(buffer))
+    print(write_rejected, " ", read_rejected)
+}

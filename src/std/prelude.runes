@@ -4,6 +4,15 @@
 extern f raw_alloc(size: usize) = result: *void
 extern f raw_free(ptr: *void)
 extern f alloc(size: usize) = result: *void
+extern f try_allocate(count: usize) = result: ?*void
+extern f resize(
+    pointer: *void,
+    initialized: usize,
+    old_capacity: usize,
+    new_capacity: usize
+) = result: ?*void
+extern f release(pointer: *void)
+extern f storage_error() = result: i32
 
 -- Scoped collector controls. `gc_collect` is an explicit safepoint; the debug
 -- counters are runtime diagnostics and not collection-library APIs.

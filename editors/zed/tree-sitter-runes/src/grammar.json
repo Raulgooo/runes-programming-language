@@ -503,6 +503,22 @@
         },
         {
           "type": "STRING",
+          "value": "when"
+        },
+        {
+          "type": "STRING",
+          "value": "realm"
+        },
+        {
+          "type": "STRING",
+          "value": "in"
+        },
+        {
+          "type": "STRING",
+          "value": "except"
+        },
+        {
+          "type": "STRING",
           "value": "while"
         },
         {

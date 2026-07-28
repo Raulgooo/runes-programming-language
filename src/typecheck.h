@@ -17,6 +17,7 @@ typedef struct {
 
   Type *expected_ret;
   MemoryRealm current_realm;
+  MemoryRealm current_declared_realm;
   int loop_depth;
   int unsafe_depth;
   Scope **function_parent_scopes;

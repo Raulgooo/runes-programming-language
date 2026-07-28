@@ -25,6 +25,52 @@ on every target.
   first.
 - Inline assembly and calling conventions are target/compiler dependent.
 
+## Realm specialization
+
+- Direct generic and non-generic `flex` free-function calls are specialized by
+  the caller's effective stack, dynamic, regional, or GC realm.
+- Nested, recursive, imported, and aliased direct calls retain that inferred
+  realm, and generated symbols are deterministic.
+- Explicit `alloc()` in those specializations lowers directly to the selected
+  dynamic, regional, or GC operation. An allocating stack specialization is a
+  compile-time error.
+- `when realm stack|dynamic|regional|gc` blocks in free functions are selected
+  during specialization. Inactive blocks are removed before resolution and
+  type checking, and optional `else` is supported.
+- `in <realm>` declarations and `except(...)` exclusions are parsed for
+  functions, methods, types, and interfaces. The compiler validates overload
+  families for duplicate cases, fallback conflicts, visibility, generic arity,
+  and exclusions.
+- Direct free-function and method calls select an exact realm definition first,
+  then a shared fallback. Generic arguments combine with the inferred realm,
+  only demanded instances are emitted, and exclusions or missing definitions
+  fail during specialization.
+- Struct and variant families now select demanded realm-specific layouts,
+  constructors, descriptors, and deterministic hidden type identities.
+  Generic families, imported aliases, transitive aggregate fields, missing
+  variants, and blacklists are covered.
+- Hidden variants propagate through constructors, returns, generic arguments,
+  and automatically specialized ordinary function parameters. Incompatible
+  assignments are rejected by nominal type checking.
+- Realm-overloaded methods on realm-specific receivers dispatch from the
+  receiver's persistent owner variant. Methods on ordinary receivers continue
+  to use effective execution realm.
+- Shared and generic methods on generic realm-specific owner types retain
+  their owner type arguments. Owner-sensitive calls continue to select the
+  dynamic, regional, or GC implementation after the value passes through an
+  automatically specialized ordinary function.
+- Typed fallible array allocation, resize, and release are implemented through
+  `std.allocation`. Lowering is static, GC sequences receive an explicit
+  initialized count, failed growth preserves the old allocation, and nested
+  regional owner mismatches are rejected by the runtime. A public `Vec<T>` is
+  still library work.
+- Realm-specific interface contracts remain planned work.
+- Erased flex function values retain the earlier runtime behavior; direct-call
+  specialization does not yet define a realm-polymorphic function-value ABI.
+  A flex declaration containing `when realm` therefore cannot currently be
+  converted to a function value; it requires a direct statically specialized
+  call.
+
 ## Visibility gaps
 
 - Extern declarations are exposed across their containing module.
@@ -67,15 +113,18 @@ C-string conversion.
 The `std` namespace, module loader, and prelude exist. The currently tested
 library surface is:
 
-- `std.core`: `Option<T>`, its initial methods, and `UnwrapError`;
+- `std.core`: `Option<T>`, `Result<T, E>`, their initial methods, and portable
+  foundational errors;
 - `std.bytes`: allocation-free `fill`, `copy`, `equal`, `find`, and
   `starts_with`;
+- `std.io`: allocation-free safe stdin/stdout/stderr operations with portable
+  `Result<usize, IoError>` signatures on hosted Linux x86-64;
 - `std.os.linux`: raw syscall, errno-preserving result, descriptor, and virtual
   memory operations for Linux x86-64.
 
-`std.io` is an empty source placeholder and is not exported by the `std` root.
-Target selection and declaration-level `#[cfg]` are implemented. The library
-has not yet built the portable `std.io` selection layer over them.
+Target selection and declaration-level `#[cfg]` bind `std.io` to its backend
+at compile time. Other hosted operating systems and freestanding targets do not
+yet provide `std.io` operations.
 See the [current standard-library reference](standard-library.md) for exact
 signatures and behavior. A broad general-purpose standard library does not
 yet exist.

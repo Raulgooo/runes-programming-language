@@ -88,6 +88,7 @@ test-core: $(TARGET)
 	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_cfg_linux.c $(RUNTIME_SRCS) -o /tmp/runes_core_cfg_linux
 	@test "$$(/tmp/runes_core_cfg_linux)" = "10 1 false"
 	./$(TARGET) --target x86_64-unknown-runes-none src/tests/samples/core_codegen_cfg.runes --emit-c /tmp/runes_core_cfg_runes.c
+	@! grep -Fq 'runes_runtime_init();' /tmp/runes_core_cfg_runes.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_cfg_runes.c $(RUNTIME_SRCS) -o /tmp/runes_core_cfg_runes
 	@test "$$(/tmp/runes_core_cfg_runes)" = "20 2 true"
 	./$(TARGET) --target x86_64-unknown-linux-gnu src/tests/samples/core_codegen_cfg_skips_module.runes --emit-c /tmp/runes_core_cfg_skips_module.c
@@ -123,6 +124,48 @@ test-core: $(TARGET)
 	./$(TARGET) src/tests/samples/core_codegen_std_result.runes --emit-c /tmp/runes_core_std_result.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_result.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_result
 	@test "$$(/tmp/runes_core_std_result)" = "true false false true 5 42 7 21 12 99 64 8 true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_io_output.runes --emit-c /tmp/runes_core_std_io_output.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_output.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_io_output
+	@if grep -E 'runes_(alloc|alloc_typed|raw_alloc|raw_alloc_aligned|gc_alloc)\(' /tmp/runes_core_std_io_output.c | grep -v '^extern ' >/dev/null; then \
+		echo 'std.io basic output unexpectedly allocated'; exit 1; \
+	fi
+	@/tmp/runes_core_std_io_output >/tmp/runes_core_std_io_output.out 2>/tmp/runes_core_std_io_output.err
+	@test "$$(cat /tmp/runes_core_std_io_output.out)" = "$$(printf 'alpha beta\n\ntrue true true true true true')"
+	@test "$$(cat /tmp/runes_core_std_io_output.err)" = "warning!"
+	./$(TARGET) src/tests/samples/core_codegen_std_io_exact_bytes.runes --emit-c /tmp/runes_core_std_io_exact_bytes.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_exact_bytes.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_io_exact_bytes
+	@/tmp/runes_core_std_io_exact_bytes >/tmp/runes_core_std_io_exact_bytes.out
+	@test "$$(od -An -t u1 /tmp/runes_core_std_io_exact_bytes.out | xargs)" = "65 0 66 104 195 169 231 149 140"
+	@if ./$(TARGET) --target x86_64-unknown-linux-none src/tests/samples/core_codegen_std_io_output.runes >/tmp/runes_core_std_io_unsupported.out 2>&1; then \
+		echo 'expected hosted std.io to be unavailable for a freestanding target'; exit 1; \
+	fi
+	@grep -Fq "Module has no member 'write'" /tmp/runes_core_std_io_unsupported.out
+	./$(TARGET) src/tests/samples/core_codegen_std_io_read.runes --emit-c /tmp/runes_core_std_io_read.c
+	@$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_read.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_io_read || { \
+		code=$$?; echo "std.io read C compilation failed with status $$code"; exit $$code; \
+	}
+	@actual="$$(printf xyz | /tmp/runes_core_std_io_read)"; \
+		if [ "$$actual" != "3 120 121 122 true" ]; then \
+			echo "unexpected std.io read output: $$actual"; exit 1; \
+		fi
+	./$(TARGET) src/tests/samples/core_codegen_std_io_large_read.runes --emit-c /tmp/runes_core_std_io_large_read.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_large_read.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_io_large_read
+	@actual="$$(head -c 8192 /dev/zero | tr '\0' A | /tmp/runes_core_std_io_large_read)"; \
+		if [ "$$actual" != "true true true true" ]; then \
+			echo "unexpected std.io large-read output: $$actual"; exit 1; \
+		fi
+	./$(TARGET) src/tests/samples/core_codegen_std_io_fake.runes --emit-c /tmp/runes_core_std_io_fake.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_fake.c src/tests/fixtures/io_fake_syscall.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_std_io_fake
+	@test "$$(/tmp/runes_core_std_io_fake)" = "true true true true true true true true true true true true true true 5 8 4"
+	./$(TARGET) src/tests/samples/core_codegen_std_io_invalid_count.runes --emit-c /tmp/runes_core_std_io_invalid_count.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_invalid_count.c src/tests/fixtures/io_invalid_count_syscall.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_std_io_invalid_count
+	@test "$$(/tmp/runes_core_std_io_invalid_count)" = "true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_io_broken_pipe.runes --emit-c /tmp/runes_core_std_io_broken_pipe.c
+	@grep -Fq 'runes_runtime_init();' /tmp/runes_core_std_io_broken_pipe.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_broken_pipe.c src/tests/fixtures/io_broken_pipe.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_io_broken_pipe
+	@/tmp/runes_core_std_io_broken_pipe >/tmp/runes_core_std_io_broken_pipe.out 2>/tmp/runes_core_std_io_broken_pipe.err
+	@test ! -s /tmp/runes_core_std_io_broken_pipe.out
+	@test "$$(cat /tmp/runes_core_std_io_broken_pipe.err)" = "broken pipe mapped"
 	./$(TARGET) src/tests/samples/core_codegen_modules.runes --emit-c /tmp/runes_core_modules.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_modules.c $(RUNTIME_SRCS) -o /tmp/runes_core_modules
 	@test "$$(/tmp/runes_core_modules)" = "20 42"
@@ -132,7 +175,7 @@ test-core: $(TARGET)
 	@if [ "$$(uname -s)" = Linux ] && [ "$$(uname -m)" = x86_64 ]; then \
 		./$(TARGET) src/tests/samples/core_codegen_linux_syscalls.runes --emit-c /tmp/runes_core_linux_syscalls.c; \
 		$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_linux_syscalls.c $(RUNTIME_SRCS) -o /tmp/runes_core_linux_syscalls; \
-		test "$$(/tmp/runes_core_linux_syscalls)" = "linux true 9 true true"; \
+		test "$$(/tmp/runes_core_linux_syscalls)" = "linux true 9 true true true"; \
 	fi
 	bash src/tests/linux_uapi_test.bash
 	./$(TARGET) src/tests/samples/core_codegen_module_name_collision.runes --emit-c /tmp/runes_core_module_name_collision.c
@@ -190,6 +233,81 @@ test-core: $(TARGET)
 	./$(TARGET) src/tests/samples/core_codegen_regional_fallible_cleanup.runes --emit-c /tmp/runes_core_regional_fallible_cleanup.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_regional_fallible_cleanup.c $(RUNTIME_SRCS) -o /tmp/runes_core_regional_fallible_cleanup
 	@test "$$(/tmp/runes_core_regional_fallible_cleanup)" = "42 -1 0 0"
+	./$(TARGET) src/tests/samples/core_codegen_flex_specialization.runes --emit-c /tmp/runes_core_flex_specialization.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_flex_specialization.c $(RUNTIME_SRCS) -o /tmp/runes_core_flex_specialization
+	@test "$$(/tmp/runes_core_flex_specialization)" = "15 16 17 18"
+	@for realm in stack dynamic regional gc; do \
+		grep -Fq "__runes_realm_7_add_one__$$realm" /tmp/runes_core_flex_specialization.c || exit 1; \
+		grep -Fq "__runes_realm_9_countdown__$$realm" /tmp/runes_core_flex_specialization.c || exit 1; \
+		grep -Fq "__runes_realm_13_realm_helpers_5_boost__$$realm" /tmp/runes_core_flex_specialization.c || exit 1; \
+		grep -Fq "__realm_$$realm" /tmp/runes_core_flex_specialization.c || exit 1; \
+	done
+	./$(TARGET) src/tests/samples/core_codegen_flex_allocation_lowering.runes --emit-c /tmp/runes_core_flex_allocation_lowering.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_flex_allocation_lowering.c $(RUNTIME_SRCS) -o /tmp/runes_core_flex_allocation_lowering
+	@test "$$(/tmp/runes_core_flex_allocation_lowering)" = "10 20 30"
+	@grep -Fq "runes_raw_alloc_aligned(sizeof" /tmp/runes_core_flex_allocation_lowering.c
+	@grep -Fq "runes_regional_alloc(sizeof" /tmp/runes_core_flex_allocation_lowering.c
+	@grep -Fq "runes_gc_alloc(sizeof" /tmp/runes_core_flex_allocation_lowering.c
+	@! grep -Eq '= .*runes_alloc(_typed)?[(]' /tmp/runes_core_flex_allocation_lowering.c
+	./$(TARGET) src/tests/samples/core_codegen_when_realm.runes --emit-c /tmp/runes_core_when_realm.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_when_realm.c $(RUNTIME_SRCS) -o /tmp/runes_core_when_realm
+	@test "$$(/tmp/runes_core_when_realm)" = "1 2 3 4 5"
+	@! grep -Fq 'unavailable_gc_backend' /tmp/runes_core_when_realm.c
+	@for realm in stack dynamic regional gc; do \
+		grep -Fq "__runes_realm_12_realm_number__$$realm" /tmp/runes_core_when_realm.c || exit 1; \
+		grep -Fq "__runes_realm_16_delegated_number__$$realm" /tmp/runes_core_when_realm.c || exit 1; \
+		grep -Fq "__runes_gen_4_keep__n3_i32__realm_$$realm" /tmp/runes_core_when_realm.c || exit 1; \
+	done
+	./$(TARGET) src/tests/samples/core_codegen_realm_overload_functions.runes --emit-c /tmp/runes_core_realm_overload_functions.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_realm_overload_functions.c $(RUNTIME_SRCS) -o /tmp/runes_core_realm_overload_functions
+	@test "$$(/tmp/runes_core_realm_overload_functions)" = "10 20 30 40 50 60 0 70"
+	@for realm in stack dynamic regional gc; do \
+		grep -Fq "__runes_overload_11_realm_value__$$realm" /tmp/runes_core_realm_overload_functions.c || exit 1; \
+	done
+	@grep -Fq "__runes_overload_8_identity__dynamic__n3_i32" /tmp/runes_core_realm_overload_functions.c
+	@grep -Fq "__runes_overload_8_identity__gc__n3_i32" /tmp/runes_core_realm_overload_functions.c
+	@! grep -Fq "__runes_overload_8_identity__stack" /tmp/runes_core_realm_overload_functions.c
+	@! grep -Fq "__runes_overload_8_identity__regional" /tmp/runes_core_realm_overload_functions.c
+	./$(TARGET) src/tests/samples/core_codegen_realm_overload_methods.runes --emit-c /tmp/runes_core_realm_overload_methods.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_realm_overload_methods.c $(RUNTIME_SRCS) -o /tmp/runes_core_realm_overload_methods
+	@test "$$(/tmp/runes_core_realm_overload_methods)" = "37 48 59 70 70"
+	@for realm in dynamic regional gc; do \
+		grep -Fq "__runes_realm_method_4_read__n3_Box__$$realm" /tmp/runes_core_realm_overload_methods.c || exit 1; \
+		grep -Fq "__runes_realm_method_4_mode__n7_ModeBox__$$realm" /tmp/runes_core_realm_overload_methods.c || exit 1; \
+		grep -Fq "__runes_realm_method_4_keep__n3_Box__$$realm__n3_i32" /tmp/runes_core_realm_overload_methods.c || exit 1; \
+	done
+	@grep -Fq "__runes_realm_method_3_get__n10_GenericBoxgn3_i32e__dynamic" /tmp/runes_core_realm_overload_methods.c
+	@grep -Fq "__runes_realm_method_3_get__n10_GenericBoxgn3_i32e__gc" /tmp/runes_core_realm_overload_methods.c
+	./$(TARGET) src/tests/samples/core_codegen_realm_overload_imports.runes --emit-c /tmp/runes_core_realm_overload_imports.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_realm_overload_imports.c $(RUNTIME_SRCS) -o /tmp/runes_core_realm_overload_imports
+	@test "$$(/tmp/runes_core_realm_overload_imports)" = "1 2"
+	./$(TARGET) src/tests/samples/core_codegen_realm_overload_allocation.runes --emit-c /tmp/runes_core_realm_overload_allocation.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_realm_overload_allocation.c $(RUNTIME_SRCS) -o /tmp/runes_core_realm_overload_allocation
+	@test "$$(/tmp/runes_core_realm_overload_allocation)" = "11 22 33"
+	@grep -Fq "runes_raw_alloc_aligned(sizeof" /tmp/runes_core_realm_overload_allocation.c
+	@grep -Fq "runes_regional_alloc(sizeof" /tmp/runes_core_realm_overload_allocation.c
+	@grep -Fq "runes_gc_alloc(sizeof" /tmp/runes_core_realm_overload_allocation.c
+	@! grep -Eq '= .*runes_alloc(_typed)?[(]' /tmp/runes_core_realm_overload_allocation.c
+	./$(TARGET) src/tests/samples/core_codegen_realm_type_layouts.runes --emit-c /tmp/runes_core_realm_type_layouts.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_realm_type_layouts.c $(RUNTIME_SRCS) -o /tmp/runes_core_realm_type_layouts
+	@test "$$(/tmp/runes_core_realm_type_layouts)" = "18 36 100 300 40"
+	@grep -Fq "__runes_realm_type_4_Cell__dynamic" /tmp/runes_core_realm_type_layouts.c
+	@grep -Fq "__runes_realm_type_4_Cell__gc" /tmp/runes_core_realm_type_layouts.c
+	@grep -Fq "__runes_owner_signature_13_identity_cell__4_Cell_n34___runes_realm_type_4_Cell__dynamic" /tmp/runes_core_realm_type_layouts.c
+	@grep -Fq "__runes_owner_signature_13_identity_cell__4_Cell_n29___runes_realm_type_4_Cell__gc" /tmp/runes_core_realm_type_layouts.c
+	@! grep -Fq "__runes_realm_type_4_Cell__regional" /tmp/runes_core_realm_type_layouts.c
+	./$(TARGET) src/tests/samples/core_codegen_realm_storage.runes --emit-c /tmp/runes_core_realm_storage.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_realm_storage.c $(RUNTIME_SRCS) -o /tmp/runes_core_realm_storage
+	@test "$$(/tmp/runes_core_realm_storage)" = "60 15 42 true"
+	@grep -Fq "runes_storage_try_allocate_dynamic" /tmp/runes_core_realm_storage.c
+	@grep -Fq "runes_storage_try_allocate_regional" /tmp/runes_core_realm_storage.c
+	@grep -Fq "runes_storage_try_allocate_gc" /tmp/runes_core_realm_storage.c
+	@grep -Fq "runes_storage_try_resize_dynamic" /tmp/runes_core_realm_storage.c
+	@grep -Fq "runes_storage_try_resize_regional" /tmp/runes_core_realm_storage.c
+	@grep -Fq "runes_storage_try_resize_gc" /tmp/runes_core_realm_storage.c
+	./$(TARGET) src/tests/samples/core_codegen_realm_type_imports.runes --emit-c /tmp/runes_core_realm_type_imports.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_realm_type_imports.c $(RUNTIME_SRCS) -o /tmp/runes_core_realm_type_imports
+	@test "$$(/tmp/runes_core_realm_type_imports)" = "5 7"
 	./$(TARGET) src/tests/samples/core_codegen_provenance_long_chain.runes --emit-c /tmp/runes_core_provenance_long_chain.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_provenance_long_chain.c $(RUNTIME_SRCS) -o /tmp/runes_core_provenance_long_chain
 	@test "$$(/tmp/runes_core_provenance_long_chain)" = "42"
@@ -475,6 +593,18 @@ test-runtime-sanitize: $(TARGET)
 	./$(TARGET) src/tests/samples/core_codegen_gc_move_closure.runes --emit-c /tmp/runes_asan_gc_move_closure.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_gc_move_closure.c $(RUNTIME_SRCS) -o /tmp/runes_asan_gc_move_closure
 	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_gc_move_closure)" = "42"
+	./$(TARGET) src/tests/samples/core_codegen_realm_overload_allocation.runes --emit-c /tmp/runes_asan_realm_overload_allocation.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_realm_overload_allocation.c $(RUNTIME_SRCS) -o /tmp/runes_asan_realm_overload_allocation
+	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_realm_overload_allocation)" = "11 22 33"
+	./$(TARGET) src/tests/samples/core_codegen_realm_overload_methods.runes --emit-c /tmp/runes_asan_realm_overload_methods.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_realm_overload_methods.c $(RUNTIME_SRCS) -o /tmp/runes_asan_realm_overload_methods
+	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_realm_overload_methods)" = "37 48 59 70 70"
+	./$(TARGET) src/tests/samples/core_codegen_realm_type_layouts.runes --emit-c /tmp/runes_asan_realm_type_layouts.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_realm_type_layouts.c $(RUNTIME_SRCS) -o /tmp/runes_asan_realm_type_layouts
+	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_realm_type_layouts)" = "18 36 100 300 40"
+	./$(TARGET) src/tests/samples/core_codegen_realm_storage.runes --emit-c /tmp/runes_asan_realm_storage.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_realm_storage.c $(RUNTIME_SRCS) -o /tmp/runes_asan_realm_storage
+	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_realm_storage)" = "60 15 42 true"
 
 test-sanitize: test-runtime-sanitize
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer $(CORE_SRCS) $(MAIN_SRC) -o /tmp/runes_sanitize

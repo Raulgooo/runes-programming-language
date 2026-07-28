@@ -1,0 +1,16 @@
+-- EXPECT FAIL: alloc is not available in a stack function
+extern f alloc(size: usize) = result: *void
+
+flex f make_byte() = result: *u8 {
+    unsafe {
+        result = alloc(sizeof(u8)) as *u8
+    }
+}
+
+stack f invalid_stack_owner() {
+    *u8 byte = make_byte()
+}
+
+f main() {
+    invalid_stack_owner()
+}

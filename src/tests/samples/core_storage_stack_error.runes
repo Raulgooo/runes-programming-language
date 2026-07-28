@@ -1,0 +1,10 @@
+-- EXPECT FAIL: storage intrinsic is not available in a stack function
+use std.allocation.allocate_array
+
+stack f invalid() {
+    allocate_array<i32>(1)
+}
+
+f main() {
+    invalid()
+}

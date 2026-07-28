@@ -1,0 +1,26 @@
+mod storage {
+    pub type Cell = {
+        value: i32
+    }
+
+    pub in gc type Cell = {
+        value: i32
+        traced: bool
+    }
+}
+
+use storage.Cell as ImportedCell
+
+dynamic f dynamic_value() = result: i32 {
+    ImportedCell cell = ImportedCell(value: 5)
+    result = cell.value
+}
+
+gc f gc_value() = result: i32 {
+    ImportedCell cell = ImportedCell(value: 7, traced: true)
+    result = cell.value
+}
+
+f main() {
+    print(dynamic_value(), " ", gc_value())
+}

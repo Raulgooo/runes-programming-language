@@ -1,0 +1,23 @@
+mod helpers {
+    pub flex f pick() = result: i32 {
+        result = 1
+    }
+
+    pub in gc f pick() = result: i32 {
+        result = 2
+    }
+}
+
+use helpers.pick as chosen
+
+dynamic f dynamic_pick() = result: i32 {
+    result = chosen()
+}
+
+gc f gc_pick() = result: i32 {
+    result = chosen()
+}
+
+f main() {
+    print(dynamic_pick(), " ", gc_pick())
+}

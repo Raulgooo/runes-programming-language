@@ -1,0 +1,27 @@
+except(stack)
+flex f choose<T>(value: T) = result: T {
+    result = value
+}
+
+except(stack)
+in dynamic f choose<T>(value: T) = result: T {
+    result = value
+}
+
+in dynamic type Cache<T> = {
+    value: T
+}
+
+in gc type Cache<T> = {
+    value: T
+}
+
+method Cache<T> {
+    flex f size(self) = result: usize {
+        result = 1
+    }
+
+    in gc f size(self) = result: usize {
+        result = 2
+    }
+}

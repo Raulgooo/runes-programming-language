@@ -1,0 +1,141 @@
+-- Portable, allocation-free terminal I/O.
+--
+-- The public API exposes neither file descriptors nor platform error codes.
+-- Backend selection is a compile-time target decision. Linux x86-64 is the
+-- first implemented backend.
+
+use std.core.IoError
+use std.core.Result
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+use std.os.linux.fd as platform_fd
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+use std.os.linux.result.LinuxResult
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+use std.os.linux.result.LinuxStatus
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+f error_from_linux(code: i32) = failure: IoError {
+    failure = match code {
+        1 -> IoError.PermissionDenied(),
+        2 -> IoError.NotFound(),
+        4 -> IoError.Interrupted(),
+        9 -> IoError.InvalidInput(),
+        11 -> IoError.WouldBlock(),
+        13 -> IoError.PermissionDenied(),
+        22 -> IoError.InvalidInput(),
+        32 -> IoError.BrokenPipe(),
+        38 -> IoError.Unsupported(),
+        95 -> IoError.Unsupported(),
+        _ -> IoError.Unknown(),
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+f write_all(
+    descriptor: i32,
+    text: str
+) = outcome: Result<usize, IoError> {
+    outcome = match platform_fd.write_all_text(descriptor, text) {
+        Success -> Result.Ok<usize, IoError>(text.len),
+        Failure(code) -> Result.Err<usize, IoError>(
+            error_from_linux(code)
+        ),
+    }
+}
+
+-- Writes all of text to standard output.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub f write(text: str) = outcome: Result<usize, IoError> {
+    outcome = write_all(1, text)
+}
+
+-- Writes all of text and then one newline byte to standard output.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub f write_line(text: str) = outcome: Result<usize, IoError> {
+    match write_all(1, text) {
+        Ok(written) -> {
+            match write_all(1, "\n") {
+                Ok(newline) -> {
+                    outcome = Result.Ok<usize, IoError>(
+                        written + newline
+                    )
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, IoError>(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, IoError>(failure)
+        }
+    }
+}
+
+-- Writes all of text to standard error.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub f write_error(text: str) = outcome: Result<usize, IoError> {
+    outcome = write_all(2, text)
+}
+
+-- Writes all of text and then one newline byte to standard error.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub f write_error_line(text: str) = outcome: Result<usize, IoError> {
+    match write_all(2, text) {
+        Ok(written) -> {
+            match write_all(2, "\n") {
+                Ok(newline) -> {
+                    outcome = Result.Ok<usize, IoError>(
+                        written + newline
+                    )
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, IoError>(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, IoError>(failure)
+        }
+    }
+}
+
+-- Reads once from standard input into caller-owned storage. An interrupted
+-- syscall is retried. A zero-byte read is the portable EndOfInput condition.
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub f read(buffer: []u8) = outcome: Result<usize, IoError> {
+    if buffer.len == 0 {
+        outcome = Result.Ok<usize, IoError>(0)
+        return
+    }
+
+    while true {
+        LinuxResult<usize> attempt = platform_fd.read(0, buffer)
+        match attempt {
+            Value(count) -> {
+                if count > buffer.len {
+                    outcome = Result.Err<usize, IoError>(
+                        IoError.Unknown()
+                    )
+                } else if count == 0 {
+                    outcome = Result.Err<usize, IoError>(
+                        IoError.EndOfInput()
+                    )
+                } else {
+                    outcome = Result.Ok<usize, IoError>(count)
+                }
+                return
+            }
+            Failure(code) -> {
+                if code != 4 {
+                    outcome = Result.Err<usize, IoError>(
+                        error_from_linux(code)
+                    )
+                    return
+                }
+            }
+        }
+    }
+}

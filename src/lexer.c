@@ -205,10 +205,12 @@ static TokenKind identifier_kind(Lexer *L) {
       switch (L->start[1]) {
       case 'l':
         return check_keyword(L, 2, 2, "se", TOKEN_ELSE);
+      case 'x':
+        if (L->current - L->start > 2 && L->start[2] == 'c')
+          return check_keyword(L, 3, 3, "ept", TOKEN_EXCEPT);
+        return check_keyword(L, 2, 4, "tern", TOKEN_EXTERN);
       case 'r':
         return check_keyword(L, 2, 3, "ror", TOKEN_ERROR);
-      case 'x':
-        return check_keyword(L, 2, 4, "tern", TOKEN_EXTERN);
       }
     }
     break;
@@ -233,6 +235,8 @@ static TokenKind identifier_kind(Lexer *L) {
   case 'g':
     return check_keyword(L, 1, 1, "c", TOKEN_GC);
   case 'i':
+    if (L->current - L->start == 2 && L->start[1] == 'n')
+      return TOKEN_IN;
     if (L->current - L->start == 2) {
       switch (L->start[1]) {
       case 'f':
@@ -281,18 +285,14 @@ static TokenKind identifier_kind(Lexer *L) {
     }
     break;
   case 'r':
-    if (L->current - L->start > 1) {
-      switch (L->start[1]) {
-      case 'e':
-        if (L->current - L->start > 2) {
-          switch (L->start[2]) {
-          case 'g':
-            return check_keyword(L, 3, 5, "ional", TOKEN_REGIONAL);
-          case 't':
-            return check_keyword(L, 3, 3, "urn", TOKEN_RETURN);
-          }
-        }
-        break;
+    if (L->current - L->start > 2 && L->start[1] == 'e') {
+      switch (L->start[2]) {
+      case 'a':
+        return check_keyword(L, 3, 2, "lm", TOKEN_REALM);
+      case 'g':
+        return check_keyword(L, 3, 5, "ional", TOKEN_REGIONAL);
+      case 't':
+        return check_keyword(L, 3, 3, "urn", TOKEN_RETURN);
       }
     }
     break;
@@ -314,6 +314,14 @@ static TokenKind identifier_kind(Lexer *L) {
         }
         break;
       }
+    }
+    break;
+  case 'w':
+    if (L->current - L->start > 2 && L->start[1] == 'h') {
+      if (L->start[2] == 'e')
+        return check_keyword(L, 3, 1, "n", TOKEN_WHEN);
+      if (L->start[2] == 'i')
+        return check_keyword(L, 3, 2, "le", TOKEN_WHILE);
     }
     break;
   case 't':
@@ -368,8 +376,6 @@ static TokenKind identifier_kind(Lexer *L) {
       }
     }
     break;
-  case 'w':
-    return check_keyword(L, 1, 4, "hile", TOKEN_WHILE);
   }
   return TOKEN_IDENTIFIER;
 }
@@ -904,6 +910,14 @@ const char *token_kind_to_string(TokenKind kind) {
     return "if";
   case TOKEN_ELSE:
     return "else";
+  case TOKEN_WHEN:
+    return "when";
+  case TOKEN_REALM:
+    return "realm";
+  case TOKEN_IN:
+    return "in";
+  case TOKEN_EXCEPT:
+    return "except";
   case TOKEN_FOR:
     return "for";
   case TOKEN_WHILE:

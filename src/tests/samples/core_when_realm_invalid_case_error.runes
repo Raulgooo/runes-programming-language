@@ -1,0 +1,4 @@
+-- EXPECT FAIL: expected stack, dynamic, regional, or gc after 'when realm'
+dynamic f invalid_case() {
+    when realm flex {}
+}

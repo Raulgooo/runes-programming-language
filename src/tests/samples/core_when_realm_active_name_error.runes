@@ -1,0 +1,12 @@
+-- EXPECT FAIL: undefined identifier 'missing_dynamic_backend'
+dynamic f invalid_active_branch() {
+    when realm dynamic {
+        missing_dynamic_backend()
+    } else {
+        print("inactive")
+    }
+}
+
+f main() {
+    invalid_active_branch()
+}

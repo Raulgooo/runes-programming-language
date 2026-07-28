@@ -1,0 +1,164 @@
+use std.io
+use std.core.IoError
+use std.core.Result
+
+#[link_name("runes_test_stdout_attempts")]
+extern f stdout_attempts() = result: i32
+
+#[link_name("runes_test_stderr_attempts")]
+extern f stderr_attempts() = result: i32
+
+#[link_name("runes_test_stdin_attempts")]
+extern f stdin_attempts() = result: i32
+
+f main() {
+    Result<usize, IoError> empty_output = io.write("")
+    Result<usize, IoError> output = io.write("abc")
+    Result<usize, IoError> line_failure = io.write_line("x")
+    Result<usize, IoError> zero_write = io.write_error("x")
+    Result<usize, IoError> broken_pipe = io.write_error("x")
+    Result<usize, IoError> would_block = io.write_error("x")
+    Result<usize, IoError> denied = io.write_error("x")
+    Result<usize, IoError> not_found = io.write_error("x")
+    Result<usize, IoError> invalid = io.write_error("x")
+    Result<usize, IoError> unsupported = io.write_error("x")
+    Result<usize, IoError> unknown = io.write_error("x")
+    [1]u8 buffer = [0]
+    []u8 whole_buffer = buffer
+    []u8 empty_buffer = whole_buffer[0..0]
+    Result<usize, IoError> empty_input = io.read(empty_buffer)
+    Result<usize, IoError> input = io.read(buffer)
+    Result<usize, IoError> end = io.read(buffer)
+
+    bool empty_completed = match empty_output {
+        Ok(count) -> count == 0,
+        Err(_) -> false,
+    }
+    bool completed = match output {
+        Ok(count) -> count == 3,
+        Err(_) -> false,
+    }
+    bool newline_failure_mapped = match line_failure {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            BrokenPipe -> true,
+            _ -> false,
+        },
+    }
+    bool zero_stopped = match zero_write {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            Unknown -> true,
+            _ -> false,
+        },
+    }
+    bool pipe_mapped = match broken_pipe {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            BrokenPipe -> true,
+            _ -> false,
+        },
+    }
+    bool would_block_mapped = match would_block {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            WouldBlock -> true,
+            _ -> false,
+        },
+    }
+    bool denied_mapped = match denied {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            PermissionDenied -> true,
+            _ -> false,
+        },
+    }
+    bool not_found_mapped = match not_found {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            NotFound -> true,
+            _ -> false,
+        },
+    }
+    bool invalid_mapped = match invalid {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            InvalidInput -> true,
+            _ -> false,
+        },
+    }
+    bool unsupported_mapped = match unsupported {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            Unsupported -> true,
+            _ -> false,
+        },
+    }
+    bool unknown_mapped = match unknown {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            Unknown -> true,
+            _ -> false,
+        },
+    }
+    bool empty_read_completed = match empty_input {
+        Ok(count) -> count == 0,
+        Err(_) -> false,
+    }
+    bool read_after_retries = match input {
+        Ok(count) -> count == 1 and buffer[0] == 90,
+        Err(_) -> false,
+    }
+    bool eof_after_retry = match end {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            EndOfInput -> true,
+            _ -> false,
+        },
+    }
+
+    i32 output_calls = 0
+    i32 error_calls = 0
+    i32 input_calls = 0
+    unsafe {
+        output_calls = stdout_attempts()
+        error_calls = stderr_attempts()
+        input_calls = stdin_attempts()
+    }
+
+    print(
+        empty_completed,
+        " ",
+        completed,
+        " ",
+        newline_failure_mapped,
+        " ",
+        zero_stopped,
+        " ",
+        pipe_mapped,
+        " ",
+        would_block_mapped,
+        " ",
+        denied_mapped,
+        " ",
+        not_found_mapped,
+        " ",
+        invalid_mapped,
+        " ",
+        unsupported_mapped,
+        " ",
+        unknown_mapped,
+        " ",
+        empty_read_completed,
+        " ",
+        read_after_retries,
+        " ",
+        eof_after_retry,
+        " ",
+        output_calls,
+        " ",
+        error_calls,
+        " ",
+        input_calls
+    )
+}

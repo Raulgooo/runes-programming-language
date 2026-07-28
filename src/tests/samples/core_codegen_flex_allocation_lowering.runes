@@ -1,0 +1,39 @@
+extern f alloc(size: usize) = result: *void
+extern f raw_free(pointer: *void)
+
+type Cell = {
+    value: i32
+}
+
+flex f make_cell(value: i32) = result: *Cell {
+    unsafe {
+        result = alloc(sizeof(Cell)) as *Cell
+        result.value = value
+    }
+}
+
+dynamic f from_dynamic() = result: i32 {
+    *Cell cell = make_cell(10)
+    unsafe {
+        result = cell.value
+        raw_free(cell as *void)
+    }
+}
+
+regional f from_regional() = result: i32 {
+    *Cell cell = make_cell(20)
+    unsafe {
+        result = cell.value
+    }
+}
+
+gc f from_gc() = result: i32 {
+    *Cell cell = make_cell(30)
+    unsafe {
+        result = cell.value
+    }
+}
+
+f main() {
+    print(from_dynamic(), " ", from_regional(), " ", from_gc())
+}

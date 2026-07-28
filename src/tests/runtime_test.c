@@ -1,12 +1,39 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include "../runtime.h"
 
 #include <assert.h>
+#if defined(__linux__) && !defined(RUNES_FREESTANDING)
+#include <signal.h>
+#endif
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 static RunesStr bytes(const uint8_t *data, size_t length) {
   return (RunesStr){.ptr = data, .len = length};
+}
+
+static void test_runtime_initialization(void) {
+  runes_runtime_init();
+#if defined(__linux__) && !defined(RUNES_FREESTANDING)
+  struct sigaction action;
+  assert(sigaction(SIGPIPE, NULL, &action) == 0);
+  assert(action.sa_handler == SIG_IGN);
+#endif
+}
+
+static void test_small_alignment_allocation(void) {
+  void *raw = runes_raw_alloc_aligned(1, 1, 1, 1);
+  assert(raw);
+  assert((uintptr_t)raw % sizeof(void *) == 0);
+  runes_raw_free(raw);
+
+  void *scope = runes_arena_scope_enter(1, 1);
+  void *regional = runes_regional_alloc(1, 1, 1, 1);
+  assert(regional);
+  assert((uintptr_t)regional % sizeof(void *) == 0);
+  runes_arena_scope_leave(scope);
 }
 
 typedef struct TestGcNode {
@@ -32,6 +59,8 @@ static const RunesTypeDescriptor gc_node_descriptor = {
 static const RunesTypeDescriptor gc_node_pointer_descriptor = {
     sizeof(TestGcNode *), _Alignof(TestGcNode *), NULL,
     trace_gc_node_pointer};
+static const RunesTypeDescriptor i32_descriptor = {
+    sizeof(int32_t), _Alignof(int32_t), NULL, NULL};
 
 static void test_gc(void) {
   runes_gc_set_threshold(SIZE_MAX);
@@ -59,6 +88,82 @@ static void test_gc(void) {
   root = NULL;
   runes_gc_collect();
   assert(runes_gc_stats().object_count == 3);
+  runes_gc_scope_leave();
+  runes_gc_frame_leave(frame);
+  runes_gc_collect();
+  assert(runes_gc_stats().object_count == 0);
+}
+
+static void test_realm_storage(void) {
+  RunesStorageStats before = runes_storage_stats();
+  int32_t *dynamic =
+      runes_storage_try_allocate_dynamic(2, &i32_descriptor, 1, 1);
+  assert(dynamic && runes_storage_last_error() == RUNES_STORAGE_OK);
+  dynamic[0] = 10;
+  dynamic[1] = 20;
+  int32_t *grown = runes_storage_try_resize_dynamic(
+      dynamic, 2, 2, 4, &i32_descriptor, 1, 1);
+  assert(grown && grown[0] == 10 && grown[1] == 20);
+  assert(!runes_storage_try_resize_dynamic(
+      grown, 5, 4, 8, &i32_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_CAPACITY_OVERFLOW);
+  assert(grown[0] == 10 && grown[1] == 20);
+
+  runes_storage_debug_fail_after(0);
+  assert(!runes_storage_try_resize_dynamic(
+      grown, 2, 4, 8, &i32_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_OUT_OF_MEMORY);
+  assert(grown[0] == 10 && grown[1] == 20);
+  runes_storage_debug_clear_failure();
+
+  assert(!runes_storage_try_allocate_dynamic(
+      SIZE_MAX, &i32_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_CAPACITY_OVERFLOW);
+  runes_storage_release_dynamic(grown);
+
+  void *outer = runes_arena_scope_enter(1, 1);
+  int32_t *regional =
+      runes_storage_try_allocate_regional(1, &i32_descriptor, 1, 1);
+  assert(regional);
+  regional[0] = 7;
+  void *child = runes_arena_scope_enter(1, 1);
+  assert(!runes_storage_try_resize_regional(
+      regional, 1, 1, 2, &i32_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_OWNER_UNAVAILABLE);
+  assert(regional[0] == 7);
+  runes_arena_scope_leave(child);
+  regional = runes_storage_try_resize_regional(
+      regional, 1, 1, 2, &i32_descriptor, 1, 1);
+  assert(regional && regional[0] == 7);
+  runes_storage_release_regional(regional, 1, 1);
+  assert(runes_storage_last_error() == RUNES_STORAGE_OK);
+  runes_arena_scope_leave(outer);
+
+  RunesStorageStats after = runes_storage_stats();
+  assert(after.dynamic_allocations >= before.dynamic_allocations + 2);
+  assert(after.dynamic_releases >= before.dynamic_releases + 2);
+  assert(after.regional_allocations >= before.regional_allocations + 2);
+}
+
+static void test_gc_typed_storage(void) {
+  runes_gc_set_threshold(SIZE_MAX);
+  void *frame = runes_gc_frame_enter(1, 1);
+  runes_gc_scope_enter(1, 1);
+  TestGcNode *node = runes_gc_alloc(
+      sizeof(*node), _Alignof(TestGcNode), &gc_node_descriptor, 1, 1);
+  TestGcNode **values = runes_storage_try_allocate_gc(
+      4, &gc_node_pointer_descriptor, 1, 1);
+  assert(values);
+  values[0] = node;
+  values = runes_storage_try_resize_gc(
+      values, 1, 4, 8, &gc_node_pointer_descriptor, 1, 1);
+  assert(values && values[0] == node);
+  void *root = runes_gc_root_push(
+      &values, &gc_node_pointer_descriptor, 1, 1);
+  (void)root;
+  runes_gc_commit_allocations();
+  runes_gc_collect();
+  assert(runes_gc_stats().object_count == 2);
   runes_gc_scope_leave();
   runes_gc_frame_leave(frame);
   runes_gc_collect();
@@ -189,11 +294,15 @@ static void test_unicode_roundtrip_properties(void) {
 }
 
 int main(void) {
+  test_runtime_initialization();
+  test_small_alignment_allocation();
   test_string_bytes();
   test_utf8();
   test_string_properties();
   test_unicode_roundtrip_properties();
   test_gc();
+  test_realm_storage();
+  test_gc_typed_storage();
   puts("runtime tests passed");
   return 0;
 }

@@ -1,0 +1,21 @@
+-- EXPECT FAIL: method 'value' excludes the stack realm
+
+type Box = {
+    item: i32
+}
+
+method Box {
+    except(stack)
+    flex f value(self) = result: i32 {
+        result = self.item
+    }
+}
+
+stack f read(box: Box) = result: i32 {
+    result = box.value()
+}
+
+f main() {
+    Box box = Box(item: 1)
+    print(read(box))
+}

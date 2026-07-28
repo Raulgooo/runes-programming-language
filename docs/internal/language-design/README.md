@@ -12,6 +12,10 @@ Current notes:
 2. [Import ergonomics: current contract and next steps](import-ergonomics-plan.md)
    records implemented aliases and the ordered plan for canonical module
    identity, grouped imports, re-exports, and generic inference.
+3. [Implicit realm polymorphism, overloads, and specialization](implicit-realm-polymorphism-and-overloads-plan.md)
+   combines inferred `flex` specialization, realm-aware storage primitives,
+   compile-time realm blocks, optional realm-specific definitions for types,
+   interfaces, functions, and methods, blacklists, and testing methodology.
 
 When a decision becomes stable, update the specification, reference,
 implementation-status document, feature matrix, compiler tests, and relevant

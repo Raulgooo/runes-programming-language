@@ -67,6 +67,7 @@ Arena *arena_create_child(Arena *parent);
 void arena_destroy(Arena *a);
 void arena_reset(Arena *a); // rewind everything, keep block chain alive
 bool arena_owns(const Arena *a, const void *pointer);
+bool arena_owns_direct(const Arena *a, const void *pointer);
 
 // Allocation
 void *arena_alloc(Arena *a, size_t size);

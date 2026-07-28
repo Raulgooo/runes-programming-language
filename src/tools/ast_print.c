@@ -113,6 +113,22 @@ void ast_print_ext(AstNode *node, int level) {
 
   indent(level);
 
+  if (node->has_overload_realm) {
+    printf("in=%s ", effective_realm_name(node->overload_realm));
+  }
+  if (node->excluded_realms) {
+    printf("except=");
+    bool first = true;
+    for (unsigned realm = 0; realm < 4; realm++) {
+      if (!(node->excluded_realms & (1u << realm)))
+        continue;
+      printf("%s%s", first ? "" : ",",
+             effective_realm_name((EffectiveRealm)realm));
+      first = false;
+    }
+    printf(" ");
+  }
+
   switch (node->kind) {
   case AST_PROGRAM:
     printf("Program\n");
@@ -122,9 +138,10 @@ void ast_print_ext(AstNode *node, int level) {
   case AST_FUNC_DECL:
     print_attrs(node->as.func_decl.attrs, level);
     indent(level);
-    printf("FuncDecl name='%s' realm=%s is_pub=%s is_main=%s\n",
+    printf("FuncDecl name='%s' realm=%s realm_explicit=%s is_pub=%s is_main=%s\n",
            node->as.func_decl.name ? node->as.func_decl.name : "(null)",
            realm_to_string(node->as.func_decl.realm),
+           node->as.func_decl.has_declared_realm ? "true" : "false",
            node->as.func_decl.is_pub ? "true" : "false",
            node->as.func_decl.is_main ? "true" : "false");
     if (node->as.func_decl.generic_params) {
@@ -376,6 +393,19 @@ void ast_print_ext(AstNode *node, int level) {
       indent(level + 1);
       printf("Else:\n");
       ast_print_ext(node->as.if_stmt.else_branch, level + 2);
+    }
+    break;
+
+  case AST_REALM_BLOCK:
+    printf("RealmBlock (%s)\n",
+           effective_realm_name(node->as.realm_block.realm));
+    indent(level + 1);
+    printf("Body:\n");
+    ast_print_ext(node->as.realm_block.body, level + 2);
+    if (node->as.realm_block.else_branch) {
+      indent(level + 1);
+      printf("Else:\n");
+      ast_print_ext(node->as.realm_block.else_branch, level + 2);
     }
     break;
 

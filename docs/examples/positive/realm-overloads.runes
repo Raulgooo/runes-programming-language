@@ -1,0 +1,29 @@
+-- EXPECT OUTPUT: 1 2 3
+
+flex f selected() = result: i32 {
+    result = 1
+}
+
+in regional f selected() = result: i32 {
+    result = 2
+}
+
+in gc f selected() = result: i32 {
+    result = 3
+}
+
+dynamic f dynamic_value() = result: i32 {
+    result = selected()
+}
+
+regional f regional_value() = result: i32 {
+    result = selected()
+}
+
+gc f gc_value() = result: i32 {
+    result = selected()
+}
+
+f main() {
+    print(dynamic_value(), " ", regional_value(), " ", gc_value())
+}

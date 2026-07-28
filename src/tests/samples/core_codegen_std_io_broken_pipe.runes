@@ -1,0 +1,20 @@
+use std.io
+use std.core.IoError
+use std.core.Result
+
+f main() {
+    Result<usize, IoError> output = io.write("unreachable")
+    bool mapped = match output {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            BrokenPipe -> true,
+            _ -> false,
+        },
+    }
+
+    if mapped {
+        io.write_error("broken pipe mapped")
+    } else {
+        io.write_error("broken pipe was not mapped")
+    }
+}

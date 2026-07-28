@@ -62,7 +62,11 @@ feature.
 | Generic functions/types/variants/methods | `monomorphize.c` | generic codegen/error tests | [Generics](reference/semantics.md#generics) | Complete |
 | Nested functions and borrowing/move closures | `typecheck.c`, `codegen.c` | closure codegen/escape tests | [Closures](reference/semantics.md#nested-functions-and-closures) | Complete |
 | Interfaces and dynamic dispatch | `typecheck.c`, `codegen.c` | interface codegen/error tests | [Methods and interfaces](reference/semantics.md#methods-and-interfaces) | Complete |
-| Stack, dynamic, regional, GC, flex realms | `realm_check.c`, `typecheck.c` | realm and nesting tests | [Realms](reference/memory-and-unsafe.md#memory-realms) | Complete |
+| Stack, dynamic, regional, GC, flex realms | `ast.c`, `typecheck.c` | realm and nesting tests | [Realms](reference/memory-and-unsafe.md#memory-realms) | Complete |
+| Implicit effective-realm specialization of direct `flex` calls | `monomorphize.c`, `codegen.c` | flex specialization/allocation tests | [Flex functions](reference/memory-and-unsafe.md#flex-functions) | Complete for direct free functions; methods and erased function values pending |
+| Compile-time `when realm` blocks | `parser.c`, `monomorphize.c` | lexer/parser, pruning, generated-C, and diagnostic tests | [Control flow](reference/syntax.md#control-flow) | Complete for execution-realm functions and owner-specialized methods |
+| Realm overloads and declaration blacklists | `parser.c`, `monomorphize.c` | family validation, function/method/type codegen, layouts, owner preservation, imports, and diagnostics | [Realm declaration modifiers](reference/syntax.md#realm-declaration-modifiers) | Complete for functions, methods, structs, and variants; interfaces pending |
+| Typed realm-sensitive backing storage | `monomorphize.c`, `typecheck.c`, `codegen.c`, `runtime.c`, `std/allocation.runes` | realm storage proof, overflow/failure/owner runtime tests, sanitizer coverage | [Allocation](reference/allocation.md#typed-fallible-storage) | Complete foundation; public `Vec<T>` pending |
 | Arena escape checks and deep promotion | `typecheck.c`, `runtime.c` | promotion and arena escape tests | [Promotion](reference/memory-and-unsafe.md#deep-promotion) | Complete |
 | Precise scoped GC | `codegen.c`, `runtime.c` | GC graph/root tests | [GC](reference/memory-and-unsafe.md#scoped-garbage-collection) | Complete with documented limits |
 | Non-null/nullable pointers and provenance | `typecheck.c` | nullable/pointer error tests | [Pointers](reference/memory-and-unsafe.md#pointers) | Complete |
@@ -76,6 +80,7 @@ feature.
 | Explicit targets and declaration `#[cfg]` | `target.c`, `main.c`, `runec` | target tooling tests, `core_codegen_cfg.runes` | [Attributes](reference/modules-ffi-tooling.md#attribute-matrix) | Complete for three x86-64 bootstrap triples |
 | Import-driven std loading and reachability-based C emission | `main.c`, `reachability.c`, `codegen.c` | lazy-std fixture, `core_codegen_reachability.runes` | [Commands](reference/modules-ffi-tooling.md#compiler-commands) | Complete; explicit project modules remain eager |
 | Check, run, build, emit-C, project commands | `runec`, `main.c` | `test-tooling` | [Commands](reference/modules-ffi-tooling.md#compiler-commands) | Complete |
-| General standard library | `src/std/` | n/a | [Status](reference/implementation-status.md#standard-library) | Partial |
+| Core, bytes, and hosted Linux terminal I/O library | `src/std/` | `core_codegen_std_result.runes`, `core_codegen_std_bytes.runes`, `core_codegen_std_io_fake.runes` | [Standard library](reference/standard-library.md) | Complete for documented surface |
+| General standard library | `src/std/` | n/a | [Status](reference/implementation-status.md#standard-library) | Partial beyond documented surface |
 | Variadics, overloads, async, macros, const generics | deliberate omission | rejection/absence | [Unsupported features](reference/implementation-status.md#unsupported-language-features) | Unsupported |
 | Native backend and complete freestanding target | deliberate omission | n/a | [Backend](reference/implementation-status.md#backend-and-platform) | Unsupported |

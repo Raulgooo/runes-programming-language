@@ -20,6 +20,7 @@ typedef struct {
 typedef struct {
   FILE *out;
   Arena *arena;
+  bool hosted;
   bool had_error;
   int error_count;
   unsigned temp_id;
@@ -88,7 +89,7 @@ typedef struct {
   const char *current_prefix;
 } Codegen;
 
-void codegen_init(Codegen *cg, FILE *out, Arena *arena);
+void codegen_init(Codegen *cg, FILE *out, Arena *arena, bool hosted);
 bool codegen_emit_c(Codegen *cg, AstNode *program);
 
 #endif // RUNES_CODEGEN_H

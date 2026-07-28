@@ -193,9 +193,9 @@ them Linux syscall numbers or the future kernel's driver protocol.
 2. Implement `pub const` so ABI constants stop being duplicated. (compiler done; library migration pending)
 3. Add explicit target triples to compiler configuration and `runec`. (done)
 4. Add `#[cfg]` pruning before resolution. (done)
-5. Define portable `IoError`, `IoResult`, and the minimal `std.io` functions.
-6. Bind the Linux backend through private conditional imports.
-7. Add a fake backend for deterministic portable-I/O unit tests.
+5. Define portable `IoError`, `IoResult`, and the minimal `std.io` functions. (done)
+6. Bind the Linux backend through private conditional imports. (done)
+7. Add a fake backend for deterministic portable-I/O unit tests. (done)
 8. Add `std.os.runes` when the Runes OS userspace ABI exists.
 9. Add buffering, formatting, files, paths, networking, and async only after
    the byte-level contract is stable.
@@ -211,3 +211,17 @@ The portable layer is ready when:
 - cross-target builds do not inspect the host to select an ABI;
 - unused target backends are neither emitted nor linked;
 - freestanding builds do not acquire a libc dependency through `std.io`.
+
+Status (2026-07-28): the initial hosted Linux x86-64 layer satisfies these
+gates. The “two backends” test runs the same generated `std.io` logic once
+against the real syscall bridge and once against a deterministic syscall fake.
+The fake also verifies defensive rejection when a backend reports more bytes
+than requested. Future OS backends must preserve the same public contracts.
+
+Hosted Linux runtime startup establishes a process-wide `SIG_IGN` disposition
+for `SIGPIPE`. This lets the kernel return `EPIPE`, which `std.io` maps to
+`IoError.BrokenPipe`, instead of terminating the process before normal error
+handling. The policy is installed once at program entry rather than around
+each write, avoiding per-call overhead and process-global races. The real-pipe
+test deliberately does not manipulate signals, so it verifies the runtime
+contract. Freestanding targets omit hosted runtime initialization.

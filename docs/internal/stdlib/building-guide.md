@@ -771,7 +771,7 @@ inside that call behaves.
 | `dynamic f` | raw heap | returned ownership needs explicit cleanup |
 | `regional f` | new/child arena | values die with the regional tree |
 | `gc f` | traced GC heap | references must remain traceable |
-| `flex f` | caller arena/GC, otherwise raw | ownership follows effective caller |
+| `flex f` | compile-time caller specialization | stack rejects owning allocation; other ownership follows the effective caller |
 
 ### Prefer allocation-free foundations
 

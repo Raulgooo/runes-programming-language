@@ -1,0 +1,44 @@
+mod realm_helpers {
+    pub flex f boost(value: i32) = result: i32 {
+        result = value + 10
+    }
+}
+
+use realm_helpers.boost as imported_boost
+
+flex f identity<T>(value: T) = result: T {
+    result = value
+}
+
+flex f countdown(value: i32) = result: i32 {
+    if value == 0 {
+        result = 0
+    } else {
+        result = countdown(value - 1) + 1
+    }
+}
+
+flex f add_one(value: i32) = result: i32 {
+    result = imported_boost(identity<i32>(value)) + countdown(2) + 1
+}
+
+stack f from_stack() = result: i32 {
+    result = add_one(2)
+}
+
+dynamic f from_dynamic() = result: i32 {
+    result = add_one(3)
+}
+
+regional f from_regional() = result: i32 {
+    result = add_one(4)
+}
+
+gc f from_gc() = result: i32 {
+    result = add_one(5)
+}
+
+f main() {
+    print(from_stack(), " ", from_dynamic(), " ",
+          from_regional(), " ", from_gc())
+}

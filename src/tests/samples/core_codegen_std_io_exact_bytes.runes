@@ -1,0 +1,5 @@
+use std.io
+
+f main() {
+    io.write("A\0Bhé界")
+}

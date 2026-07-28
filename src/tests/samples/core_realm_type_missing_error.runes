@@ -1,0 +1,9 @@
+-- EXPECT FAIL: type 'GcOnly' has no dynamic definition
+
+in gc type GcOnly = {
+    value: i32
+}
+
+f main() {
+    GcOnly value = GcOnly(value: 1)
+}

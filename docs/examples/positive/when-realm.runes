@@ -1,0 +1,17 @@
+-- EXPECT OUTPUT: 1 2 3 4
+flex f realm_number() = result: i32 {
+    when realm stack { result = 1 }
+    when realm dynamic { result = 2 }
+    when realm regional { result = 3 }
+    when realm gc { result = 4 }
+}
+
+stack f from_stack() = result: i32 { result = realm_number() }
+dynamic f from_dynamic() = result: i32 { result = realm_number() }
+regional f from_regional() = result: i32 { result = realm_number() }
+gc f from_gc() = result: i32 { result = realm_number() }
+
+f main() {
+    print(from_stack(), " ", from_dynamic(), " ",
+          from_regional(), " ", from_gc())
+}

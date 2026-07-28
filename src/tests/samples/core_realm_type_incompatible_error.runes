@@ -1,0 +1,18 @@
+-- EXPECT FAIL: Variable initializer does not match declared type
+
+type Cell = {
+    value: i32
+}
+
+in gc type Cell = {
+    value: i32
+    traced: bool
+}
+
+gc f make_gc() = result: Cell {
+    result = Cell(value: 1, traced: true)
+}
+
+f main() {
+    Cell dynamic_cell = make_gc()
+}

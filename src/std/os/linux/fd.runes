@@ -38,7 +38,7 @@ f read_pointer(
 
 f write_pointer(
     descriptor: i32,
-    pointer: *u8,
+    pointer: *const u8,
     length: usize
 ) = outcome: LinuxResult<usize> {
     i64 raw = 0
@@ -62,7 +62,7 @@ pub f read(
 
 pub f write(
     descriptor: i32,
-    buffer: []u8
+    buffer: []const u8
 ) = outcome: LinuxResult<usize> {
     outcome = write_pointer(descriptor, buffer.ptr, buffer.len)
 }
@@ -72,11 +72,7 @@ pub f write_text(
     text: str
 ) = outcome: LinuxResult<usize> {
     unsafe {
-        outcome = write_pointer(
-            descriptor,
-            text.ptr as *u8,
-            text.len
-        )
+        outcome = write_pointer(descriptor, text.ptr, text.len)
     }
 }
 
@@ -86,18 +82,19 @@ pub f write_all_text(
 ) = outcome: LinuxStatus {
     usize total = 0
     while total < text.len {
+        usize remaining = text.len - total
         LinuxResult<usize> attempt
         unsafe {
             attempt = write_pointer(
                 descriptor,
-                (text.ptr + total) as *u8,
-                text.len - total
+                text.ptr + total,
+                remaining
             )
         }
 
         match attempt {
             Value(written) -> {
-                if written == 0 {
+                if written == 0 or written > remaining {
                     outcome = LinuxStatus.Failure(EIO)
                     return
                 }

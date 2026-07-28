@@ -28,8 +28,13 @@ Public language documentation remains in the main `docs/guide/` and
   `starts_with`;
 - `std.os.linux` implements the initial Linux x86-64 syscall, descriptor, and
   virtual-memory boundary;
-- `std.io` exists only as an empty, unexported placeholder;
-- portable safe I/O, owning containers, and owning text remain future
+- `std.io` implements allocation-free safe stdin/stdout/stderr operations on
+  hosted Linux x86-64, with portable results and deterministic fake-backend
+  coverage;
+- `std.allocation` implements typed fallible allocation, owner-sensitive
+  resize, and realm-correct release for dynamic, regional, and GC storage;
+- the compiler test suite contains a realm-aware generic proof buffer, while a
+  public `Vec<T>`, owning text, and additional I/O backends remain future
   milestones.
 
 Generic declarations can now be imported directly or aliased. Foundation code

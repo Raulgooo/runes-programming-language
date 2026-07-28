@@ -60,7 +60,7 @@ int LLVMFuzzerTestOneInput(const uint8_t *data, size_t size) {
         FILE *output = tmpfile();
         if (output) {
           Codegen codegen;
-          codegen_init(&codegen, output, &arena);
+          codegen_init(&codegen, output, &arena, true);
           (void)codegen_emit_c(&codegen, program);
           fclose(output);
         }

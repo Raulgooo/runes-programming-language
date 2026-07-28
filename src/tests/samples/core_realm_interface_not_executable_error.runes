@@ -1,0 +1,7 @@
+-- EXPECT FAIL: realm-specific interface selection is not implemented yet
+
+in dynamic interface Readable {
+    f read(self) = result: i32
+}
+
+f main() {}

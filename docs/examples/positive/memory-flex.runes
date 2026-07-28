@@ -1,22 +1,16 @@
--- EXPECT OUTPUT: 5 10 20 30
+-- EXPECT OUTPUT: 10 20 30
 type Cell = { value: i32 }
 
--- The same alloc() expression follows the active caller:
---   stack/dynamic caller -> raw allocation
+-- The same alloc() expression follows the active owning caller:
+--   dynamic caller       -> raw allocation
 --   regional caller      -> caller's arena
 --   GC caller            -> traced GC allocation
+-- A stack specialization is rejected because stack code cannot own alloc()
+-- storage.
 flex f make_cell(value: i32) = result: *Cell {
     unsafe {
         result = alloc(sizeof(Cell)) as *Cell
         result.value = value
-    }
-}
-
-stack f flex_from_stack() = result: i32 {
-    *Cell cell = make_cell(5)
-    unsafe {
-        result = cell.value
-        raw_free(cell as *void)
     }
 }
 
@@ -42,6 +36,6 @@ gc f flex_from_gc() = result: i32 {
 }
 
 f main() {
-    print(flex_from_stack(), " ", flex_from_dynamic(), " ",
-          flex_from_regional(), " ", flex_from_gc())
+    print(flex_from_dynamic(), " ", flex_from_regional(), " ",
+          flex_from_gc())
 }

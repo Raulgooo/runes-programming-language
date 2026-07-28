@@ -243,6 +243,10 @@ static void collect_decls(Resolver *r, AstNode *node) {
       AstNode *target_node =
           target ? target->node : node->as.use_decl.target_decl;
       if (target_node) {
+        // Monomorphization clones module declarations. Refresh the cached
+        // import target to the declaration in the cloned tree so later
+        // type-checking never falls back to the pre-specialization node.
+        node->as.use_decl.target_decl = target_node;
         AstNode *last = node->as.use_decl.path;
         while (last->next)
           last = last->next;
@@ -325,7 +329,11 @@ static void resolve_node(Resolver *r, AstNode *node) {
     if (strcmp(node->as.identifier.name, "print") != 0 &&
         strcmp(node->as.identifier.name, "unwrap") != 0 &&
         strcmp(node->as.identifier.name, "slice") != 0 &&
-        strcmp(node->as.identifier.name, "const_slice") != 0) {
+        strcmp(node->as.identifier.name, "const_slice") != 0 &&
+        strcmp(node->as.identifier.name, "try_allocate") != 0 &&
+        strcmp(node->as.identifier.name, "resize") != 0 &&
+        strcmp(node->as.identifier.name, "release") != 0 &&
+        strcmp(node->as.identifier.name, "storage_error") != 0) {
       Symbol *symbol = symbol_table_lookup(r->st, node->as.identifier.name);
       if (symbol)
         node->resolved_decl = symbol->node;
@@ -467,6 +475,11 @@ static void resolve_node(Resolver *r, AstNode *node) {
 
   case AST_UNSAFE_BLOCK:
     resolve_node(r, node->as.unsafe_block.body);
+    break;
+
+  case AST_REALM_BLOCK:
+    // Unresolved flex originals are retained only for function-value
+    // diagnostics. Concrete specializations prune this node earlier.
     break;
 
   case AST_ASM_EXPR:

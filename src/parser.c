@@ -43,10 +43,21 @@ static AstNode *parse_param_list(Parser *p);
 static AstNode *parse_param(Parser *p);
 static Attr *parse_attrs(Parser *p);
 static bool is_type_keyword(TokenKind kind);
+static void validate_realm_families(Parser *p, AstNode *declarations);
+static bool parse_effective_realm(Parser *p, EffectiveRealm *realm);
+static uint8_t parse_realm_exclusions(Parser *p);
+static void parse_realm_modifiers(Parser *p, bool *has_overload_realm,
+                                  EffectiveRealm *overload_realm,
+                                  uint8_t *exclusions);
+static void apply_realm_modifiers(Parser *p, AstNode *declaration,
+                                  bool has_overload_realm,
+                                  EffectiveRealm overload_realm,
+                                  uint8_t exclusions);
 
 // ── Statements
 // ────────────────────────────────────────────────────────────────
 static AstNode *parse_if_stmt(Parser *p);
+static AstNode *parse_realm_block(Parser *p);
 static AstNode *parse_while_stmt(Parser *p);
 static AstNode *parse_for_stmt(Parser *p);
 static AstNode *parse_loop_stmt(Parser *p);
@@ -133,6 +144,18 @@ static void parser_error(Parser *p, const char *msg) {
   p->error_count++;
 }
 
+static void parser_error_at(Parser *p, AstNode *node, const char *msg) {
+  if (p->diagnostic_handler) {
+    p->diagnostic_handler(p->diagnostic_context, p->filename, node->line,
+                          node->col, msg);
+  } else {
+    fprintf(stderr, "[Error] %s:%u:%u: %s\n", p->filename, node->line,
+            node->col, msg);
+  }
+  p->had_error = true;
+  p->error_count++;
+}
+
 static Token expect(Parser *p, TokenKind kind, const char *msg) {
   if (check(p, kind)) {
     return advance(p);
@@ -155,6 +178,8 @@ static void synchronize(Parser *p) {
 
     // declaration keywords — safe to resume here
     case TOKEN_F:
+    case TOKEN_IN:
+    case TOKEN_EXCEPT:
     case TOKEN_TYPE:
     case TOKEN_METHOD:
     case TOKEN_INTERFACE:
@@ -813,16 +838,30 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
   AstNode *methods = NULL, *mtail = NULL;
   while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
     Attr *attrs = parse_attrs(p);
+    bool has_overload_realm = false;
+    EffectiveRealm overload_realm = EFFECTIVE_REALM_STACK;
+    uint8_t exclusions = 0;
+    parse_realm_modifiers(p, &has_overload_realm, &overload_realm,
+                          &exclusions);
     // each method is a function: [realm] f name(self, ...) = r: T { ... }
     MemoryRealm realm = REALM_STACK;
-    if (match(p, TOKEN_REGIONAL))
+    bool has_realm = false;
+    if (match(p, TOKEN_REGIONAL)) {
       realm = REALM_ARENA;
-    else if (match(p, TOKEN_DYNAMIC))
+      has_realm = true;
+    } else if (match(p, TOKEN_DYNAMIC)) {
       realm = REALM_HEAP;
-    else if (match(p, TOKEN_GC))
+      has_realm = true;
+    } else if (match(p, TOKEN_GC)) {
       realm = REALM_GC;
-    else if (match(p, TOKEN_FLEX))
+      has_realm = true;
+    } else if (match(p, TOKEN_FLEX)) {
       realm = REALM_FLEX;
+      has_realm = true;
+    } else if (match(p, TOKEN_STACK)) {
+      realm = REALM_STACK;
+      has_realm = true;
+    }
 
     p->declaration_depth++;
     AstNode *fn = parse_func_decl(p, false, realm, attrs, true);
@@ -831,6 +870,9 @@ static AstNode *parse_method_decl(Parser *p, bool is_pub) {
       synchronize(p);
       continue;
     }
+    fn->as.func_decl.has_declared_realm = has_realm;
+    apply_realm_modifiers(p, fn, has_overload_realm, overload_realm,
+                          exclusions);
     if (!methods) {
       methods = fn;
     } else {
@@ -865,17 +907,23 @@ static AstNode *parse_interface_decl(Parser *p, bool is_pub) {
   AstNode *methods = NULL, *mtail = NULL;
   while (!check(p, TOKEN_RBRACE) && !check(p, TOKEN_EOF)) {
     Attr *attrs = parse_attrs(p);
+    bool has_overload_realm = false;
+    EffectiveRealm overload_realm = EFFECTIVE_REALM_STACK;
+    uint8_t exclusions = 0;
+    parse_realm_modifiers(p, &has_overload_realm, &overload_realm,
+                          &exclusions);
     MemoryRealm realm = REALM_STACK;
+    bool has_realm = false;
     if (match(p, TOKEN_REGIONAL))
-      realm = REALM_ARENA;
+      realm = REALM_ARENA, has_realm = true;
     else if (match(p, TOKEN_DYNAMIC))
-      realm = REALM_HEAP;
+      realm = REALM_HEAP, has_realm = true;
     else if (match(p, TOKEN_GC))
-      realm = REALM_GC;
+      realm = REALM_GC, has_realm = true;
     else if (match(p, TOKEN_FLEX))
-      realm = REALM_FLEX;
+      realm = REALM_FLEX, has_realm = true;
     else if (match(p, TOKEN_STACK))
-      realm = REALM_STACK;
+      realm = REALM_STACK, has_realm = true;
 
     p->declaration_depth++;
     AstNode *fn = parse_func_decl(p, false, realm, attrs, false);
@@ -884,6 +932,9 @@ static AstNode *parse_interface_decl(Parser *p, bool is_pub) {
       synchronize(p);
       continue;
     }
+    fn->as.func_decl.has_declared_realm = has_realm;
+    apply_realm_modifiers(p, fn, has_overload_realm, overload_realm,
+                          exclusions);
     if (!methods) {
       methods = fn;
     } else {
@@ -1091,12 +1142,126 @@ static AstNode *attach_decl_attrs(AstNode *declaration, Attr *attrs) {
   return declaration;
 }
 
+static bool parse_effective_realm(Parser *p, EffectiveRealm *realm) {
+  if (match(p, TOKEN_STACK)) {
+    *realm = EFFECTIVE_REALM_STACK;
+    return true;
+  }
+  if (match(p, TOKEN_DYNAMIC)) {
+    *realm = EFFECTIVE_REALM_DYNAMIC;
+    return true;
+  }
+  if (match(p, TOKEN_REGIONAL)) {
+    *realm = EFFECTIVE_REALM_REGIONAL;
+    return true;
+  }
+  if (match(p, TOKEN_GC)) {
+    *realm = EFFECTIVE_REALM_GC;
+    return true;
+  }
+  return false;
+}
+
+static uint8_t parse_realm_exclusions(Parser *p) {
+  advance(p); // except
+  expect(p, TOKEN_LPAREN, "expected '(' after 'except'");
+  if (p->panic_mode)
+    return 0;
+  uint8_t exclusions = 0;
+  if (check(p, TOKEN_RPAREN)) {
+    parser_error(p, "expected at least one realm in 'except(...)'");
+    return 0;
+  }
+  do {
+    EffectiveRealm realm;
+    if (!parse_effective_realm(p, &realm)) {
+      parser_error(
+          p, "expected stack, dynamic, regional, or gc in 'except(...)'");
+      return exclusions;
+    }
+    uint8_t bit = (uint8_t)(1u << (unsigned)realm);
+    if (exclusions & bit) {
+      parser_error(p, "duplicate realm in 'except(...)'");
+      return exclusions;
+    }
+    exclusions |= bit;
+  } while (match(p, TOKEN_COMMA));
+  expect(p, TOKEN_RPAREN, "expected ')' after realm exclusions");
+  return exclusions;
+}
+
+static void parse_realm_modifiers(Parser *p, bool *has_overload_realm,
+                                  EffectiveRealm *overload_realm,
+                                  uint8_t *exclusions) {
+  bool saw_exclusions = false;
+  while (check(p, TOKEN_IN) || check(p, TOKEN_EXCEPT)) {
+    if (match(p, TOKEN_IN)) {
+      if (*has_overload_realm)
+        parser_error(p, "duplicate 'in <realm>' modifier");
+      if (!parse_effective_realm(p, overload_realm))
+        parser_error(p,
+                     "expected stack, dynamic, regional, or gc after 'in'");
+      *has_overload_realm = true;
+    } else {
+      if (saw_exclusions)
+        parser_error(p, "duplicate 'except' modifier");
+      *exclusions = parse_realm_exclusions(p);
+      saw_exclusions = true;
+    }
+    if (p->panic_mode)
+      return;
+    skip_newlines(p);
+  }
+}
+
+static void apply_realm_modifiers(Parser *p, AstNode *declaration,
+                                  bool has_overload_realm,
+                                  EffectiveRealm overload_realm,
+                                  uint8_t exclusions) {
+  if (!declaration)
+    return;
+  bool supported = declaration->kind == AST_FUNC_DECL ||
+                   declaration->kind == AST_TYPE_DECL ||
+                   declaration->kind == AST_VARIANT_DECL ||
+                   declaration->kind == AST_METHOD_DECL ||
+                   declaration->kind == AST_INTERFACE_DECL;
+  if ((has_overload_realm || exclusions) && !supported) {
+    parser_error_at(
+        p, declaration,
+        "realm modifiers are only allowed on functions, methods, types, and interfaces");
+    return;
+  }
+  declaration->has_overload_realm = has_overload_realm;
+  declaration->overload_realm = overload_realm;
+  declaration->excluded_realms = exclusions;
+  if ((has_overload_realm || exclusions) &&
+      declaration->kind == AST_FUNC_DECL && p->function_depth > 0) {
+    parser_error_at(
+        p, declaration,
+        "realm-overloaded functions are only allowed at module scope");
+  }
+  if (has_overload_realm &&
+      (exclusions & (uint8_t)(1u << (unsigned)overload_realm))) {
+    parser_error_at(p, declaration,
+                    "a realm overload cannot exclude its own realm");
+  }
+  if (has_overload_realm && declaration->kind == AST_FUNC_DECL &&
+      declaration->as.func_decl.is_main) {
+    parser_error_at(p, declaration, "'main' cannot be a realm overload");
+  }
+}
+
 // Top-level declaration dispatcher
 static AstNode *parse_decl(Parser *p) {
   Attr *attrs = parse_attrs(p);
   skip_newlines(p);
 
   bool is_pub = match(p, TOKEN_PUB);
+  bool has_overload_realm = false;
+  EffectiveRealm overload_realm = EFFECTIVE_REALM_STACK;
+  uint8_t exclusions = 0;
+  parse_realm_modifiers(p, &has_overload_realm, &overload_realm,
+                        &exclusions);
 
   bool starts_function_type =
       (check(p, TOKEN_F) && peek(p).kind == TOKEN_LPAREN) ||
@@ -1110,6 +1275,8 @@ static AstNode *parse_decl(Parser *p) {
       if (is_pub && declaration) {
         parser_error(p, "only const module globals can be public");
       }
+      apply_realm_modifiers(p, declaration, has_overload_realm,
+                            overload_realm, exclusions);
       return attach_decl_attrs(declaration, attrs);
     }
 
@@ -1139,23 +1306,54 @@ static AstNode *parse_decl(Parser *p) {
     AstNode *function = parse_func_decl(p, is_pub, realm, attrs, true);
     if (function)
       function->as.func_decl.is_move = is_move;
+    if (function)
+      function->as.func_decl.has_declared_realm = has_realm;
+    apply_realm_modifiers(p, function, has_overload_realm, overload_realm,
+                          exclusions);
     return attach_decl_attrs(function, attrs);
   }
   if (check(p, TOKEN_TYPE)) {
-    return attach_decl_attrs(parse_type_decl(p, is_pub, attrs), attrs);
+    AstNode *declaration = parse_type_decl(p, is_pub, attrs);
+    apply_realm_modifiers(p, declaration, has_overload_realm, overload_realm,
+                          exclusions);
+    return attach_decl_attrs(declaration, attrs);
   }
-  if (check(p, TOKEN_METHOD))
-    return attach_decl_attrs(parse_method_decl(p, is_pub), attrs);
-  if (check(p, TOKEN_INTERFACE))
-    return attach_decl_attrs(parse_interface_decl(p, is_pub), attrs);
-  if (check(p, TOKEN_ERROR))
-    return attach_decl_attrs(parse_error_decl(p, is_pub), attrs);
-  if (check(p, TOKEN_MOD))
-    return attach_decl_attrs(parse_mod_decl(p, is_pub), attrs);
-  if (check(p, TOKEN_USE))
-    return attach_decl_attrs(parse_use_decl(p, is_pub), attrs);
-  if (check(p, TOKEN_EXTERN))
-    return attach_decl_attrs(parse_extern_decl(p, attrs), attrs);
+  if (check(p, TOKEN_METHOD)) {
+    AstNode *declaration = parse_method_decl(p, is_pub);
+    apply_realm_modifiers(p, declaration, has_overload_realm, overload_realm,
+                          exclusions);
+    return attach_decl_attrs(declaration, attrs);
+  }
+  if (check(p, TOKEN_INTERFACE)) {
+    AstNode *declaration = parse_interface_decl(p, is_pub);
+    apply_realm_modifiers(p, declaration, has_overload_realm, overload_realm,
+                          exclusions);
+    return attach_decl_attrs(declaration, attrs);
+  }
+  if (check(p, TOKEN_ERROR)) {
+    AstNode *declaration = parse_error_decl(p, is_pub);
+    apply_realm_modifiers(p, declaration, has_overload_realm, overload_realm,
+                          exclusions);
+    return attach_decl_attrs(declaration, attrs);
+  }
+  if (check(p, TOKEN_MOD)) {
+    AstNode *declaration = parse_mod_decl(p, is_pub);
+    apply_realm_modifiers(p, declaration, has_overload_realm, overload_realm,
+                          exclusions);
+    return attach_decl_attrs(declaration, attrs);
+  }
+  if (check(p, TOKEN_USE)) {
+    AstNode *declaration = parse_use_decl(p, is_pub);
+    apply_realm_modifiers(p, declaration, has_overload_realm, overload_realm,
+                          exclusions);
+    return attach_decl_attrs(declaration, attrs);
+  }
+  if (check(p, TOKEN_EXTERN)) {
+    AstNode *declaration = parse_extern_decl(p, attrs);
+    apply_realm_modifiers(p, declaration, has_overload_realm, overload_realm,
+                          exclusions);
+    return attach_decl_attrs(declaration, attrs);
+  }
 
   // Variable declarations with attributes: #[section(".data")] const i32 x = 5
   if (is_var_decl_lookahead(p)) {
@@ -1177,11 +1375,185 @@ static AstNode *parse_decl(Parser *p) {
           item->as.var_decl.is_pub = true;
       }
     }
+    apply_realm_modifiers(p, decl, has_overload_realm, overload_realm,
+                          exclusions);
     return attach_decl_attrs(decl, attrs);
   }
 
   parser_error(p, "expected a declaration");
   return NULL;
+}
+
+static const char *realm_family_name(AstNode *node) {
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return node->as.func_decl.name;
+  case AST_TYPE_DECL:
+    return node->as.type_decl.name;
+  case AST_VARIANT_DECL:
+    return node->as.variant_decl.name;
+  case AST_INTERFACE_DECL:
+    return node->as.interface_decl.name;
+  case AST_METHOD_DECL:
+    return node->as.method_decl.type_name;
+  default:
+    return NULL;
+  }
+}
+
+static int realm_family_category(AstNode *node) {
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return 1;
+  case AST_TYPE_DECL:
+  case AST_VARIANT_DECL:
+    return 2;
+  case AST_INTERFACE_DECL:
+    return 3;
+  case AST_METHOD_DECL:
+    return 4;
+  default:
+    return 0;
+  }
+}
+
+static bool same_nullable_name(const char *left, const char *right) {
+  return (!left && !right) ||
+         (left && right && strcmp(left, right) == 0);
+}
+
+static bool same_realm_family(AstNode *left, AstNode *right) {
+  const char *left_name = realm_family_name(left);
+  const char *right_name = realm_family_name(right);
+  if (!left_name || !right_name ||
+      realm_family_category(left) != realm_family_category(right) ||
+      strcmp(left_name, right_name) != 0)
+    return false;
+  if (left->kind == AST_METHOD_DECL)
+    return same_nullable_name(left->as.method_decl.iface_name,
+                              right->as.method_decl.iface_name);
+  return true;
+}
+
+static size_t node_list_count(AstNode *node) {
+  size_t count = 0;
+  for (; node; node = node->next)
+    count++;
+  return count;
+}
+
+static size_t realm_family_generic_arity(AstNode *node) {
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return node_list_count(node->as.func_decl.generic_params);
+  case AST_TYPE_DECL:
+    return node_list_count(node->as.type_decl.generic_params);
+  case AST_VARIANT_DECL:
+    return node_list_count(node->as.variant_decl.generic_params);
+  case AST_METHOD_DECL:
+    return node_list_count(node->as.method_decl.type_args);
+  default:
+    return 0;
+  }
+}
+
+static bool realm_family_is_pub(AstNode *node) {
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return node->as.func_decl.is_pub;
+  case AST_TYPE_DECL:
+    return node->as.type_decl.is_pub;
+  case AST_VARIANT_DECL:
+    return node->as.variant_decl.is_pub;
+  case AST_INTERFACE_DECL:
+    return node->as.interface_decl.is_pub;
+  case AST_METHOD_DECL:
+    return node->as.method_decl.is_pub;
+  default:
+    return false;
+  }
+}
+
+static void family_error(Parser *p, AstNode *node, const char *reason) {
+  char message[256];
+  snprintf(message, sizeof(message), "realm overload family '%s' %s",
+           realm_family_name(node), reason);
+  parser_error_at(p, node, message);
+}
+
+static void validate_realm_family_at(Parser *p, AstNode *declarations,
+                                     AstNode *first) {
+  bool has_exact = false;
+  for (AstNode *node = first; node; node = node->next) {
+    if (same_realm_family(first, node) && node->has_overload_realm)
+      has_exact = true;
+  }
+  if (!has_exact)
+    return;
+
+  AstNode *fallback = NULL;
+  AstNode *variants[4] = {NULL, NULL, NULL, NULL};
+  bool visibility = realm_family_is_pub(first);
+  size_t generic_arity = realm_family_generic_arity(first);
+  uint8_t exclusions = first->excluded_realms;
+
+  for (AstNode *node = declarations; node; node = node->next) {
+    if (!same_realm_family(first, node))
+      continue;
+    if (realm_family_is_pub(node) != visibility)
+      family_error(p, node, "has inconsistent visibility");
+    if (realm_family_generic_arity(node) != generic_arity)
+      family_error(p, node, "has inconsistent generic arity");
+    if (node->excluded_realms != exclusions)
+      family_error(p, node, "has inconsistent realm exclusions");
+    if (node->has_overload_realm) {
+      unsigned realm = (unsigned)node->overload_realm;
+      if (variants[realm])
+        family_error(p, node, "has a duplicate exact realm definition");
+      else
+        variants[realm] = node;
+    } else {
+      if (fallback)
+        family_error(p, node, "has multiple shared fallbacks");
+      else
+        fallback = node;
+    }
+  }
+
+  AstNode *root = fallback ? fallback : first;
+  root->realm_family_root = root;
+  root->realm_family_fallback = fallback;
+  for (unsigned realm = 0; realm < 4; realm++)
+    root->realm_family_variants[realm] = variants[realm];
+  for (AstNode *node = declarations; node; node = node->next) {
+    if (!same_realm_family(first, node))
+      continue;
+    node->realm_family_root = root;
+    node->realm_family_fallback = fallback;
+    for (unsigned realm = 0; realm < 4; realm++)
+      node->realm_family_variants[realm] = variants[realm];
+  }
+}
+
+static void validate_realm_families(Parser *p, AstNode *declarations) {
+  for (AstNode *node = declarations; node; node = node->next) {
+    bool seen = false;
+    for (AstNode *prior = declarations; prior != node; prior = prior->next) {
+      if (same_realm_family(prior, node)) {
+        seen = true;
+        break;
+      }
+    }
+    if (!seen && realm_family_category(node))
+      validate_realm_family_at(p, declarations, node);
+
+    if (node->kind == AST_MOD_DECL)
+      validate_realm_families(p, node->as.mod_decl.declarations);
+    else if (node->kind == AST_METHOD_DECL)
+      validate_realm_families(p, node->as.method_decl.methods);
+    else if (node->kind == AST_INTERFACE_DECL)
+      validate_realm_families(p, node->as.interface_decl.methods);
+  }
 }
 
 // public entry point
@@ -1206,6 +1578,7 @@ AstNode *parser_parse(Parser *p) {
     while (tail->next)
       tail = tail->next;
   }
+  validate_realm_families(p, head);
   return ast_new_program(p->arena, head);
 }
 
@@ -1324,6 +1697,46 @@ static AstNode *parse_if_stmt(Parser *p) {
   n->line = if_tok.line;
   n->col = if_tok.column;
   return n;
+}
+
+static AstNode *parse_realm_block(Parser *p) {
+  Token when_tok = advance(p);
+  expect(p, TOKEN_REALM, "expected 'realm' after 'when'");
+  EffectiveRealm realm;
+  switch (p->current.kind) {
+  case TOKEN_STACK:
+    realm = EFFECTIVE_REALM_STACK;
+    break;
+  case TOKEN_DYNAMIC:
+    realm = EFFECTIVE_REALM_DYNAMIC;
+    break;
+  case TOKEN_REGIONAL:
+    realm = EFFECTIVE_REALM_REGIONAL;
+    break;
+  case TOKEN_GC:
+    realm = EFFECTIVE_REALM_GC;
+    break;
+  default:
+    parser_error(p, "expected stack, dynamic, regional, or gc after 'when realm'");
+    return NULL;
+  }
+  advance(p);
+  skip_newlines(p);
+  AstNode *body = parse_block(p);
+  if (!body)
+    return NULL;
+  AstNode *else_branch = NULL;
+  if (match(p, TOKEN_ELSE)) {
+    skip_newlines(p);
+    else_branch = parse_block(p);
+    if (!else_branch)
+      return NULL;
+  }
+  AstNode *node =
+      ast_new_realm_block(p->arena, realm, body, else_branch);
+  node->line = when_tok.line;
+  node->col = when_tok.column;
+  return node;
 }
 
 // Spec §6: while cond { ... }
@@ -1844,6 +2257,8 @@ static AstNode *parse_stmt(Parser *p) {
     return n;
   }
   // control-flow statements
+  if (check(p, TOKEN_WHEN))
+    return parse_realm_block(p);
   if (check(p, TOKEN_IF))
     return parse_if_stmt(p);
   if (check(p, TOKEN_WHILE))
@@ -1866,7 +2281,8 @@ static AstNode *parse_stmt(Parser *p) {
       check(p, TOKEN_USE) || check(p, TOKEN_EXTERN) || check(p, TOKEN_HASH) ||
       check(p, TOKEN_REGIONAL) || check(p, TOKEN_DYNAMIC) ||
       check(p, TOKEN_GC) || check(p, TOKEN_FLEX) || check(p, TOKEN_STACK) ||
-      check(p, TOKEN_METHOD) || check(p, TOKEN_INTERFACE))
+      check(p, TOKEN_METHOD) || check(p, TOKEN_INTERFACE) ||
+      check(p, TOKEN_IN) || check(p, TOKEN_EXCEPT))
     return parse_decl(p);
 
   if (is_var_decl_lookahead(p)) {

@@ -65,7 +65,8 @@ module.exports = grammar({
       choice(
         "f", "type", "error", "mod", "use", "pub", "const", "method",
         "interface", "extern", "volatile", "flex", "stack", "dynamic",
-        "regional", "gc", "if", "else", "while", "loop", "break",
+        "regional", "gc", "if", "else", "when", "realm", "in", "except",
+        "while", "loop", "break",
         "continue", "return", "defer", "match", "for", "try", "catch", "unsafe",
         "asm", "promote", "move", "sizeof", "alignof", "as", "and", "or",
       ),

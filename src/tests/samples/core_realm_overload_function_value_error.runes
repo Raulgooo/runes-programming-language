@@ -1,0 +1,17 @@
+-- EXPECT FAIL: realm-overloaded function requires a direct call
+
+flex f selected() = result: i32 {
+    result = 1
+}
+
+in gc f selected() = result: i32 {
+    result = 2
+}
+
+f consume(operation: flex f() -> i32) = result: i32 {
+    result = operation()
+}
+
+f main() {
+    print(consume(selected))
+}

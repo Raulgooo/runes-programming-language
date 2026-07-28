@@ -2,6 +2,7 @@
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 
 def send(process, message):
@@ -37,9 +38,13 @@ assert initialized["result"]["capabilities"]["documentSymbolProvider"]
 
 uri = "file:///tmp/lsp-test.runes"
 source = """type Point = { x: i32, y: i32 }
-f answer(value: i32) = result: i32 {
-    result = value
+dynamic f answer(value: i32) = result: i32 {
+    when realm dynamic { result = value } else { result = 0 }
 }
+except(stack)
+flex f selected() = result: i32 { result = 1 }
+except(stack)
+in gc f selected() = result: i32 { result = 2 }
 """
 send(
     server,
@@ -70,7 +75,12 @@ send(
     },
 )
 symbols = receive(server)["result"]
-assert [symbol["name"] for symbol in symbols] == ["Point", "answer"]
+assert [symbol["name"] for symbol in symbols] == [
+    "Point",
+    "answer",
+    "selected",
+    "selected",
+]
 assert [child["name"] for child in symbols[0]["children"]] == ["x", "y"]
 
 send(
@@ -81,7 +91,7 @@ send(
         "method": "textDocument/hover",
         "params": {
             "textDocument": {"uri": uri},
-            "position": {"line": 1, "character": 3},
+            "position": {"line": 1, "character": 11},
         },
     },
 )
@@ -95,11 +105,26 @@ send(
         "method": "textDocument/definition",
         "params": {
             "textDocument": {"uri": uri},
-            "position": {"line": 1, "character": 3},
+            "position": {"line": 1, "character": 11},
         },
     },
 )
 assert receive(server)["result"]["uri"] == uri
+
+send(
+    server,
+    {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "textDocument/completion",
+        "params": {
+            "textDocument": {"uri": uri},
+            "position": {"line": 1, "character": 4},
+        },
+    },
+)
+completion_labels = {item["label"] for item in receive(server)["result"]}
+assert {"when", "realm", "in", "except"}.issubset(completion_labels)
 
 send(
     server,
@@ -114,7 +139,28 @@ send(
 )
 assert receive(server)["params"]["diagnostics"]
 
-send(server, {"jsonrpc": "2.0", "id": 5, "method": "shutdown", "params": None})
+io_uri = Path("src/std/io.runes").resolve().as_uri()
+io_source = Path("src/std/io.runes").read_text()
+send(
+    server,
+    {
+        "jsonrpc": "2.0",
+        "method": "textDocument/didOpen",
+        "params": {
+            "textDocument": {
+                "uri": io_uri,
+                "languageId": "runes",
+                "version": 1,
+                "text": io_source,
+            }
+        },
+    },
+)
+io_diagnostics = receive(server)
+assert io_diagnostics["method"] == "textDocument/publishDiagnostics"
+assert io_diagnostics["params"]["diagnostics"] == [], io_diagnostics
+
+send(server, {"jsonrpc": "2.0", "id": 6, "method": "shutdown", "params": None})
 assert receive(server)["result"] is None
 send(server, {"jsonrpc": "2.0", "method": "exit", "params": None})
 assert server.wait(timeout=5) == 0

@@ -1,0 +1,120 @@
+type Marker = {
+    value: i32
+}
+
+type Cell = {
+    value: i32
+}
+
+in gc type Cell = {
+    value: i32
+    trace: Marker
+}
+
+type Slot<T> = {
+    value: T
+}
+
+in gc type Slot<T> = {
+    value: T
+    traced: bool = true
+}
+
+method Slot<T> {
+    flex f get(self) = result: T {
+        result = self.value
+    }
+
+    flex f keep<U>(self, value: U) = result: U {
+        result = value
+    }
+
+    in dynamic flex f realm_code(self) = result: i32 {
+        result = 1
+    }
+
+    in gc flex f realm_code(self) = result: i32 {
+        result = 2
+    }
+}
+
+type Envelope<T> = {
+    payload: Slot<T>
+}
+
+type Status =
+    | Plain(i32)
+
+in gc type Status =
+    | Plain(i32)
+    | Traced(i32)
+
+method Cell {
+    flex f owner_code(self) = result: i32 {
+        result = 100
+        when realm gc {
+            result = 300
+        }
+    }
+
+    in dynamic flex f realm_code(self) = result: i32 {
+        result = 10
+    }
+
+    in gc flex f realm_code(self) = result: i32 {
+        result = 30
+    }
+}
+
+dynamic f dynamic_value() = result: i32 {
+    Cell cell = Cell(value: 11)
+    Slot<i32> slot = Slot(value: 3)
+    Envelope<i32> envelope = Envelope<i32>(payload: Slot(value: 1))
+    Status status = Status.Plain(2)
+    i32 status_value = match status {
+        Plain(value) -> value,
+    }
+    result = cell.value + slot.get() + status_value + envelope.payload.value + slot.keep(0) + slot.realm_code()
+}
+
+gc f gc_value() = result: i32 {
+    Cell cell = Cell(value: 22, trace: Marker(value: 1))
+    Slot<i32> slot = Slot(value: 4, traced: true)
+    Envelope<i32> envelope = Envelope<i32>(
+        payload: Slot(value: 2, traced: true)
+    )
+    Status status = Status.Traced(5)
+    i32 status_value = match status {
+        Plain(value) -> value,
+        Traced(value) -> value,
+    }
+    if slot.traced {
+        result = cell.value + cell.trace.value + slot.get() + status_value + envelope.payload.value + slot.keep(0) + slot.realm_code()
+    }
+}
+
+dynamic f make_dynamic() = result: Cell {
+    result = Cell(value: 7)
+}
+
+gc f make_gc() = result: Cell {
+    result = Cell(value: 8, trace: Marker(value: 1))
+}
+
+regional f observe<T>(value: T) = result: i32 {
+    result = value.owner_code()
+}
+
+f identity_cell(value: Cell) = result: Cell {
+    result = value
+}
+
+dynamic f observe_returned_owners() = result: i32 {
+    result = identity_cell(make_dynamic()).realm_code() + identity_cell(make_gc()).realm_code()
+}
+
+f main() {
+    print(dynamic_value(), " ", gc_value(), " ",
+          observe(make_dynamic()), " ", observe(make_gc()), " ",
+          observe_returned_owners())
+}

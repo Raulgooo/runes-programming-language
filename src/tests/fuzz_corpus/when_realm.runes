@@ -1,0 +1,10 @@
+flex f select(value: i32) = result: i32 {
+    when realm stack { result = value }
+    when realm dynamic { result = value + 1 }
+    when realm regional { result = value + 2 }
+    when realm gc { result = value + 3 } else { result = 0 }
+}
+
+f main() {
+    print(select(39))
+}

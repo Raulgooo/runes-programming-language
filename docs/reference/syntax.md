@@ -15,10 +15,10 @@ identifier = (ASCII-letter | "_") (ASCII-letter | digit | "_")*
 Keywords cannot be used as ordinary identifiers. The complete keyword set is:
 
 ```text
-and as asm bool break catch char const continue defer dynamic else error extern
-f f32 f64 false flex for gc i8 i16 i32 i64 if interface loop match method
+and as asm bool break catch char const continue defer dynamic else error except extern
+f f32 f64 false flex for gc i8 i16 i32 i64 if in interface loop match method
 mod move null or promote pub regional return self sizeof alignof stack str
-true try type u8 u16 u32 u64 unsafe use usize void volatile while
+true try type u8 u16 u32 u64 unsafe use usize void volatile when realm while
 ```
 
 Whitespace separates tokens. A newline normally terminates a statement, but is
@@ -200,6 +200,74 @@ f add(left: i32, right: i32) = result: i32 {
 }
 ```
 
+### Realm declaration modifiers
+
+The parser accepts optional realm applicability modifiers before functions,
+methods, types, and interfaces:
+
+```text
+realm-overload = "in" concrete-realm
+realm-exclusion = "except" "(" concrete-realm
+                  ("," concrete-realm)* ")"
+concrete-realm = "stack" | "dynamic" | "regional" | "gc"
+```
+
+Examples:
+
+```runes
+except(stack)
+flex f build<T>(value: T) = result: T {
+    result = value
+}
+
+except(stack)
+in gc f build<T>(value: T) = result: T {
+    result = value
+}
+```
+
+`in gc f` marks the definition selected for GC dispatch; it is separate from
+the existing `gc f` syntax, which enters GC execution. `flex` and `main` are
+not valid applicability cases. An exact definition cannot exclude its own
+realm.
+
+At a direct call, the compiler infers the effective execution realm, selects
+an exact definition for that realm when present, and otherwise uses the shared
+definition. A family containing only exact definitions is an implicit
+allowlist. `except(...)` is checked before fallback selection.
+
+Selection is compile time. Generated C contains a deterministic concrete
+instance and no runtime realm branch. Generic type arguments and the inferred
+realm are both part of that instance's identity. Realm-overloaded function
+values remain unsupported because erasure would discard the static selection
+context.
+
+For an overloaded definition with no explicit execution-realm prefix, its body
+uses the selected dispatch realm. An explicit prefix remains independent:
+`in dynamic gc f work()` selects the definition for dynamic dispatch and then
+enters GC execution. This preserves the existing meaning of `gc f`.
+
+Realm-specific struct and variant families use the same exact-then-fallback
+selection. Construction and type annotations infer the effective realm and
+produce a hidden concrete type identity. Generic arguments, layouts,
+descriptors, constructors, and generated ABI names are specialized together.
+Only demanded variants are emitted.
+
+A value retains that hidden identity through assignment-compatible parameters
+and returns. Ordinary functions with a realm-specific parameter are
+automatically specialized for the concrete argument variant; the realm is not
+written at the call site. Structs or variants containing a realm-specific type
+are specialized transitively. Assigning or merging incompatible variants is a
+type error.
+
+Realm-overloaded receiver methods dispatch from a realm-specific receiver's
+persistent owner variant, even when the call expression occurs under another
+effective execution realm. Methods on ordinary types continue to dispatch
+from effective execution realm.
+
+Interface modifiers are parsed and family-validated for forward
+compatibility, but interface semantic selection is still rejected explicitly.
+
 A value-returning function permits one same-line expression without braces. It
 must have a named result, the expression must begin on the declaration line,
 and normal result-assignment rules still apply. The useful canonical form is an
@@ -375,6 +443,23 @@ i32 magnitude = if value < 0 { -value } else { value }
 
 A value-producing `if` requires an `else`, and every path must produce a
 compatible value.
+
+`when realm` selects a statement block at compile time:
+
+```runes
+when realm regional {
+    record_abandoned_capacity()
+} else {
+    record_released_capacity()
+}
+```
+
+Valid cases are `stack`, `dynamic`, `regional`, and `gc`. `flex` is not a case
+because specialization resolves it to a concrete effective realm. The `else`
+block is optional. Inactive blocks are discarded before name resolution and
+type checking, and no runtime condition is emitted. A flex function containing
+`when realm` currently requires direct calls; realm-polymorphic function-value
+erasure is not implemented.
 
 `return` can be bare or carry an expression:
 

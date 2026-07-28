@@ -1,0 +1,95 @@
+type Box = {
+    value: i32
+}
+
+type ModeBox = {
+    value: i32
+}
+
+type GenericBox<T> = {
+    value: T
+}
+
+method Box {
+    flex f read(self) = result: i32 {
+        result = self.value + 1
+        when realm regional {
+            result = self.value + 3
+        }
+    }
+
+    in dynamic f read(self) = result: i32 {
+        result = self.value + 2
+    }
+
+    in gc f read(self) = result: i32 {
+        result = self.value + 4
+    }
+
+    flex f keep<T>(self, value: T) = result: T {
+        result = value
+    }
+
+    in gc f keep<T>(self, value: T) = result: T {
+        result = value
+    }
+}
+
+in dynamic method ModeBox {
+    f mode(self) = result: i32 {
+        result = 20
+    }
+}
+
+in regional method ModeBox {
+    f mode(self) = result: i32 {
+        result = 30
+    }
+}
+
+in gc method ModeBox {
+    f mode(self) = result: i32 {
+        result = 40
+    }
+}
+
+method GenericBox<T> {
+    flex f get(self) = result: T {
+        result = self.value
+    }
+
+    in gc f get(self) = result: T {
+        result = self.value
+    }
+}
+
+dynamic f dynamic_read(box: Box, mode: ModeBox) = result: i32 {
+    result = box.read() + mode.mode() + box.keep(5)
+}
+
+regional f regional_read(box: Box, mode: ModeBox) = result: i32 {
+    result = box.read() + mode.mode() + box.keep(5)
+}
+
+gc f gc_read(box: Box, mode: ModeBox) = result: i32 {
+    result = box.read() + mode.mode() + box.keep(5)
+}
+
+dynamic f generic_dynamic(box: GenericBox<i32>) = result: i32 {
+    result = box.get()
+}
+
+gc f generic_gc(box: GenericBox<i32>) = result: i32 {
+    result = box.get()
+}
+
+f main() {
+    Box box = Box(value: 10)
+    ModeBox mode = ModeBox(value: 0)
+    GenericBox<i32> generic = GenericBox<i32>(value: 70)
+    print(dynamic_read(box, mode), " ",
+          regional_read(box, mode), " ",
+          gc_read(box, mode), " ",
+          generic_dynamic(generic), " ",
+          generic_gc(generic))
+}

@@ -20,6 +20,19 @@ typedef enum {
 } MemoryRealm;
 
 typedef enum {
+  EFFECTIVE_REALM_STACK,
+  EFFECTIVE_REALM_DYNAMIC,
+  EFFECTIVE_REALM_REGIONAL,
+  EFFECTIVE_REALM_GC,
+} EffectiveRealm;
+
+const char *memory_realm_name(MemoryRealm realm);
+const char *effective_realm_name(EffectiveRealm realm);
+bool resolve_effective_realm(MemoryRealm declared, EffectiveRealm inherited,
+                             EffectiveRealm *result);
+MemoryRealm effective_realm_as_memory_realm(EffectiveRealm realm);
+
+typedef enum {
   MEM_PROV_NONE = 0,
   MEM_PROV_STACK = 1u << 0,
   MEM_PROV_ARENA = 1u << 1,
@@ -109,6 +122,7 @@ typedef enum {
   AST_RETURN_STMT,
   AST_DEFER_STMT,
   AST_IF_STMT,
+  AST_REALM_BLOCK,
   AST_WHILE_STMT,
   AST_FOR_STMT,
   AST_LOOP_STMT,
@@ -188,6 +202,12 @@ typedef struct AstNode {
   struct AstNode *enclosing_function;
   Attr *decl_attrs; // complete declaration attributes, including #[cfg]
   bool codegen_reachable; // set after type checking by reachability analysis
+  bool has_overload_realm; // `in <realm>` declaration applicability
+  EffectiveRealm overload_realm;
+  uint8_t excluded_realms; // `except(...)`, one bit per EffectiveRealm
+  struct AstNode *realm_family_root;
+  struct AstNode *realm_family_fallback;
+  struct AstNode *realm_family_variants[4];
 
   union {
 
@@ -203,9 +223,12 @@ typedef struct AstNode {
     // pub f kernel_main() { ... }
     struct {
       MemoryRealm realm;
+      bool has_declared_realm;
       bool is_pub;
       bool is_main; // f main() — exempt from nesting rules
       bool is_move; // move f captures values into its environment
+      bool has_effective_realm;
+      EffectiveRealm effective_realm;
       const char *name;
       struct AstNode *generic_params; // AST_PARAM list; type is constraint
       struct AstNode *params;   // linked list of AST_PARAM; NULL if ()
@@ -348,6 +371,12 @@ typedef struct AstNode {
       struct AstNode *then_branch; // AST_BLOCK or single expression
       struct AstNode *else_branch; // AST_BLOCK | AST_IF_STMT | NULL
     } if_stmt;
+
+    struct {
+      EffectiveRealm realm;
+      struct AstNode *body;        // AST_BLOCK
+      struct AstNode *else_branch; // AST_BLOCK | NULL
+    } realm_block;
 
     struct {
       struct AstNode *condition;
@@ -617,6 +646,8 @@ AstNode *ast_new_return_stmt(Arena *arena, AstNode *value);
 AstNode *ast_new_defer_stmt(Arena *arena, AstNode *expression);
 AstNode *ast_new_if_stmt(Arena *arena, AstNode *condition, AstNode *then_branch,
                          AstNode *else_branch);
+AstNode *ast_new_realm_block(Arena *arena, EffectiveRealm realm, AstNode *body,
+                             AstNode *else_branch);
 AstNode *ast_new_while_stmt(Arena *arena, AstNode *condition, AstNode *body);
 AstNode *ast_new_for_stmt(Arena *arena, AstNode *iter, CaptureKind cap_kind,
                           const char *cap_value, const char *cap_index,

@@ -1421,7 +1421,7 @@ int main(int argc, char **argv) {
     }
 
     Codegen cg;
-    codegen_init(&cg, out, &arena);
+    codegen_init(&cg, out, &arena, target.hosted);
     bool ok = codegen_emit_c(&cg, program);
     fclose(out);
     if (!ok) {

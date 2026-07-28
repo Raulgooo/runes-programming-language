@@ -15,7 +15,7 @@ For the complete operation-level reference, see
 | `dynamic f` | raw heap | raw allocation | explicit `raw_free` |
 | `regional f` | arena | current call's arena | outer regional tree teardown |
 | `gc f` | managed | precise scoped GC heap | tracing at safepoints |
-| `flex f` | inherited | caller arena/GC, otherwise raw | inherited |
+| `flex f` | inferred | compile-time caller specialization | inherited |
 | root `f main()` | orchestration | raw fallback | may call every realm |
 
 The qualifier controls owning allocation and legal calls. It does not force all
@@ -33,7 +33,9 @@ Executable comparisons are available in
 
 The corresponding
 [`stack-alloc.runes`](../examples/negative/stack-alloc.runes) example records
-the compile-time rejection of a direct stack-realm allocation.
+the compile-time rejection of a direct stack-realm allocation, while
+[`flex-stack-alloc.runes`](../examples/negative/flex-stack-alloc.runes) proves
+an allocating flex helper cannot bypass that restriction.
 
 ### Call matrix
 
@@ -162,14 +164,19 @@ GC manages memory, not external resources.
 
 ## Flex functions
 
-A flex function inherits its caller's active allocation policy:
+A directly called flex function is specialized for its caller's effective
+allocation policy:
 
 - arena allocation when called from regional execution;
 - GC allocation and a GC frame when called from GC execution;
 - raw allocation when called from root or dynamic execution.
+- compile-time rejection when a stack specialization performs owning
+  allocation.
 
 Flex functions are useful for allocation-polymorphic helpers. Their API must
 still state the provenance and lifetime of returned reference-bearing values.
+Generic and non-generic direct calls produce deterministic realm-specialized
+code rather than branching on a runtime realm tag.
 
 ## Pointers
 
