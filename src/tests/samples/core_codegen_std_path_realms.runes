@@ -1,0 +1,33 @@
+use std.path.Path
+use std.path.PathView
+
+flex f realm_case() = result: bool {
+    path := Path.normalize(
+        PathView.from_str("/a//b/../c")
+    )
+    view := path.as_view()
+    result = view.bytes.len == 4
+    if result {
+        result = view.bytes[0] == 0x2f
+        if result {
+            result = view.bytes[3] == 0x63
+        }
+    }
+    path.deinit()
+}
+
+dynamic f dynamic_case() = result: bool {
+    result = realm_case()
+}
+
+regional f regional_case() = result: bool {
+    result = realm_case()
+}
+
+gc f gc_case() = result: bool {
+    result = realm_case()
+}
+
+dynamic f main() {
+    print(dynamic_case(), " ", regional_case(), " ", gc_case())
+}

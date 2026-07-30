@@ -1,0 +1,764 @@
+-- Portable lexical paths over arbitrary bytes.
+--
+-- PathView borrows bytes. Path owns bytes in its inferred realm. Neither type
+-- requires UTF-8. Slash is the portable lexical separator. Normalization is
+-- explicit and never consults the filesystem or resolves symlinks.
+
+use std.core.AllocationError
+use std.core.Option
+use std.core.Result
+use std.vec.Vec
+
+pub type PathError =
+    | Allocation(AllocationError)
+    | ContainsNul(usize)
+
+pub type PathComponent =
+    | Root
+    | Current
+    | Parent
+    | Normal([]const u8)
+
+pub type PathView = {
+    bytes: []const u8
+}
+
+pub type PathComponents = {
+    source: []const u8
+    position: usize
+    root_pending: bool
+}
+
+f component_equal(
+    value: []const u8,
+    first: u8,
+    second: u8
+) = result: bool {
+    result = value.len == 2
+    if result {
+        result = value[0] == first and value[1] == second
+    }
+}
+
+pub method PathComponents {
+    f next(self: *PathComponents) = result: Option<PathComponent> {
+        unsafe {
+            if self.root_pending {
+                self.root_pending = false
+                self.position = 1
+                result = Option.Some<PathComponent>(
+                    PathComponent.Root()
+                )
+                return
+            }
+
+            while self.position < self.source.len {
+                if self.source[self.position] != 0x2f {
+                    break
+                }
+                self.position = self.position + 1
+            }
+            if self.position >= self.source.len {
+                result = Option.None<PathComponent>()
+                return
+            }
+
+            usize start = self.position
+            while self.position < self.source.len {
+                if self.source[self.position] == 0x2f {
+                    break
+                }
+                self.position = self.position + 1
+            }
+            []const u8 component = const_slice(
+                self.source.ptr + start,
+                self.position - start
+            )
+            if component.len == 1 and component[0] == 0x2e {
+                result = Option.Some<PathComponent>(
+                    PathComponent.Current()
+                )
+            } else if component_equal(component, 0x2e, 0x2e) {
+                result = Option.Some<PathComponent>(
+                    PathComponent.Parent()
+                )
+            } else {
+                result = Option.Some<PathComponent>(
+                    PathComponent.Normal(component)
+                )
+            }
+        }
+    }
+}
+
+pub method PathView {
+    f from_bytes(bytes: []const u8) = result: PathView {
+        result = PathView(bytes: bytes)
+    }
+
+    f from_str(value: str) = result: PathView {
+        unsafe {
+            result = PathView(
+                bytes: const_slice(value.ptr, value.len)
+            )
+        }
+    }
+
+    f len(self) = result: usize {
+        result = self.bytes.len
+    }
+
+    f is_empty(self) = result: bool {
+        result = self.bytes.len == 0
+    }
+
+    f is_absolute(self) = result: bool {
+        result = self.bytes.len > 0
+        if result {
+            result = self.bytes[0] == 0x2f
+        }
+    }
+
+    f is_relative(self) = result: bool {
+        result = !self.is_absolute()
+    }
+
+    f contains_nul(self) = result: bool {
+        result = false
+        for (0..self.bytes.len) |index| {
+            if self.bytes[index] == 0 {
+                result = true
+                break
+            }
+        }
+    }
+
+    f components(self) = result: PathComponents {
+        bool root = self.bytes.len > 0
+        if root {
+            root = self.bytes[0] == 0x2f
+        }
+        result = PathComponents(
+            source: self.bytes,
+            position: 0,
+            root_pending: root
+        )
+    }
+
+    f file_name(self) = result: Option<[]const u8> {
+        result = Option.None<[]const u8>()
+        PathComponents cursor = self.components()
+        while true {
+            match cursor.next() {
+                Some(component) -> {
+                    match component {
+                        Normal(name) -> {
+                            result = Option.Some<[]const u8>(name)
+                        }
+                        Parent -> {
+                            result = Option.None<[]const u8>()
+                        }
+                        _ -> {}
+                    }
+                }
+                None -> {
+                    return
+                }
+            }
+        }
+    }
+
+    -- Remove the final raw lexical component and surrounding separators.
+    -- The returned view borrows the original source.
+    f parent(self) = result: Option<PathView> {
+        unsafe {
+            usize end = self.bytes.len
+            while end > 1 {
+                if self.bytes[end - 1] != 0x2f {
+                    break
+                }
+                end = end - 1
+            }
+            if end == 0 {
+                result = Option.None<PathView>()
+                return
+            }
+            if end == 1 and self.bytes[0] == 0x2f {
+                result = Option.None<PathView>()
+                return
+            }
+
+            usize start = end
+            while start > 0 {
+                if self.bytes[start - 1] == 0x2f {
+                    break
+                }
+                start = start - 1
+            }
+            usize parent_end = start
+            while parent_end > 1 {
+                if self.bytes[parent_end - 1] != 0x2f {
+                    break
+                }
+                parent_end = parent_end - 1
+            }
+            result = Option.Some<PathView>(
+                PathView(
+                    bytes: const_slice(self.bytes.ptr, parent_end)
+                )
+            )
+        }
+    }
+}
+
+pub type Path = {
+    bytes: Vec<u8>
+}
+
+pub in gc type Path = {
+    bytes: Vec<u8>
+}
+
+pub method Path {
+    flex f tnew() = outcome: Result<Path, AllocationError> {
+        match Vec<u8>.tnew() {
+            Ok(bytes) -> {
+                outcome = Result.Ok<Path, AllocationError>(
+                    Path(bytes: bytes)
+                )
+            }
+            Err(failure) -> {
+                outcome = Result.Err<Path, AllocationError>(failure)
+            }
+        }
+    }
+
+    flex f twith_capacity(
+        capacity: usize
+    ) = outcome: Result<Path, AllocationError> {
+        match Vec<u8>.twith_capacity(capacity) {
+            Ok(bytes) -> {
+                outcome = Result.Ok<Path, AllocationError>(
+                    Path(bytes: bytes)
+                )
+            }
+            Err(failure) -> {
+                outcome = Result.Err<Path, AllocationError>(failure)
+            }
+        }
+    }
+
+    flex f new() = outcome: Path {
+        match Path.tnew() {
+            Ok(value) -> {
+                outcome = value
+            }
+            Err(failure) -> {
+                failure.fail()
+                outcome = Path(
+                    bytes: Vec<u8>(
+                        data: null,
+                        length: 0,
+                        reserved: 0
+                    )
+                )
+            }
+        }
+    }
+
+    flex f with_capacity(capacity: usize) = outcome: Path {
+        match Path.twith_capacity(capacity) {
+            Ok(value) -> {
+                outcome = value
+            }
+            Err(failure) -> {
+                failure.fail()
+                outcome = Path(
+                    bytes: Vec<u8>(
+                        data: null,
+                        length: 0,
+                        reserved: 0
+                    )
+                )
+            }
+        }
+    }
+
+    flex f tfrom_view(
+        view: PathView
+    ) = outcome: Result<Path, AllocationError> {
+        match Path.twith_capacity(view.bytes.len) {
+            Ok(value) -> {
+                Path result_path = value
+                bool failed = false
+                AllocationError failure = AllocationError.OutOfMemory()
+                for (0..view.bytes.len) |index| {
+                    unsafe {
+                        match (&result_path.bytes).tpush(
+                            view.bytes[index]
+                        ) {
+                            Ok(_) -> {}
+                            Err(reason) -> {
+                                failure = reason
+                                failed = true
+                                break
+                            }
+                        }
+                    }
+                }
+                if failed {
+                    result_path.deinit()
+                    outcome = Result.Err<Path, AllocationError>(failure)
+                } else {
+                    outcome = Result.Ok<Path, AllocationError>(result_path)
+                }
+            }
+            Err(failure) -> {
+                outcome = Result.Err<Path, AllocationError>(failure)
+            }
+        }
+    }
+
+    flex f from_view(view: PathView) = outcome: Path {
+        match Path.tfrom_view(view) {
+            Ok(value) -> {
+                outcome = value
+            }
+            Err(failure) -> {
+                failure.fail()
+                outcome = Path(
+                    bytes: Vec<u8>(
+                        data: null,
+                        length: 0,
+                        reserved: 0
+                    )
+                )
+            }
+        }
+    }
+
+    flex f tfrom_str(
+        value: str
+    ) = outcome: Result<Path, AllocationError> {
+        outcome = Path.tfrom_view(PathView.from_str(value))
+    }
+
+    flex f from_str(value: str) = outcome: Path {
+        outcome = Path.from_view(PathView.from_str(value))
+    }
+
+    flex f len(self) = result: usize {
+        result = self.bytes.length
+    }
+
+    flex f is_empty(self) = result: bool {
+        result = self.bytes.length == 0
+    }
+
+    flex f as_view(self) = result: PathView {
+        result = PathView(bytes: self.bytes.as_slice())
+    }
+
+    flex f deinit(self: *Path) {
+        unsafe {
+            (&self.bytes).deinit()
+        }
+    }
+
+}
+
+method Path {
+flex f last_component_is_parent(self) = result: bool {
+    unsafe {
+        result = false
+        usize length = self.bytes.length
+        if length >= 2 {
+            *u8 pointer = unwrap(self.bytes.data)
+            usize start = length
+            while start > 0 {
+                if pointer[start - 1] == 0x2f {
+                    break
+                }
+                start = start - 1
+            }
+            result = length - start == 2
+            if result {
+                result = pointer[start] == 0x2e
+                if result {
+                    result = pointer[start + 1] == 0x2e
+                }
+            }
+        }
+    }
+}
+
+flex f tremoving_last_component(
+    self: *Path,
+    absolute: bool
+) = outcome: Result<usize, AllocationError> {
+    unsafe {
+        usize new_length = self.bytes.length
+        *u8 pointer = unwrap(self.bytes.data)
+        while new_length > 0 {
+            if pointer[new_length - 1] == 0x2f {
+                break
+            }
+            new_length = new_length - 1
+        }
+        if new_length > 0 {
+            if absolute and new_length == 1 {
+                new_length = 1
+            } else {
+                new_length = new_length - 1
+            }
+        }
+        outcome = (&self.bytes).ttruncate(new_length)
+    }
+}
+
+flex f tappend_component(
+    self: *Path,
+    component: []const u8
+) = outcome: Result<usize, AllocationError> {
+    unsafe {
+        if self.bytes.length > 0 {
+            *u8 pointer = unwrap(self.bytes.data)
+            if pointer[self.bytes.length - 1] != 0x2f {
+                match (&self.bytes).tpush(0x2f) {
+                    Ok(_) -> {}
+                    Err(failure) -> {
+                        outcome = Result.Err<usize, AllocationError>(
+                            failure
+                        )
+                        return
+                    }
+                }
+            }
+        }
+        for (0..component.len) |index| {
+            match (&self.bytes).tpush(component[index]) {
+                Ok(_) -> {}
+                Err(failure) -> {
+                    outcome = Result.Err<usize, AllocationError>(failure)
+                    return
+                }
+            }
+        }
+        outcome = Result.Ok<usize, AllocationError>(self.bytes.length)
+    }
+}
+}
+
+pub method Path {
+flex f tnormalize(
+    view: PathView
+) = outcome: Result<Path, AllocationError> {
+    match Path.twith_capacity(view.bytes.len) {
+        Ok(value) -> {
+            Path normalized = value
+            bool absolute = view.is_absolute()
+            bool failed = false
+            AllocationError failure = AllocationError.OutOfMemory()
+            if absolute {
+                unsafe {
+                    match (&normalized.bytes).tpush(0x2f) {
+                        Ok(_) -> {}
+                        Err(reason) -> {
+                            failure = reason
+                            failed = true
+                        }
+                    }
+                }
+            }
+
+            PathComponents cursor = view.components()
+            while !failed {
+                match cursor.next() {
+                    Some(component) -> {
+                        match component {
+                            Root -> {}
+                            Current -> {}
+                            Parent -> {
+                                bool has_previous =
+                                    normalized.bytes.length > 0
+                                if absolute {
+                                    has_previous =
+                                        normalized.bytes.length > 1
+                                }
+                                if has_previous and
+                                    !normalized.last_component_is_parent() {
+                                    match normalized.
+                                        tremoving_last_component(absolute) {
+                                        Ok(_) -> {}
+                                        Err(reason) -> {
+                                            failure = reason
+                                            failed = true
+                                        }
+                                    }
+                                } else if !absolute {
+                                    [2]u8 parent_storage = [0x2e, 0x2e]
+                                    []const u8 parent = parent_storage
+                                    match normalized.tappend_component(parent) {
+                                        Ok(_) -> {}
+                                        Err(reason) -> {
+                                            failure = reason
+                                            failed = true
+                                        }
+                                    }
+                                }
+                            }
+                            Normal(name) -> {
+                                match normalized.tappend_component(name) {
+                                    Ok(_) -> {}
+                                    Err(reason) -> {
+                                        failure = reason
+                                        failed = true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    None -> {
+                        break
+                    }
+                }
+            }
+
+            if !failed and normalized.bytes.length == 0 {
+                unsafe {
+                    match (&normalized.bytes).tpush(0x2e) {
+                        Ok(_) -> {}
+                        Err(reason) -> {
+                            failure = reason
+                            failed = true
+                        }
+                    }
+                }
+            }
+            if failed {
+                normalized.deinit()
+                outcome = Result.Err<Path, AllocationError>(failure)
+            } else {
+                outcome = Result.Ok<Path, AllocationError>(normalized)
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<Path, AllocationError>(failure)
+        }
+    }
+}
+
+flex f normalize(view: PathView) = outcome: Path {
+    match Path.tnormalize(view) {
+        Ok(value) -> {
+            outcome = value
+        }
+        Err(failure) -> {
+            failure.fail()
+            outcome = Path(
+                bytes: Vec<u8>(
+                    data: null,
+                    length: 0,
+                    reserved: 0
+                )
+            )
+        }
+    }
+}
+
+flex f tjoin(
+    base: PathView,
+    child: PathView
+) = outcome: Result<Path, AllocationError> {
+    if child.is_absolute() {
+        outcome = Path.tnormalize(child)
+        return
+    }
+
+    usize maximum = ~(0 as usize)
+    if child.bytes.len > maximum - base.bytes.len {
+        outcome = Result.Err<Path, AllocationError>(
+            AllocationError.CapacityOverflow()
+        )
+        return
+    }
+    usize capacity = base.bytes.len + child.bytes.len
+    if capacity < maximum {
+        capacity = capacity + 1
+    }
+
+    match Path.twith_capacity(capacity) {
+        Ok(value) -> {
+            Path combined = value
+            bool failed = false
+            AllocationError failure = AllocationError.OutOfMemory()
+            for (0..base.bytes.len) |index| {
+                unsafe {
+                    match (&combined.bytes).tpush(base.bytes[index]) {
+                        Ok(_) -> {}
+                        Err(reason) -> {
+                            failure = reason
+                            failed = true
+                            break
+                        }
+                    }
+                }
+            }
+            if !failed and combined.bytes.length > 0 {
+                unsafe {
+                    *u8 pointer = unwrap(combined.bytes.data)
+                    if pointer[combined.bytes.length - 1] != 0x2f {
+                        match (&combined.bytes).tpush(0x2f) {
+                            Ok(_) -> {}
+                            Err(reason) -> {
+                                failure = reason
+                                failed = true
+                            }
+                        }
+                    }
+                }
+            }
+            if !failed {
+                for (0..child.bytes.len) |index| {
+                    unsafe {
+                        match (&combined.bytes).tpush(
+                            child.bytes[index]
+                        ) {
+                            Ok(_) -> {}
+                            Err(reason) -> {
+                                failure = reason
+                                failed = true
+                                break
+                            }
+                        }
+                    }
+                }
+            }
+
+            if failed {
+                combined.deinit()
+                outcome = Result.Err<Path, AllocationError>(failure)
+            } else {
+                PathView combined_view = combined.as_view()
+                Result<Path, AllocationError> normalized =
+                    Path.tnormalize(combined_view)
+                combined.deinit()
+                outcome = normalized
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<Path, AllocationError>(failure)
+        }
+    }
+}
+
+flex f join(
+    base: PathView,
+    child: PathView
+) = outcome: Path {
+    match Path.tjoin(base, child) {
+        Ok(value) -> {
+            outcome = value
+        }
+        Err(failure) -> {
+            failure.fail()
+            outcome = Path(
+                bytes: Vec<u8>(
+                    data: null,
+                    length: 0,
+                    reserved: 0
+                )
+            )
+        }
+    }
+}
+}
+
+-- NUL-terminated exact platform bytes. Conversion does not normalize.
+pub type PlatformPath = {
+    bytes: Vec<u8>
+    path_length: usize
+}
+
+pub in gc type PlatformPath = {
+    bytes: Vec<u8>
+    path_length: usize
+}
+
+pub method PlatformPath {
+    flex f tfrom_view(
+        view: PathView
+    ) = outcome: Result<PlatformPath, PathError> {
+        for (0..view.bytes.len) |index| {
+            if view.bytes[index] == 0 {
+                outcome = Result.Err<PlatformPath, PathError>(
+                    PathError.ContainsNul(index)
+                )
+                return
+            }
+        }
+
+        match Path.tfrom_view(view) {
+            Ok(path) -> {
+                Path owned = path
+                unsafe {
+                    match (&owned.bytes).tpush(0) {
+                        Ok(_) -> {
+                            outcome = Result.Ok<
+                                PlatformPath,
+                                PathError
+                            >(
+                                PlatformPath(
+                                    bytes: owned.bytes,
+                                    path_length: view.bytes.len
+                                )
+                            )
+                        }
+                        Err(failure) -> {
+                            owned.deinit()
+                            outcome = Result.Err<
+                                PlatformPath,
+                                PathError
+                            >(
+                                PathError.Allocation(failure)
+                            )
+                        }
+                    }
+                }
+            }
+            Err(failure) -> {
+                outcome = Result.Err<PlatformPath, PathError>(
+                    PathError.Allocation(failure)
+                )
+            }
+        }
+    }
+
+    flex f as_view(self) = result: PathView {
+        unsafe {
+            result = PathView(
+                bytes: const_slice(
+                    unwrap(self.bytes.data),
+                    self.path_length
+                )
+            )
+        }
+    }
+
+    flex f as_bytes_with_nul(self) = result: []const u8 {
+        result = self.bytes.as_slice()
+    }
+
+    flex f as_pointer(self) = result: *const u8 {
+        unsafe {
+            result = unwrap(self.bytes.data)
+        }
+    }
+
+    flex f deinit(self: *PlatformPath) {
+        unsafe {
+            (&self.bytes).deinit()
+            self.path_length = 0
+        }
+    }
+}

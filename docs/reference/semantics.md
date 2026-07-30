@@ -166,6 +166,10 @@ Compile-time-known invalid literal, index, range, or conversion cases should be
 diagnosed before code generation. Dynamic violations trap with source location
 where the runtime contract carries one.
 
+Standard-library storage operations with an ordinary name use this terminating
+failure boundary. Their `t`-prefixed counterparts return `Result` instead; see
+the [standard-library allocation convention](standard-library.md#stdallocation).
+
 There are no wrapping/saturating arithmetic operators or unchecked indexing
 forms in v0.1.
 
@@ -260,6 +264,12 @@ An interface is a nominal method set. An implementation must match receiver,
 parameter types, result type, fallibility, and realm exactly. Missing methods,
 extra implementation methods, or signature mismatches are errors.
 
+An interface method may use either value-shaped `self` or an explicit
+non-null pointer receiver such as `self: *Writer`. A concrete implementation
+of the pointer form must use `self: *Concrete` with the same pointer
+mutability/nullability. This enables statically dispatched mutation without
+turning the interface value into a runtime object.
+
 Concrete-to-interface conversion creates a runtime data/vtable pair. The data
 reference retains the concrete value's provenance, so an interface cannot be
 used to smuggle stack- or arena-backed data into a longer-lived location.
@@ -284,6 +294,13 @@ Each used concrete instantiation is monomorphized before resolution and type
 checking. Arity mismatches, conflicting inference, ambiguous inference,
 constraint failures, type arguments on nongeneric declarations, and missing
 required arguments are compile-time errors.
+
+An imported generic may be instantiated with a public concrete type declared
+by the consuming module. The compiler generates the required qualified type
+binding; `std.text.split_once` exercises this with `Option<TextSplit>`.
+Using a private nested-module type as an argument to a generic imported from a
+different module is not implemented yet. Root-module private concrete
+arguments continue to work.
 
 There are no const generics, higher-kinded types, specialization, variance, or
 runtime generic type erasure.

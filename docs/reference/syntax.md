@@ -345,6 +345,10 @@ interface Readable {
     f read(self) = result: i32
 }
 
+interface Writer {
+    flex f write(self: *Writer, bytes: []const u8) = result: usize
+}
+
 method Counter {
     f read(self) = result: i32 { result = self.value }
     f set(self: *Counter, value: i32) {
@@ -360,7 +364,41 @@ method Readable for Counter {
 The first method block adds inherent methods. The `Interface for Concrete`
 form supplies an interface implementation. A generic owner is written
 `method Box<T>`, and individual methods may introduce additional type
-parameters.
+parameters. An interface receiver may be untyped `self` or an explicit
+non-null pointer to that interface (`self: *Writer`). Implementations of the
+pointer form substitute the concrete owner (`self: *Concrete`) and must
+preserve pointer mutability and nullability.
+
+An inherent function whose first parameter is `self` is an instance method.
+An inherent function with no `self` parameter is an associated method:
+
+```runes
+method Box<T> {
+    f new(value: T) = result: Box<T> {
+        result = Box<T>(value: value)
+    }
+
+    f get(self) = result: T {
+        result = self.value
+    }
+}
+
+Box<i32> value = Box<i32>.new(42)
+i32 answer = value.get()
+```
+
+Generic owner arguments precede the dot; method-specific arguments follow the
+method name: `Factory<Key>.convert<Value>(input)`. Owner arguments can also be
+inferred from associated-method arguments when unambiguous, so `Box.new(42)`
+is accepted. A no-argument generic constructor normally needs the explicit
+form. Associated methods cannot be invoked through a value, instance methods
+cannot be invoked through a type, and `self` must be the first parameter.
+Associated methods do not currently satisfy interface requirements.
+
+For an associated `flex` method, dispatch uses the caller's effective
+execution realm because no receiver exists yet. For instance methods on
+realm-family values, dispatch continues to use the receiver's persistent owner
+realm.
 
 Method bodies use the ordinary function syntax and may use realm qualifiers.
 Method visibility parsing exists, but enforcement remains incomplete; see

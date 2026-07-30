@@ -197,8 +197,9 @@ them Linux syscall numbers or the future kernel's driver protocol.
 6. Bind the Linux backend through private conditional imports. (done)
 7. Add a fake backend for deterministic portable-I/O unit tests. (done)
 8. Add `std.os.runes` when the Runes OS userspace ABI exists.
-9. Add buffering, formatting, files, paths, networking, and async only after
-   the byte-level contract is stable.
+9. Add buffering, formatting, lexical paths, files, networking, and async only
+   after the byte-level contract is stable. (buffering, formatting, and lexical
+   paths done; files and later layers pending)
 
 ## Acceptance gates
 

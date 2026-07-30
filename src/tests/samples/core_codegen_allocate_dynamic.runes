@@ -1,0 +1,55 @@
+use std.allocation.allocate
+use std.allocation.allocate_array
+use std.allocation.publish_initialized
+use std.allocation.tallocate
+use std.allocation.release_array
+use std.allocation.resize_array
+
+type Cell = {
+    value: i32
+}
+
+dynamic f allocate_cell() = result: i32 {
+    match tallocate<Cell>(Cell(value: 77)) {
+        Ok(pointer) -> {
+            unsafe {
+                result = pointer.value
+            }
+            release_array<Cell>(pointer)
+        }
+        Err(_) -> {
+            result = -1
+        }
+    }
+}
+
+dynamic f allocate_cell_ordinary() = result: i32 {
+    pointer := allocate<Cell>(Cell(value: 88))
+    unsafe {
+        result = pointer.value
+    }
+    release_array<Cell>(pointer)
+}
+
+dynamic f ordinary_array_operations() = result: bool {
+    pointer := allocate_array<i32>(2)
+    unsafe {
+        pointer[0] = 91
+    }
+    usize initialized = publish_initialized<i32>(pointer, 0, 1, 2)
+    replacement := resize_array<i32>(pointer, initialized, 2, 4)
+    unsafe {
+        result = replacement[0] == 91
+    }
+    release_array<i32>(replacement)
+}
+
+f main() {
+    print(
+        allocate_cell(),
+        " ",
+        allocate_cell_ordinary(),
+        " ",
+        ordinary_array_operations()
+    )
+}

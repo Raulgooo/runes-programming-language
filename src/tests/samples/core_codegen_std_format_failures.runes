@@ -1,0 +1,86 @@
+use std.core.Result
+use std.format.FormatError
+use std.format.IntegerFormat
+use std.format.TextFormat
+use std.format.append_str
+use std.format.append_u64
+use std.format.write_str
+use std.string.String
+
+#[safe]
+extern f runes_storage_debug_fail_after(count: usize)
+
+#[safe]
+extern f runes_storage_debug_clear_failure()
+
+#[safe]
+extern f runes_str_view(value: *const u8, length: usize) = result: str
+
+dynamic f integer_growth_failure() = result: bool {
+    value := String.from_str("keep")
+    runes_storage_debug_fail_after(0)
+    result = match append_u64(
+        &value,
+        18446744073709551615,
+        IntegerFormat.decimal()
+    ) {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            Allocation(_) -> value.as_str() == "keep",
+            _ -> false,
+        },
+    }
+    runes_storage_debug_clear_failure()
+    value.deinit()
+}
+
+dynamic f text_growth_failure() = result: bool {
+    value := String.from_str("keep")
+    runes_storage_debug_fail_after(0)
+    result = match append_str(
+        &value,
+        "a long multibyte value é🙂",
+        TextFormat.standard()
+    ) {
+        Ok(_) -> false,
+        Err(failure) -> match failure {
+            Allocation(_) -> value.as_str() == "keep",
+            _ -> false,
+        },
+    }
+    runes_storage_debug_clear_failure()
+    value.deinit()
+}
+
+f invalid_utf8_is_rejected() = result: bool {
+    [2]u8 malformed = [0xc3, 0x28]
+    [8]u8 output = [
+        0xaa, 0xaa, 0xaa, 0xaa,
+        0xaa, 0xaa, 0xaa, 0xaa
+    ]
+    []u8 destination = output
+    unsafe {
+        str invalid = runes_str_view(&malformed[0], 2)
+        result = match write_str(
+            destination,
+            invalid,
+            TextFormat.standard()
+        ) {
+            Ok(_) -> false,
+            Err(failure) -> match failure {
+                InvalidUtf8 -> output[0] == 0xaa,
+                _ -> false,
+            },
+        }
+    }
+}
+
+f main() {
+    print(
+        integer_growth_failure(),
+        " ",
+        text_growth_failure(),
+        " ",
+        invalid_utf8_is_rejected()
+    )
+}

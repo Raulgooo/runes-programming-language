@@ -15,6 +15,14 @@ tested on Linux x86-64 with GCC and Clang.
 | Learn Runes progressively | [Learn Runes handbook](guide/README.md) |
 | Look up exact syntax or semantics | [Complete language reference](reference/README.md) |
 | See the standard library that works today | [Current standard-library reference](reference/standard-library.md) |
+| Work with borrowed UTF-8 text | [Borrowed text reference](reference/text.md) |
+| Own and grow realm-aware UTF-8 text | [`String` reference](reference/string.md) |
+| Format typed values into buffers, owning text, or writers | [Formatting reference](reference/format.md) |
+| Parse integers, booleans, and Unicode scalars | [Parsing reference](reference/parse.md) |
+| Read, write, buffer, and frame byte streams | [I/O reference](reference/io.md) |
+| Manipulate portable byte-preserving lexical paths | [Path reference](reference/path.md) |
+| Open, read, write, inspect, and safely close hosted files | [Filesystem reference](reference/fs.md) |
+| Use or implement an owning growable collection | [`Vec<T>` reference](reference/vec.md) |
 | Read the normative language rules | [Runes v0.1 specification](specv0_1.md) |
 | Configure modules and a `runes.toml` project | [Projects and modules](projects-and-modules.md) |
 | Understand what is implemented or incomplete | [Implementation status](reference/implementation-status.md) |
@@ -37,6 +45,7 @@ The beginner-first handbook is designed to be read in order:
 7. [Pointers, unsafe code, FFI, and input](guide/07-unsafe-ffi-and-io.md)
 8. [Language and tooling quick reference](guide/08-reference.md)
 9. [Glossary](guide/09-glossary.md)
+10. [Using the current standard library](guide/10-using-the-standard-library.md)
 
 Use the handbook to learn concepts and idioms. Use the complete reference when
 you need every accepted form, restriction, or runtime rule.
@@ -50,7 +59,15 @@ you need every accepted form, restriction, or runtime rule.
 | Realm-sensitive `alloc()`, ownership, cleanup, and raw allocation | [Allocation](reference/allocation.md) |
 | Realms, provenance, lifetimes, promotion, GC, pointers, and unsafe operations | [Memory and unsafe](reference/memory-and-unsafe.md) |
 | Modules, projects, visibility, FFI, ABI attributes, builtins, and commands | [Modules, FFI, and tooling](reference/modules-ffi-tooling.md) |
-| Implemented `std.core` and `std.bytes` APIs | [Standard library](reference/standard-library.md) |
+| Implemented standard-library APIs | [Standard library](reference/standard-library.md) |
+| Borrowed UTF-8 text API | [Borrowed text](reference/text.md) |
+| Owning growable UTF-8 text API | [`String`](reference/string.md) |
+| Typed integer formatting API | [Formatting](reference/format.md) |
+| Allocation-free typed parsing API | [Parsing](reference/parse.md) |
+| Readers, writers, buffering, lines, and standard streams | [I/O](reference/io.md) |
+| Borrowed/owning lexical paths and syscall conversion | [Paths](reference/path.md) |
+| Owning files, open policy, metadata, and path operations | [Filesystem](reference/fs.md) |
+| Complete `Vec<T>` collection contract | [`Vec<T>`](reference/vec.md) |
 | Backend, platform, visibility, library, and tooling limitations | [Implementation status](reference/implementation-status.md) |
 
 The [feature coverage matrix](feature-matrix.md) maps language features to

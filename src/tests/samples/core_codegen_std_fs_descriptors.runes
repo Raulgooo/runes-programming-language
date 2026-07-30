@@ -1,0 +1,62 @@
+use std.fs
+use std.fs.OpenOptions
+use std.path.PathView
+
+#[safe]
+#[link_name("runes_test_open_fd_count")]
+extern f open_fd_count() = result: i32
+
+dynamic f main() {
+    bool ok = true
+    PathView path = PathView.from_str("descriptor-test.bin")
+
+    match fs.open(path, OpenOptions.create()) {
+        Ok(value) -> {
+            file := value
+            match file.set_length(1048576) {
+                Ok(length) -> {
+                    if length != 1048576 { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.metadata() {
+                Ok(info) -> {
+                    if info.length != 1048576 { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.close() {
+                Ok(closed) -> {
+                    if !closed { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    i32 before = open_fd_count()
+    if before < 0 { ok = false }
+    for (0..128) |_| {
+        match fs.open(path, OpenOptions.read_only()) {
+            Ok(value) -> {
+                file := value
+                match file.close() {
+                    Ok(closed) -> {
+                        if !closed { ok = false }
+                    }
+                    Err(_) -> { ok = false }
+                }
+            }
+            Err(_) -> { ok = false }
+        }
+    }
+    i32 after = open_fd_count()
+    if after != before { ok = false }
+
+    match fs.remove_file(path) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    print(ok)
+}

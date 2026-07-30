@@ -19,6 +19,9 @@ HOME="$TEMP" XDG_CACHE_HOME="$TEMP/cache" tree-sitter parse --quiet \
 HOME="$TEMP" XDG_CACHE_HOME="$TEMP/cache" tree-sitter parse --quiet \
   --config-path "$TEMP/config.json" \
   "$ROOT/src/std/io.runes"
+HOME="$TEMP" XDG_CACHE_HOME="$TEMP/cache" tree-sitter parse --quiet \
+  --config-path "$TEMP/config.json" \
+  "$ROOT/src/tests/samples/core_codegen_associated_methods.runes"
 HOME="$TEMP" XDG_CACHE_HOME="$TEMP/cache" tree-sitter query --quiet \
   --config-path "$TEMP/config.json" \
   "$ROOT/editors/zed/languages/runes/highlights.scm" \

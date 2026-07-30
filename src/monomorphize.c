@@ -179,6 +179,7 @@ typedef struct {
   bool has_current_effective_realm;
   EffectiveRealm current_effective_realm;
   bool cloning_callee;
+  bool cloning_flex;
   bool cloning_realm_overload;
   bool had_error;
   int error_count;
@@ -207,9 +208,12 @@ static bool is_realm_type_member(Monomorphizer *mono, AstNode *node);
 static bool is_realm_type_method_block(Monomorphizer *mono, AstNode *node);
 static bool is_realm_signature_template(Monomorphizer *mono, AstNode *node);
 static bool type_contains_realm_family(Monomorphizer *mono, AstNode *type);
+static AstNode *realm_method_representative(RealmMethodFamily *family);
 static const char *instantiate_realm_type(
     Monomorphizer *mono, RealmTypeFamily *family, EffectiveRealm realm,
     AstNode *arguments, const AstNode *site);
+static bool node_has_realm_method_call(Monomorphizer *mono, AstNode *node,
+                                       int depth);
 
 static bool node_requires_static_realm(Monomorphizer *mono, AstNode *node,
                                        int depth) {
@@ -230,8 +234,10 @@ static bool node_requires_static_realm(Monomorphizer *mono, AstNode *node,
           mono, callee->as.field.target->as.identifier.name,
           callee->as.field.field);
     if (template &&
-        node_requires_static_realm(
-            mono, template->node->as.func_decl.body, depth + 1))
+        (node_requires_static_realm(
+             mono, template->node->as.func_decl.body, depth + 1) ||
+         node_has_realm_method_call(
+             mono, template->node->as.func_decl.body, depth + 1)))
       return true;
     for (AstNode *argument = node->as.call.args; argument;
          argument = argument->next)
@@ -276,9 +282,96 @@ static bool node_requires_static_realm(Monomorphizer *mono, AstNode *node,
   case AST_LOOP_STMT:
     return node_requires_static_realm(mono, node->as.loop_stmt.body,
                                       depth + 1);
+  case AST_MATCH_STMT:
+    if (node_requires_static_realm(
+            mono, node->as.match_stmt.subject, depth + 1))
+      return true;
+    for (AstNode *arm = node->as.match_stmt.arms; arm; arm = arm->next)
+      if (node_requires_static_realm(mono, arm, depth + 1))
+        return true;
+    return false;
+  case AST_MATCH_ARM:
+    return node_requires_static_realm(
+               mono, node->as.match_arm.guard, depth + 1) ||
+           node_requires_static_realm(
+               mono, node->as.match_arm.body, depth + 1);
   case AST_UNSAFE_BLOCK:
     return node_requires_static_realm(mono, node->as.unsafe_block.body,
                                       depth + 1);
+  default:
+    return false;
+  }
+}
+
+static bool node_has_realm_method_call(Monomorphizer *mono, AstNode *node,
+                                       int depth) {
+  if (!node || depth > 64)
+    return false;
+  if (node->kind == AST_CALL_EXPR) {
+    for (RealmMethodPlan *plan = mono->realm_method_plans; plan;
+         plan = plan->next)
+      if (plan->call == node)
+        return true;
+    for (AstNode *argument = node->as.call.args; argument;
+         argument = argument->next)
+      if (node_has_realm_method_call(mono, argument, depth + 1))
+        return true;
+    return false;
+  }
+  switch (node->kind) {
+  case AST_FUNC_DECL:
+    return node_has_realm_method_call(
+        mono, node->as.func_decl.body, depth + 1);
+  case AST_BLOCK:
+    for (AstNode *statement = node->as.block.statements; statement;
+         statement = statement->next)
+      if (node_has_realm_method_call(mono, statement, depth + 1))
+        return true;
+    return false;
+  case AST_VAR_DECL:
+    return node_has_realm_method_call(
+        mono, node->as.var_decl.init, depth + 1);
+  case AST_RETURN_STMT:
+    return node_has_realm_method_call(
+        mono, node->as.return_stmt.value, depth + 1);
+  case AST_DEFER_STMT:
+    return node_has_realm_method_call(
+        mono, node->as.defer_stmt.expression, depth + 1);
+  case AST_ASSIGN:
+    return node_has_realm_method_call(
+               mono, node->as.assign.target, depth + 1) ||
+           node_has_realm_method_call(
+               mono, node->as.assign.value, depth + 1);
+  case AST_IF_STMT:
+    return node_has_realm_method_call(
+               mono, node->as.if_stmt.then_branch, depth + 1) ||
+           node_has_realm_method_call(
+               mono, node->as.if_stmt.else_branch, depth + 1);
+  case AST_WHILE_STMT:
+    return node_has_realm_method_call(
+        mono, node->as.while_stmt.body, depth + 1);
+  case AST_FOR_STMT:
+    return node_has_realm_method_call(
+        mono, node->as.for_stmt.body, depth + 1);
+  case AST_LOOP_STMT:
+    return node_has_realm_method_call(
+        mono, node->as.loop_stmt.body, depth + 1);
+  case AST_MATCH_STMT:
+    if (node_has_realm_method_call(
+            mono, node->as.match_stmt.subject, depth + 1))
+      return true;
+    for (AstNode *arm = node->as.match_stmt.arms; arm; arm = arm->next)
+      if (node_has_realm_method_call(mono, arm, depth + 1))
+        return true;
+    return false;
+  case AST_MATCH_ARM:
+    return node_has_realm_method_call(
+               mono, node->as.match_arm.guard, depth + 1) ||
+           node_has_realm_method_call(
+               mono, node->as.match_arm.body, depth + 1);
+  case AST_UNSAFE_BLOCK:
+    return node_has_realm_method_call(
+        mono, node->as.unsafe_block.body, depth + 1);
   default:
     return false;
   }
@@ -291,6 +384,21 @@ static ImportBinding *find_import(Monomorphizer *mono, const char *name) {
         (!binding->scope_module && !mono->current_module) ||
         (binding->scope_module && mono->current_module &&
          strcmp(binding->scope_module, mono->current_module) == 0);
+    if (same_scope && strcmp(binding->local_name, name) == 0)
+      return binding;
+  }
+  return NULL;
+}
+
+static ImportBinding *find_import_in_scope(Monomorphizer *mono,
+                                           const char *scope_module,
+                                           const char *name) {
+  for (ImportBinding *binding = mono->imports; binding;
+       binding = binding->next) {
+    bool same_scope =
+        (!binding->scope_module && !scope_module) ||
+        (binding->scope_module && scope_module &&
+         strcmp(binding->scope_module, scope_module) == 0);
     if (same_scope && strcmp(binding->local_name, name) == 0)
       return binding;
   }
@@ -371,6 +479,12 @@ static AstNode *clone_concrete_declarations(Monomorphizer *mono,
   AstNode **tail = &head;
   for (; node; node = node->next) {
     if (is_template_declaration(node) ||
+        (node->kind == AST_FUNC_DECL &&
+         node->as.func_decl.realm == REALM_FLEX &&
+         (node_requires_static_realm(
+              mono, node->as.func_decl.body, 0) ||
+          node_has_realm_method_call(
+              mono, node->as.func_decl.body, 0))) ||
         is_realm_function_member(mono, node) ||
         is_realm_type_member(mono, node) ||
         is_realm_type_method_block(mono, node) ||
@@ -427,6 +541,10 @@ static const char *declaration_name(AstNode *node) {
     return node->as.type_decl.name;
   if (node->kind == AST_VARIANT_DECL)
     return node->as.variant_decl.name;
+  if (node->kind == AST_INTERFACE_DECL)
+    return node->as.interface_decl.name;
+  if (node->kind == AST_ERROR_DECL)
+    return node->as.error_decl.name;
   return NULL;
 }
 
@@ -797,6 +915,23 @@ static AstNode *resolve_import_target(Monomorphizer *mono, AstNode *path,
   return current;
 }
 
+static const char *find_declaration_module(AstNode *declarations,
+                                           AstNode *target,
+                                           const char *current_module) {
+  for (AstNode *node = declarations; node; node = node->next) {
+    if (node == target)
+      return current_module;
+    if (node->kind == AST_MOD_DECL) {
+      const char *module =
+          find_declaration_module(node->as.mod_decl.declarations, target,
+                                  node->as.mod_decl.name);
+      if (module || target == node)
+        return module;
+    }
+  }
+  return NULL;
+}
+
 static void collect_imports(Monomorphizer *mono, AstNode *declarations,
                             const char *scope_module) {
   for (AstNode *node = declarations; node; node = node->next) {
@@ -818,6 +953,9 @@ static void collect_imports(Monomorphizer *mono, AstNode *declarations,
       binding->target_decl = target;
       binding->target_module =
           target->kind == AST_MOD_DECL ? target->as.mod_decl.name : NULL;
+      if (!binding->target_module)
+        binding->target_module = find_declaration_module(
+            mono->program->as.program.declarations, target, NULL);
       GenericTemplate *template = template_for_node(mono, target);
       if (template)
         binding->target_module = template->module;
@@ -845,17 +983,31 @@ static bool append_text(char *buffer, size_t capacity, size_t *used,
   return true;
 }
 
-static bool encode_type(AstNode *type, char *buffer, size_t capacity,
-                        size_t *used) {
+static bool encode_type(Monomorphizer *mono, AstNode *type, char *buffer,
+                        size_t capacity, size_t *used) {
   if (!type || type->kind != AST_TYPE_EXPR)
     return false;
   switch (type->as.type_expr.kind) {
-  case TYPE_NAMED:
+  case TYPE_NAMED: {
+    const char *name = type->as.type_expr.name;
+    for (AstNode *generated = mono->generated_head; generated;
+         generated = generated->next) {
+      if (generated->kind == AST_USE_DECL &&
+          generated->as.use_decl.alias &&
+          strcmp(generated->as.use_decl.alias, name) == 0 &&
+          generated->as.use_decl.target_decl) {
+        const char *target_name =
+            declaration_name(generated->as.use_decl.target_decl);
+        if (target_name)
+          name = target_name;
+        break;
+      }
+    }
     if (!append_text(buffer, capacity, used, "n%zu_%s",
-                     strlen(type->as.type_expr.name),
-                     type->as.type_expr.name))
+                     strlen(name), name))
       return false;
     break;
+  }
   case TYPE_QUALIFIED:
     if (!append_text(buffer, capacity, used, "q%zu_%s%zu_%s",
                      strlen(type->as.type_expr.module),
@@ -868,7 +1020,7 @@ static bool encode_type(AstNode *type, char *buffer, size_t capacity,
                      type->as.type_expr.nullable
                          ? (type->as.type_expr.readonly ? "k" : "o")
                          : (type->as.type_expr.readonly ? "c" : "p")) ||
-        !encode_type(type->as.type_expr.inner, buffer, capacity, used))
+        !encode_type(mono, type->as.type_expr.inner, buffer, capacity, used))
       return false;
     break;
   case TYPE_ARRAY:
@@ -876,19 +1028,19 @@ static bool encode_type(AstNode *type, char *buffer, size_t capacity,
         type->as.type_expr.size->kind != AST_INT_LITERAL ||
         !append_text(buffer, capacity, used, "a%llu_",
                      type->as.type_expr.size->as.int_literal.value) ||
-        !encode_type(type->as.type_expr.inner, buffer, capacity, used))
+        !encode_type(mono, type->as.type_expr.inner, buffer, capacity, used))
       return false;
     break;
   case TYPE_SLICE:
     if (!append_text(buffer, capacity, used,
                      type->as.type_expr.readonly ? "r" : "s") ||
-        !encode_type(type->as.type_expr.inner, buffer, capacity, used))
+        !encode_type(mono, type->as.type_expr.inner, buffer, capacity, used))
       return false;
     break;
   case TYPE_FALLIBLE:
     if (!append_text(buffer, capacity, used, "f") ||
         (type->as.type_expr.inner &&
-         !encode_type(type->as.type_expr.inner, buffer, capacity, used)))
+         !encode_type(mono, type->as.type_expr.inner, buffer, capacity, used)))
       return false;
     break;
   case TYPE_TUPLE: {
@@ -900,7 +1052,7 @@ static bool encode_type(AstNode *type, char *buffer, size_t capacity,
       return false;
     for (AstNode *element = type->as.type_expr.elems; element;
          element = element->next)
-      if (!encode_type(element, buffer, capacity, used))
+      if (!encode_type(mono, element, buffer, capacity, used))
         return false;
     break;
   }
@@ -914,10 +1066,10 @@ static bool encode_type(AstNode *type, char *buffer, size_t capacity,
       return false;
     for (AstNode *parameter = type->as.type_expr.elems; parameter;
          parameter = parameter->next)
-      if (!encode_type(parameter, buffer, capacity, used))
+      if (!encode_type(mono, parameter, buffer, capacity, used))
         return false;
     if (!append_text(buffer, capacity, used, "r") ||
-        !encode_type(type->as.type_expr.inner, buffer, capacity, used))
+        !encode_type(mono, type->as.type_expr.inner, buffer, capacity, used))
       return false;
     break;
   }
@@ -927,7 +1079,7 @@ static bool encode_type(AstNode *type, char *buffer, size_t capacity,
       return false;
     for (AstNode *argument = type->as.type_expr.type_args; argument;
          argument = argument->next)
-      if (!encode_type(argument, buffer, capacity, used))
+      if (!encode_type(mono, argument, buffer, capacity, used))
         return false;
     if (!append_text(buffer, capacity, used, "e"))
       return false;
@@ -951,7 +1103,7 @@ static const char *specialization_name(Monomorphizer *mono, AstNode *template,
                    base))
     return NULL;
   for (AstNode *argument = arguments; argument; argument = argument->next)
-    if (!encode_type(argument, buffer, sizeof(buffer), &used))
+    if (!encode_type(mono, argument, buffer, sizeof(buffer), &used))
       return NULL;
   if (template->kind == AST_FUNC_DECL &&
       template->as.func_decl.realm == REALM_FLEX &&
@@ -1042,7 +1194,7 @@ static const char *realm_function_specialization_name(
       !append_text(buffer, sizeof(buffer), &used, "__"))
     return NULL;
   for (AstNode *argument = arguments; argument; argument = argument->next)
-    if (!encode_type(argument, buffer, sizeof(buffer), &used))
+    if (!encode_type(mono, argument, buffer, sizeof(buffer), &used))
       return NULL;
   char *name = arena_alloc(mono->arena, used + 1);
   memcpy(name, buffer, used + 1);
@@ -1106,7 +1258,7 @@ static const char *realm_type_specialization_name(
   if (arguments && !append_text(buffer, sizeof(buffer), &used, "__"))
     return NULL;
   for (AstNode *argument = arguments; argument; argument = argument->next)
-    if (!encode_type(argument, buffer, sizeof(buffer), &used))
+    if (!encode_type(mono, argument, buffer, sizeof(buffer), &used))
       return NULL;
   char *name = arena_alloc(mono->arena, used + 1);
   memcpy(name, buffer, used + 1);
@@ -1134,11 +1286,13 @@ static bool is_generic_parameter(AstNode *parameters, const char *name) {
   return false;
 }
 
-static bool same_inferred_type(AstNode *left, AstNode *right) {
+static bool same_inferred_type(Monomorphizer *mono, AstNode *left,
+                               AstNode *right) {
   char left_name[4096], right_name[4096];
   size_t left_used = 0, right_used = 0;
-  return encode_type(left, left_name, sizeof(left_name), &left_used) &&
-         encode_type(right, right_name, sizeof(right_name), &right_used) &&
+  return encode_type(mono, left, left_name, sizeof(left_name), &left_used) &&
+         encode_type(mono, right, right_name, sizeof(right_name),
+                     &right_used) &&
          left_used == right_used &&
          memcmp(left_name, right_name, left_used) == 0;
 }
@@ -1154,7 +1308,7 @@ static bool infer_unify(Monomorphizer *mono, AstNode *parameters,
       is_generic_parameter(parameters, formal->as.type_expr.name)) {
     Binding *existing = find_binding(*bindings, formal->as.type_expr.name);
     if (existing) {
-      if (same_inferred_type(existing->type, actual))
+      if (same_inferred_type(mono, existing->type, actual))
         return true;
       mono_error(mono, site, "conflicting inferred types for '%s'",
                  formal->as.type_expr.name);
@@ -1283,8 +1437,41 @@ static AstNode *infer_expression_type(Monomorphizer *mono, AstNode *expression,
   if (!expression)
     return NULL;
   switch (expression->kind) {
-  case AST_IDENTIFIER:
-    return local_type(locals, expression->as.identifier.name);
+  case AST_IDENTIFIER: {
+    AstNode *local = local_type(locals, expression->as.identifier.name);
+    if (local)
+      return local;
+    AstNode *declaration = expression->resolved_decl;
+    ImportBinding *import =
+        find_import(mono, expression->as.identifier.name);
+    if (!declaration && import)
+      declaration = import->target_decl;
+    if (!declaration) {
+      for (AstNode *candidate =
+               module_declarations(mono, mono->current_module);
+           candidate; candidate = candidate->next) {
+        if ((candidate->kind == AST_TYPE_DECL ||
+             candidate->kind == AST_VARIANT_DECL) &&
+            strcmp(declaration_name(candidate),
+                   expression->as.identifier.name) == 0) {
+          declaration = candidate;
+          break;
+        }
+      }
+    }
+    if (declaration &&
+        (declaration->kind == AST_TYPE_DECL ||
+         declaration->kind == AST_VARIANT_DECL)) {
+      AstNode *type =
+          ast_new_type_named(mono->arena, expression->as.identifier.name);
+      type->line = expression->line;
+      type->col = expression->col;
+      return type;
+    }
+    return NULL;
+  }
+  case AST_TYPE_EXPR:
+    return expression;
   case AST_INT_LITERAL:
     return inferred_primitive(mono, expression, "i32");
   case AST_FLOAT_LITERAL:
@@ -1354,6 +1541,55 @@ static AstNode *infer_expression_type(Monomorphizer *mono, AstNode *expression,
   }
   case AST_CALL_EXPR: {
     AstNode *callee = expression->as.call.callee;
+    /*
+     * Associated calls on realm-owned types look like type constructors.
+     * Once inference has recorded a method plan, its declared return type
+     * takes precedence over the owner's realm-type family. Without this,
+     * `String.from_bytes(...)` is incorrectly inferred as returning String
+     * instead of Result<String, StringError>.
+     */
+    if (callee->kind == AST_FIELD_EXPR) {
+      for (RealmMethodPlan *plan = mono->realm_method_plans; plan;
+           plan = plan->next) {
+        if (plan->call != expression)
+          continue;
+        AstNode *method = realm_method_representative(plan->family);
+        if (!method)
+          return NULL;
+        Binding *bindings = NULL;
+        GenericTemplate *owner_template =
+            plan->owner_type->as.type_expr.kind == TYPE_QUALIFIED
+                ? find_qualified_template(
+                      mono, plan->owner_type->as.type_expr.module,
+                      plan->owner_type->as.type_expr.name, false, true)
+                : find_template(mono, plan->owner_type->as.type_expr.name,
+                                false, true);
+        if (owner_template) {
+          AstNode *parameter = generic_params(owner_template->node);
+          AstNode *argument = plan->owner_type->as.type_expr.type_args;
+          for (; parameter && argument;
+               parameter = parameter->next, argument = argument->next) {
+            Binding *binding = arena_alloc(mono->arena, sizeof(*binding));
+            binding->name = parameter->as.param.name;
+            binding->type = argument;
+            binding->next = bindings;
+            bindings = binding;
+          }
+        }
+        AstNode *parameter = method->as.func_decl.generic_params;
+        AstNode *argument = plan->method_arguments;
+        for (; parameter && argument;
+             parameter = parameter->next, argument = argument->next) {
+          Binding *binding = arena_alloc(mono->arena, sizeof(*binding));
+          binding->name = parameter->as.param.name;
+          binding->type = argument;
+          binding->next = bindings;
+          bindings = binding;
+        }
+        return substitute_inferred_type(
+            mono, method->as.func_decl.ret_type, bindings);
+      }
+    }
     RealmTypeFamily *type_family = NULL;
     if (callee->kind == AST_IDENTIFIER) {
       type_family =
@@ -1394,6 +1630,46 @@ static AstNode *infer_expression_type(Monomorphizer *mono, AstNode *expression,
             mono, plan->template->node->as.func_decl.ret_type,
             plan->bindings);
     if (callee->kind == AST_FIELD_EXPR) {
+      for (RealmMethodPlan *plan = mono->realm_method_plans; plan;
+           plan = plan->next) {
+        if (plan->call != expression)
+          continue;
+        AstNode *method = realm_method_representative(plan->family);
+        if (!method)
+          return NULL;
+        Binding *bindings = NULL;
+        GenericTemplate *owner_template =
+            plan->owner_type->as.type_expr.kind == TYPE_QUALIFIED
+                ? find_qualified_template(
+                      mono, plan->owner_type->as.type_expr.module,
+                      plan->owner_type->as.type_expr.name, false, true)
+                : find_template(mono, plan->owner_type->as.type_expr.name,
+                                false, true);
+        if (owner_template) {
+          AstNode *parameter = generic_params(owner_template->node);
+          AstNode *argument = plan->owner_type->as.type_expr.type_args;
+          for (; parameter && argument;
+               parameter = parameter->next, argument = argument->next) {
+            Binding *binding = arena_alloc(mono->arena, sizeof(*binding));
+            binding->name = parameter->as.param.name;
+            binding->type = argument;
+            binding->next = bindings;
+            bindings = binding;
+          }
+        }
+        AstNode *parameter = method->as.func_decl.generic_params;
+        AstNode *argument = plan->method_arguments;
+        for (; parameter && argument;
+             parameter = parameter->next, argument = argument->next) {
+          Binding *binding = arena_alloc(mono->arena, sizeof(*binding));
+          binding->name = parameter->as.param.name;
+          binding->type = argument;
+          binding->next = bindings;
+          bindings = binding;
+        }
+        return substitute_inferred_type(
+            mono, method->as.func_decl.ret_type, bindings);
+      }
       for (GenericMethodPlan *plan = mono->method_plans; plan;
            plan = plan->next) {
         if (plan->call != expression)
@@ -1430,6 +1706,59 @@ static AstNode *infer_expression_type(Monomorphizer *mono, AstNode *expression,
         }
         return substitute_inferred_type(
             mono, plan->method->as.func_decl.ret_type, bindings);
+      }
+      AstNode *owner_type =
+          infer_expression_type(mono, callee->as.field.target, locals);
+      if (owner_type && owner_type->kind == AST_TYPE_EXPR &&
+          (owner_type->as.type_expr.kind == TYPE_NAMED ||
+           owner_type->as.type_expr.kind == TYPE_QUALIFIED)) {
+        const char *owner_name = owner_type->as.type_expr.name;
+        const char *module =
+            owner_type->as.type_expr.kind == TYPE_QUALIFIED
+                ? owner_type->as.type_expr.module
+                : mono->current_module;
+        GenericTemplate *owner_template =
+            owner_type->as.type_expr.kind == TYPE_QUALIFIED
+                ? find_qualified_template(
+                      mono, owner_type->as.type_expr.module, owner_name,
+                      false, true)
+                : find_template(mono, owner_name, false, true);
+        if (owner_template) {
+          owner_name = declaration_name(owner_template->node);
+          module = owner_template->module;
+        }
+        for (AstNode *block = module_declarations(mono, module); block;
+             block = block->next) {
+          if (block->kind != AST_METHOD_DECL ||
+              strcmp(block->as.method_decl.type_name, owner_name) != 0)
+            continue;
+          for (AstNode *method = block->as.method_decl.methods; method;
+               method = method->next) {
+            if (strcmp(method->as.func_decl.name,
+                       callee->as.field.field) != 0 ||
+                (callee->as.field.target->kind == AST_TYPE_EXPR &&
+                 method->as.func_decl.params &&
+                 strcmp(method->as.func_decl.params->as.param.name,
+                        "self") == 0))
+              continue;
+            Binding *bindings = NULL;
+            if (owner_template) {
+              AstNode *parameter = generic_params(owner_template->node);
+              AstNode *argument = owner_type->as.type_expr.type_args;
+              for (; parameter && argument;
+                   parameter = parameter->next, argument = argument->next) {
+                Binding *binding =
+                    arena_alloc(mono->arena, sizeof(*binding));
+                binding->name = parameter->as.param.name;
+                binding->type = argument;
+                binding->next = bindings;
+                bindings = binding;
+              }
+            }
+            return substitute_inferred_type(
+                mono, method->as.func_decl.ret_type, bindings);
+          }
+        }
       }
       return NULL;
     }
@@ -1590,8 +1919,25 @@ static bool bind_realm_signature_type(Monomorphizer *mono, AstNode *formal,
       else if (actual->as.type_expr.kind == TYPE_QUALIFIED)
         actual_family = find_qualified_realm_type_family(
             mono, actual->as.type_expr.module, actual->as.type_expr.name);
-      if (actual_family == family && mono->has_current_effective_realm)
-        concrete = clone_node(mono, actual, NULL);
+      /*
+       * Keep a same-family owner symbolic during initial inference. A call
+       * nested inside another realm-signature template (for example one
+       * String helper calling another) must inherit that outer owner's
+       * concrete realm when the outer body is cloned. Eagerly specializing
+       * here uses the monomorphizer's initial dynamic context and installs a
+       * dynamic callee in regional/GC specializations.
+       */
+      if (actual_family == family) {
+        Binding *existing = find_binding(*bindings, family->name);
+        if (existing)
+          return same_inferred_type(mono, existing->type, actual);
+        Binding *binding = arena_alloc(mono->arena, sizeof(*binding));
+        binding->name = family->name;
+        binding->type = copy_inferred_type(mono, actual);
+        binding->next = *bindings;
+        *bindings = binding;
+        return true;
+      }
       actual_instance =
           concrete && concrete->as.type_expr.kind == TYPE_NAMED
               ? realm_type_instance_for_name(
@@ -1602,7 +1948,7 @@ static bool bind_realm_signature_type(Monomorphizer *mono, AstNode *formal,
       return false;
     Binding *existing = find_binding(*bindings, family->name);
     if (existing) {
-      if (same_inferred_type(existing->type, concrete))
+      if (same_inferred_type(mono, existing->type, concrete))
         return true;
       mono_error(mono, site,
                  "realm type '%s' is inferred from incompatible owner realms",
@@ -1696,11 +2042,11 @@ static const char *method_specialization_name(Monomorphizer *mono,
   const char *base = method->as.func_decl.name;
   if (!append_text(buffer, sizeof(buffer), &used, "__runes_method_%zu_%s__",
                    strlen(base), base) ||
-      !encode_type(owner_type, buffer, sizeof(buffer), &used) ||
+      !encode_type(mono, owner_type, buffer, sizeof(buffer), &used) ||
       !append_text(buffer, sizeof(buffer), &used, "__"))
     return NULL;
   for (AstNode *argument = arguments; argument; argument = argument->next)
-    if (!encode_type(argument, buffer, sizeof(buffer), &used))
+    if (!encode_type(mono, argument, buffer, sizeof(buffer), &used))
       return NULL;
   char *name = arena_alloc(mono->arena, used + 1);
   memcpy(name, buffer, used + 1);
@@ -1740,8 +2086,10 @@ static void infer_generic_method_call(Monomorphizer *mono, AstNode *call,
   if (!owner_instance && owner_type->as.type_expr.kind == TYPE_NAMED) {
     GenericTemplate *owner_template =
         find_template(mono, owner_type->as.type_expr.name, false, true);
-    if (owner_template)
+    if (owner_template) {
+      owner_name = declaration_name(owner_template->node);
       module = owner_template->module;
+    }
   }
   for (AstNode *declaration = module_declarations(mono, module);
        declaration; declaration = declaration->next) {
@@ -1875,10 +2223,19 @@ static bool infer_realm_method_call(Monomorphizer *mono, AstNode *call,
                                   ? owner_type->as.type_expr.module
                                   : mono->current_module);
   if (!owner_instance && owner_type->as.type_expr.kind == TYPE_NAMED) {
-    GenericTemplate *owner_template =
-        find_template(mono, owner_type->as.type_expr.name, false, true);
-    if (owner_template)
-      module = owner_template->module;
+    RealmTypeFamily *owner_family =
+        find_realm_type_family(mono, owner_type->as.type_expr.name);
+    if (owner_family) {
+      owner_name = owner_family->name;
+      module = owner_family->module;
+    } else {
+      GenericTemplate *owner_template =
+          find_template(mono, owner_type->as.type_expr.name, false, true);
+      if (owner_template) {
+        owner_name = declaration_name(owner_template->node);
+        module = owner_template->module;
+      }
+    }
   }
   RealmMethodFamily *family = find_realm_method_family(
       mono, module, owner_name, callee->as.field.field);
@@ -2036,6 +2393,102 @@ static void add_local_type(Monomorphizer *mono, LocalType **locals,
   *locals = local;
 }
 
+static GenericTemplate *match_subject_template(Monomorphizer *mono,
+                                               AstNode *subject_type) {
+  if (!subject_type || subject_type->kind != AST_TYPE_EXPR)
+    return NULL;
+  if (subject_type->as.type_expr.kind == TYPE_NAMED)
+    return find_template(mono, subject_type->as.type_expr.name, false, true);
+  if (subject_type->as.type_expr.kind == TYPE_QUALIFIED)
+    return find_qualified_template(
+        mono, subject_type->as.type_expr.module,
+        subject_type->as.type_expr.name, false, true);
+  return NULL;
+}
+
+static Binding *match_subject_bindings(Monomorphizer *mono,
+                                       GenericTemplate *template,
+                                       AstNode *subject_type) {
+  Binding *bindings = NULL;
+  AstNode *parameter = generic_params(template->node);
+  AstNode *argument = subject_type->as.type_expr.type_args;
+  for (; parameter && argument;
+       parameter = parameter->next, argument = argument->next) {
+    Binding *binding = arena_alloc(mono->arena, sizeof(*binding));
+    binding->name = parameter->as.param.name;
+    binding->type = argument;
+    binding->next = bindings;
+    bindings = binding;
+  }
+  return bindings;
+}
+
+static AstNode *match_variant_arm(GenericTemplate *template,
+                                  const char *name) {
+  if (!template || template->node->kind != AST_VARIANT_DECL || !name)
+    return NULL;
+  for (AstNode *arm = template->node->as.variant_decl.arms; arm;
+       arm = arm->next)
+    if (strcmp(arm->as.variant_arm.name, name) == 0)
+      return arm;
+  return NULL;
+}
+
+static void infer_pattern_local_types(Monomorphizer *mono, AstNode *pattern,
+                                      AstNode *subject_type,
+                                      LocalType **locals) {
+  if (!pattern || !subject_type)
+    return;
+  if (pattern->kind == AST_IDENTIFIER) {
+    const char *name = pattern->as.identifier.name;
+    GenericTemplate *template = match_subject_template(mono, subject_type);
+    if (match_variant_arm(template, name))
+      return;
+    if (strcmp(name, "_") != 0)
+      add_local_type(mono, locals, name, subject_type);
+    return;
+  }
+  if (pattern->kind == AST_FIELD_PATTERN) {
+    infer_pattern_local_types(mono, pattern->as.field_pattern.pattern,
+                              subject_type, locals);
+    return;
+  }
+  if (pattern->kind != AST_STRUCT_PATTERN &&
+      pattern->kind != AST_CALL_EXPR)
+    return;
+
+  const char *arm_name = NULL;
+  AstNode *fields = NULL;
+  if (pattern->kind == AST_STRUCT_PATTERN) {
+    arm_name = pattern->as.struct_pattern.name;
+    fields = pattern->as.struct_pattern.fields;
+  } else {
+    AstNode *callee = pattern->as.call.callee;
+    if (callee && callee->kind == AST_IDENTIFIER)
+      arm_name = callee->as.identifier.name;
+    else if (callee && callee->kind == AST_FIELD_EXPR)
+      arm_name = callee->as.field.field;
+    fields = pattern->as.call.args;
+  }
+
+  GenericTemplate *template = match_subject_template(mono, subject_type);
+  AstNode *arm = match_variant_arm(template, arm_name);
+  if (!arm)
+    return;
+  Binding *bindings = match_subject_bindings(mono, template, subject_type);
+  AstNode *field_type = arm->as.variant_arm.fields;
+  for (; fields && field_type;
+       fields = fields->next, field_type = field_type->next) {
+    AstNode *field_pattern =
+        fields->kind == AST_FIELD_PATTERN
+            ? fields->as.field_pattern.pattern
+            : fields;
+    AstNode *concrete =
+        substitute_inferred_type(mono, field_type, bindings);
+    infer_pattern_local_types(mono, field_pattern, concrete, locals);
+  }
+}
+
 static void infer_calls_in_node(Monomorphizer *mono, AstNode *node,
                                 LocalType **locals) {
   if (!node)
@@ -2132,7 +2585,20 @@ static void infer_calls_in_node(Monomorphizer *mono, AstNode *node,
     break;
   case AST_MATCH_STMT:
     infer_calls_in_node(mono, node->as.match_stmt.subject, locals);
-    infer_calls_in_list(mono, node->as.match_stmt.arms, locals);
+    {
+      AstNode *subject_type =
+          infer_expression_type(mono, node->as.match_stmt.subject, *locals);
+      for (AstNode *arm = node->as.match_stmt.arms; arm; arm = arm->next) {
+        if (arm->kind != AST_MATCH_ARM)
+          continue;
+        LocalType *saved = *locals;
+        infer_pattern_local_types(
+            mono, arm->as.match_arm.pattern, subject_type, locals);
+        infer_calls_in_node(mono, arm->as.match_arm.guard, locals);
+        infer_calls_in_node(mono, arm->as.match_arm.body, locals);
+        *locals = saved;
+      }
+    }
     break;
   case AST_MATCH_ARM:
     infer_calls_in_node(mono, node->as.match_arm.guard, locals);
@@ -2240,39 +2706,121 @@ static bool interface_exists_in(AstNode *declarations, const char *name) {
   return false;
 }
 
-static bool interface_exists(Monomorphizer *mono, AstNode *constraint) {
+static AstNode *interface_declaration_in(AstNode *declarations,
+                                         const char *name) {
+  for (AstNode *node = declarations; node; node = node->next)
+    if (node->kind == AST_INTERFACE_DECL &&
+        strcmp(node->as.interface_decl.name, name) == 0)
+      return node;
+  return NULL;
+}
+
+static AstNode *interface_declaration(Monomorphizer *mono,
+                                      AstNode *constraint,
+                                      const char *constraint_module) {
+  if (constraint->as.type_expr.kind == TYPE_QUALIFIED)
+    return interface_declaration_in(
+        module_declarations(mono, constraint->as.type_expr.module),
+        constraint->as.type_expr.name);
+  ImportBinding *import =
+      find_import_in_scope(mono, constraint_module,
+                           constraint->as.type_expr.name);
+  if (import && import->target_decl &&
+      import->target_decl->kind == AST_INTERFACE_DECL)
+    return import->target_decl;
+  AstNode *local = interface_declaration_in(
+      module_declarations(mono, constraint_module),
+      constraint->as.type_expr.name);
+  if (local)
+    return local;
+  return constraint_module
+             ? interface_declaration_in(
+                   mono->program->as.program.declarations,
+                   constraint->as.type_expr.name)
+             : NULL;
+}
+
+static bool interface_exists(Monomorphizer *mono, AstNode *constraint,
+                             const char *constraint_module) {
   if (constraint->as.type_expr.kind == TYPE_QUALIFIED)
     return interface_exists_in(
         module_declarations(mono, constraint->as.type_expr.module),
         constraint->as.type_expr.name);
+  ImportBinding *import =
+      find_import_in_scope(mono, constraint_module,
+                           constraint->as.type_expr.name);
+  if (import && import->target_decl &&
+      import->target_decl->kind == AST_INTERFACE_DECL)
+    return true;
   return interface_exists_in(
-             module_declarations(mono, mono->current_module),
+             module_declarations(mono, constraint_module),
              constraint->as.type_expr.name) ||
-         (mono->current_module &&
+         (constraint_module &&
           interface_exists_in(mono->program->as.program.declarations,
                               constraint->as.type_expr.name));
 }
 
-static bool implementation_exists_in(AstNode *declarations,
+static bool interface_name_matches(Monomorphizer *mono,
+                                   const char *implementation_name,
+                                   const char *required_name,
+                                   AstNode *required_declaration) {
+  if (strcmp(implementation_name, required_name) == 0)
+    return true;
+  for (AstNode *generated = mono->generated_head; generated;
+       generated = generated->next) {
+    if (generated->kind != AST_USE_DECL ||
+        !generated->as.use_decl.alias ||
+        strcmp(generated->as.use_decl.alias, implementation_name) != 0 ||
+        !generated->as.use_decl.target_decl ||
+        generated->as.use_decl.target_decl->kind != AST_INTERFACE_DECL)
+      continue;
+    return required_declaration
+               ? generated->as.use_decl.target_decl == required_declaration
+               : strcmp(generated->as.use_decl.target_decl
+                            ->as.interface_decl.name,
+                        required_name) == 0;
+  }
+  return false;
+}
+
+static bool implementation_exists_in(Monomorphizer *mono,
+                                     AstNode *declarations,
                                      const char *interface_name,
+                                     AstNode *interface_declaration,
                                      const char *actual_name) {
-  for (AstNode *node = declarations; node; node = node->next)
+  for (AstNode *node = declarations; node; node = node->next) {
     if (node->kind == AST_METHOD_DECL && node->as.method_decl.iface_name &&
-        strcmp(node->as.method_decl.iface_name, interface_name) == 0 &&
+        interface_name_matches(mono, node->as.method_decl.iface_name,
+                               interface_name, interface_declaration) &&
         strcmp(node->as.method_decl.type_name, actual_name) == 0)
       return true;
+    /*
+     * An imported concrete type may implement an interface in its own module
+     * while the constrained generic lives in a different module. If import
+     * bookkeeping cannot reduce the actual type to that sibling module
+     * (notably through a generated specialization alias), retain the exact
+     * implementation by walking the loaded module tree.
+     */
+    if (node->kind == AST_MOD_DECL &&
+        implementation_exists_in(
+            mono, node->as.mod_decl.declarations, interface_name,
+            interface_declaration, actual_name))
+      return true;
+  }
   return false;
 }
 
 static bool constraint_satisfied(Monomorphizer *mono, AstNode *constraint,
-                                 AstNode *actual) {
+                                 AstNode *actual,
+                                 const char *constraint_module,
+                                 const char *actual_module) {
   if (!constraint)
     return true;
   if (constraint->kind != AST_TYPE_EXPR ||
       (constraint->as.type_expr.kind != TYPE_NAMED &&
        constraint->as.type_expr.kind != TYPE_QUALIFIED) ||
       constraint->as.type_expr.type_args ||
-      !interface_exists(mono, constraint))
+      !interface_exists(mono, constraint, constraint_module))
     return false;
   if (!actual || actual->kind != AST_TYPE_EXPR ||
       (actual->as.type_expr.kind != TYPE_NAMED &&
@@ -2280,15 +2828,61 @@ static bool constraint_satisfied(Monomorphizer *mono, AstNode *constraint,
     return false;
   const char *actual_name = actual->as.type_expr.name;
   const char *interface_name = constraint->as.type_expr.name;
-  const char *actual_module = actual->as.type_expr.kind == TYPE_QUALIFIED
-                                  ? actual->as.type_expr.module
-                                  : mono->current_module;
-  return implementation_exists_in(
-             module_declarations(mono, actual_module), interface_name,
-             actual_name) ||
+  AstNode *required_interface =
+      interface_declaration(mono, constraint, constraint_module);
+  actual_module = actual->as.type_expr.kind == TYPE_QUALIFIED
+                      ? actual->as.type_expr.module
+                      : actual_module;
+  if (actual->as.type_expr.kind == TYPE_NAMED) {
+    RealmTypeInstance *realm_instance =
+        realm_type_instance_for_name(mono, actual_name);
+    ImportBinding *actual_import = realm_instance
+                                       ? NULL
+                                       : find_import_in_scope(
+                                             mono, actual_module, actual_name);
+    if (realm_instance) {
+      actual_name = realm_instance->family->name;
+      actual_module = realm_instance->family->module;
+    } else if (actual_import) {
+      if (actual_import->target_module)
+        actual_module = actual_import->target_module;
+      if (actual_import->target_decl &&
+          declaration_name(actual_import->target_decl))
+        actual_name = declaration_name(actual_import->target_decl);
+    } else {
+      for (AstNode *generated = mono->generated_head; generated;
+           generated = generated->next) {
+        if (generated->kind != AST_USE_DECL ||
+            !generated->as.use_decl.alias ||
+            strcmp(generated->as.use_decl.alias, actual_name) != 0 ||
+            !generated->as.use_decl.target_decl)
+          continue;
+        AstNode *target = generated->as.use_decl.target_decl;
+        const char *target_name = declaration_name(target);
+        if (target_name)
+          actual_name = target_name;
+        actual_module = find_declaration_module(
+            mono->program->as.program.declarations, target, NULL);
+        break;
+      }
+    }
+  }
+  /*
+   * Generic owner types receive concrete method blocks during
+   * instantiation. Those blocks live in generated_head rather than in their
+   * source module, so nested generic constraints (for example
+   * BufferedReader<Backend>: Reader) must consider them too.
+   */
+  return implementation_exists_in(mono, mono->generated_head, interface_name,
+                                  required_interface, actual_name) ||
+         implementation_exists_in(
+             mono, module_declarations(mono, actual_module), interface_name,
+             required_interface, actual_name) ||
          (actual_module &&
-          implementation_exists_in(mono->program->as.program.declarations,
-                                   interface_name, actual_name));
+          implementation_exists_in(mono,
+                                   mono->program->as.program.declarations,
+                                   interface_name, required_interface,
+                                   actual_name));
 }
 
 static const char *ensure_generated_import(Monomorphizer *mono,
@@ -2320,16 +2914,100 @@ static const char *ensure_generated_import(Monomorphizer *mono,
   return alias;
 }
 
+static bool find_declaration_path(AstNode *declarations, AstNode *target,
+                                  const char **modules, size_t depth,
+                                  size_t *module_count) {
+  if (depth >= 64)
+    return false;
+  for (AstNode *node = declarations; node; node = node->next) {
+    if (node == target) {
+      *module_count = depth;
+      return true;
+    }
+    if (node->kind != AST_MOD_DECL)
+      continue;
+    modules[depth] = node->as.mod_decl.name;
+    if (find_declaration_path(node->as.mod_decl.declarations, target, modules,
+                              depth + 1, module_count))
+      return true;
+  }
+  return false;
+}
+
+static const char *ensure_generated_local_type_import(Monomorphizer *mono,
+                                                       AstNode *target) {
+  const char *modules[64];
+  size_t module_count = 0;
+  if (!find_declaration_path(mono->program->as.program.declarations, target,
+                             modules, 0, &module_count) ||
+      module_count == 0)
+    return NULL;
+
+  char alias_buffer[1024];
+  size_t used = 0;
+  if (!append_text(alias_buffer, sizeof(alias_buffer), &used,
+                   "__runes_import_local"))
+    return NULL;
+  for (size_t i = 0; i < module_count; i++)
+    if (!append_text(alias_buffer, sizeof(alias_buffer), &used, "_%s",
+                     modules[i]))
+      return NULL;
+  if (!append_text(alias_buffer, sizeof(alias_buffer), &used, "_%s",
+                   declaration_name(target)))
+    return NULL;
+
+  for (AstNode *generated = mono->generated_head; generated;
+       generated = generated->next)
+    if (generated->kind == AST_USE_DECL && generated->as.use_decl.alias &&
+        strcmp(generated->as.use_decl.alias, alias_buffer) == 0)
+      return generated->as.use_decl.alias;
+
+  char *alias = arena_alloc(mono->arena, used + 1);
+  memcpy(alias, alias_buffer, used + 1);
+  AstNode *path = NULL;
+  AstNode **tail = &path;
+  for (size_t i = 0; i < module_count; i++) {
+    *tail = ast_new_identifier(mono->arena, modules[i]);
+    tail = &(*tail)->next;
+  }
+  *tail = ast_new_identifier(mono->arena, declaration_name(target));
+
+  AstNode *generated_use = ast_new_use_decl(mono->arena, path, alias);
+  generated_use->as.use_decl.target_decl = target;
+  append_generated(mono, generated_use);
+  return alias;
+}
+
+static AstNode *find_local_concrete_type(Monomorphizer *mono,
+                                         const char *name) {
+  for (AstNode *node = module_declarations(mono, mono->current_module); node;
+       node = node->next)
+    if ((node->kind == AST_TYPE_DECL || node->kind == AST_VARIANT_DECL) &&
+        !generic_params(node) && strcmp(declaration_name(node), name) == 0)
+      return node;
+  return NULL;
+}
+
 static Binding *build_bindings(Monomorphizer *mono, AstNode *template,
                                AstNode *arguments, const AstNode *site) {
+  const char *constraint_module = find_declaration_module(
+      mono->program->as.program.declarations, template, NULL);
+  const char *actual_module = mono->current_module;
   AstNode *parameter = generic_params(template);
   AstNode *argument = arguments;
   Binding *head = NULL;
   Binding **tail = &head;
   while (parameter && argument) {
-    if (!constraint_satisfied(mono, parameter->as.param.type, argument)) {
-      mono_error(mono, site, "type argument for '%s' does not satisfy exact "
-                             "interface constraint",
+    if (!constraint_satisfied(mono, parameter->as.param.type, argument,
+                              constraint_module, actual_module)) {
+      const char *actual_name =
+          argument && argument->kind == AST_TYPE_EXPR
+              ? argument->as.type_expr.name
+              : "<non-type>";
+      mono_error(mono, site,
+                 "type argument '%s' for '%s' does not satisfy exact "
+                 "interface constraint",
+                 actual_name ? actual_name : "<anonymous>",
                  parameter->as.param.name);
       return NULL;
     }
@@ -2351,6 +3029,33 @@ static Binding *build_bindings(Monomorphizer *mono, AstNode *template,
         }
         binding->type = clone_node(mono, argument, NULL);
         binding->type->as.type_expr.name = alias;
+      } else {
+        GenericTemplate *template_entry = template_for_node(mono, template);
+        AstNode *local =
+            find_local_concrete_type(mono, argument->as.type_expr.name);
+        bool crosses_module =
+            local && template_entry && template_entry->module &&
+            mono->current_module &&
+            strcmp(template_entry->module, mono->current_module) != 0;
+        if (crosses_module) {
+          if (!generic_declaration_is_public(local)) {
+            mono_error(mono, site,
+                       "private local type '%s' cannot specialize imported "
+                       "generic '%s'",
+                       argument->as.type_expr.name,
+                       declaration_name(template));
+            return NULL;
+          }
+          const char *alias =
+              ensure_generated_local_type_import(mono, local);
+          if (!alias) {
+            mono_error(mono, site,
+                       "local generic type argument path is too complex");
+            return NULL;
+          }
+          binding->type = clone_node(mono, argument, NULL);
+          binding->type->as.type_expr.name = alias;
+        }
       }
     }
     binding->next = NULL;
@@ -2457,6 +3162,32 @@ static const char *instantiate_realm_type(
       continue;
     AstNode *specialized_method = alloc_node(mono, method);
     specialized_method->as.method_decl.type_name = name;
+    if (specialized_method->as.method_decl.iface_name) {
+      ImportBinding *interface_import = find_import_in_scope(
+          mono, family->module,
+          specialized_method->as.method_decl.iface_name);
+      if (interface_import && interface_import->target_decl &&
+          interface_import->target_decl->kind == AST_INTERFACE_DECL) {
+        const char *alias =
+            ensure_generated_import(mono, interface_import);
+        if (alias)
+          specialized_method->as.method_decl.iface_name = alias;
+      } else {
+        for (AstNode *candidate =
+                 module_declarations(mono, family->module);
+             candidate; candidate = candidate->next) {
+          if (candidate->kind != AST_INTERFACE_DECL ||
+              strcmp(candidate->as.interface_decl.name,
+                     specialized_method->as.method_decl.iface_name) != 0)
+            continue;
+          const char *alias =
+              ensure_generated_local_type_import(mono, candidate);
+          if (alias)
+            specialized_method->as.method_decl.iface_name = alias;
+          break;
+        }
+      }
+    }
     specialized_method->as.method_decl.type_args = NULL;
     specialized_method->as.method_decl.methods = NULL;
     AstNode **method_tail = &specialized_method->as.method_decl.methods;
@@ -2468,13 +3199,16 @@ static const char *instantiate_realm_type(
       const char *saved_method_module = mono->current_module;
       bool saved_method_has_realm = mono->has_current_effective_realm;
       EffectiveRealm saved_method_realm = mono->current_effective_realm;
+      bool saved_method_cloning = mono->cloning_realm_overload;
       mono->current_module = family->module;
       mono->has_current_effective_realm = true;
       mono->current_effective_realm = realm;
+      mono->cloning_realm_overload = true;
       *method_tail = clone_node(mono, function, bindings);
       mono->current_module = saved_method_module;
       mono->has_current_effective_realm = saved_method_has_realm;
       mono->current_effective_realm = saved_method_realm;
+      mono->cloning_realm_overload = saved_method_cloning;
       method_tail = &(*method_tail)->next;
     }
     if (specialized_method->as.method_decl.methods)
@@ -2495,6 +3229,8 @@ static const char *instantiate(Monomorphizer *mono, AstNode *template,
     if (instance->template == template && strcmp(instance->name, name) == 0)
       return instance->name;
 
+  GenericTemplate *template_entry = template_for_node(mono, template);
+  const char *saved_module = mono->current_module;
   Binding *bindings = build_bindings(mono, template, arguments, site);
   if (!bindings && generic_params(template))
     return NULL;
@@ -2505,8 +3241,6 @@ static const char *instantiate(Monomorphizer *mono, AstNode *template,
   instance->next = mono->instances;
   mono->instances = instance;
 
-  GenericTemplate *template_entry = template_for_node(mono, template);
-  const char *saved_module = mono->current_module;
   if (template_entry && template_entry->module)
     mono->current_module = template_entry->module;
   AstNode *declaration = clone_node(mono, template, bindings);
@@ -2538,6 +3272,32 @@ static const char *instantiate(Monomorphizer *mono, AstNode *template,
         continue;
       AstNode *specialized_method = alloc_node(mono, method);
       specialized_method->as.method_decl.type_name = name;
+      if (specialized_method->as.method_decl.iface_name) {
+        ImportBinding *interface_import = find_import_in_scope(
+            mono, template_module,
+            specialized_method->as.method_decl.iface_name);
+        if (interface_import && interface_import->target_decl &&
+            interface_import->target_decl->kind == AST_INTERFACE_DECL) {
+          const char *alias =
+              ensure_generated_import(mono, interface_import);
+          if (alias)
+            specialized_method->as.method_decl.iface_name = alias;
+        } else {
+          for (AstNode *candidate =
+                   module_declarations(mono, template_module);
+               candidate; candidate = candidate->next) {
+            if (candidate->kind != AST_INTERFACE_DECL ||
+                strcmp(candidate->as.interface_decl.name,
+                       specialized_method->as.method_decl.iface_name) != 0)
+              continue;
+            const char *alias =
+                ensure_generated_local_type_import(mono, candidate);
+            if (alias)
+              specialized_method->as.method_decl.iface_name = alias;
+            break;
+          }
+        }
+      }
       specialized_method->as.method_decl.type_args = NULL;
       specialized_method->as.method_decl.methods = NULL;
       AstNode **method_tail = &specialized_method->as.method_decl.methods;
@@ -2668,12 +3428,31 @@ static AstNode *clone_type(Monomorphizer *mono, AstNode *node,
   copy->as.type_expr.type_args =
       clone_list(mono, node->as.type_expr.type_args, bindings);
 
-  if (bindings && copy->as.type_expr.kind == TYPE_NAMED) {
+  if ((bindings || mono->cloning_realm_overload || mono->cloning_flex) &&
+      copy->as.type_expr.kind == TYPE_NAMED) {
     ImportBinding *import =
         find_import(mono, copy->as.type_expr.name);
     if (import && !generic_params(import->target_decl) &&
         !realm_type_family_for_node(mono, import->target_decl)) {
       const char *alias = ensure_generated_import(mono, import);
+      if (alias)
+        copy->as.type_expr.name = alias;
+    }
+  }
+
+  /*
+   * Non-generic realm methods are also cloned out of their source module.
+   * Keep references to public concrete sibling types qualified even when
+   * there are no generic bindings to trigger the import path above.
+   */
+  if ((bindings || mono->cloning_realm_overload || mono->cloning_flex) &&
+      copy->as.type_expr.kind == TYPE_NAMED &&
+      !find_realm_type_family(mono, copy->as.type_expr.name)) {
+    AstNode *local =
+        find_local_concrete_type(mono, copy->as.type_expr.name);
+    if (local && generic_declaration_is_public(local)) {
+      const char *alias =
+          ensure_generated_local_type_import(mono, local);
       if (alias)
         copy->as.type_expr.name = alias;
     }
@@ -2772,13 +3551,16 @@ static const char *instantiate_flex(Monomorphizer *mono,
 
   const char *saved_module = mono->current_module;
   bool saved_has_realm = mono->has_current_effective_realm;
+  bool saved_cloning_flex = mono->cloning_flex;
   EffectiveRealm saved_realm = mono->current_effective_realm;
   mono->current_module = template->module;
   mono->has_current_effective_realm = true;
+  mono->cloning_flex = true;
   mono->current_effective_realm = realm;
   AstNode *declaration = clone_node(mono, template->node, NULL);
   mono->current_module = saved_module;
   mono->has_current_effective_realm = saved_has_realm;
+  mono->cloning_flex = saved_cloning_flex;
   mono->current_effective_realm = saved_realm;
   if (!declaration)
     return NULL;
@@ -2908,7 +3690,7 @@ static const char *realm_method_instance_name(
   size_t used = 0;
   if (!append_text(buffer, sizeof(buffer), &used, "__runes_realm_method_%zu_%s__",
                    strlen(family->name), family->name) ||
-      !encode_type(owner_type, buffer, sizeof(buffer), &used) ||
+      !encode_type(mono, owner_type, buffer, sizeof(buffer), &used) ||
       !append_text(buffer, sizeof(buffer), &used, "__%s",
                    effective_realm_name(realm)))
     return NULL;
@@ -2916,7 +3698,7 @@ static const char *realm_method_instance_name(
       !append_text(buffer, sizeof(buffer), &used, "__"))
     return NULL;
   for (AstNode *argument = arguments; argument; argument = argument->next)
-    if (!encode_type(argument, buffer, sizeof(buffer), &used))
+    if (!encode_type(mono, argument, buffer, sizeof(buffer), &used))
       return NULL;
   char *name = arena_alloc(mono->arena, used + 1);
   memcpy(name, buffer, used + 1);
@@ -3043,8 +3825,7 @@ static const char *instantiate_realm_method(Monomorphizer *mono,
     return NULL;
   function->as.func_decl.name = instance_name;
   function->as.func_decl.generic_params = NULL;
-  if (!selected->as.func_decl.has_declared_realm ||
-      selected->as.func_decl.realm == REALM_FLEX) {
+  if (!selected->as.func_decl.has_declared_realm) {
     function->as.func_decl.realm =
         effective_realm_as_memory_realm(function->as.func_decl.effective_realm);
     function->as.func_decl.has_declared_realm = true;
@@ -3088,9 +3869,20 @@ static const char *instantiate_realm_signature(
   for (Binding *binding = plan->bindings; binding; binding = binding->next) {
     AstNode *type =
         substitute_inferred_type(mono, binding->type, outer_bindings);
+    RealmTypeFamily *unresolved_family = NULL;
+    if (type && type->kind == AST_TYPE_EXPR) {
+      if (type->as.type_expr.kind == TYPE_NAMED)
+        unresolved_family =
+            find_realm_type_family(mono, type->as.type_expr.name);
+      else if (type->as.type_expr.kind == TYPE_QUALIFIED)
+        unresolved_family = find_qualified_realm_type_family(
+            mono, type->as.type_expr.module, type->as.type_expr.name);
+    }
+    if (unresolved_family && mono->has_current_effective_realm)
+      type = clone_node(mono, type, NULL);
     if (!append_text(buffer, sizeof(buffer), &used, "%zu_%s_",
                      strlen(binding->name), binding->name) ||
-        !encode_type(type, buffer, sizeof(buffer), &used))
+        !encode_type(mono, type, buffer, sizeof(buffer), &used))
       return NULL;
     Binding *copy = arena_alloc(mono->arena, sizeof(*copy));
     copy->name = binding->name;
@@ -3115,15 +3907,50 @@ static const char *instantiate_realm_signature(
   mono->realm_signature_instances = instance;
 
   const char *saved_module = mono->current_module;
+  bool saved_cloning_flex = mono->cloning_flex;
+  bool saved_cloning_overload = mono->cloning_realm_overload;
   mono->current_module = plan->template->module;
+  mono->cloning_flex =
+      plan->template->node->as.func_decl.realm == REALM_FLEX;
+  mono->cloning_realm_overload = true;
   AstNode *declaration =
       clone_node(mono, plan->template->node, bindings);
   mono->current_module = saved_module;
+  mono->cloning_flex = saved_cloning_flex;
+  mono->cloning_realm_overload = saved_cloning_overload;
   if (!declaration)
     return NULL;
   declaration->as.func_decl.name = name;
   append_generated(mono, declaration);
   return name;
+}
+
+static AstNode *find_extern_declaration(AstNode *declarations,
+                                        const char *name) {
+  for (AstNode *node = declarations; node; node = node->next)
+    if (node->kind == AST_EXTERN_DECL &&
+        strcmp(node->as.extern_decl.name, name) == 0)
+      return node;
+  return NULL;
+}
+
+/*
+ * Realm and generic specialization emits function bodies at the generated
+ * root. Preserve private extern dependencies from the source module there;
+ * otherwise an imported flex method can resolve its ABI call before cloning
+ * but leave an undefined identifier after specialization.
+ */
+static void ensure_generated_extern(Monomorphizer *mono, const char *name) {
+  if (!name || !mono->current_module)
+    return;
+  if (find_extern_declaration(mono->program->as.program.declarations, name) ||
+      find_extern_declaration(mono->generated_head, name))
+    return;
+  AstNode *declaration =
+      find_extern_declaration(module_declarations(mono, mono->current_module),
+                              name);
+  if (declaration)
+    append_generated(mono, clone_node(mono, declaration, NULL));
 }
 
 static AstNode *clone_call(Monomorphizer *mono, AstNode *node,
@@ -3136,6 +3963,27 @@ static AstNode *clone_call(Monomorphizer *mono, AstNode *node,
   copy->as.call.args = clone_list(mono, node->as.call.args, bindings);
   copy->as.call.type_args =
       clone_list(mono, node->as.call.type_args, bindings);
+  /*
+   * A specialized body is emitted at the generated root, so a direct
+   * constructor for a public concrete type in its source module needs the
+   * same generated import as a type annotation or qualified constructor.
+   */
+  if ((bindings || mono->cloning_realm_overload || mono->cloning_flex) &&
+      copy->as.call.callee &&
+      copy->as.call.callee->kind == AST_IDENTIFIER) {
+    AstNode *local = find_local_concrete_type(
+        mono, copy->as.call.callee->as.identifier.name);
+    if (local && generic_declaration_is_public(local) &&
+        !realm_type_family_for_node(mono, local)) {
+      const char *alias = ensure_generated_local_type_import(mono, local);
+      if (alias)
+        copy->as.call.callee->as.identifier.name = alias;
+    }
+  }
+  if (copy->as.call.callee &&
+      copy->as.call.callee->kind == AST_IDENTIFIER)
+    ensure_generated_extern(
+        mono, copy->as.call.callee->as.identifier.name);
 
   for (RealmSignaturePlan *plan = mono->realm_signature_plans; plan;
        plan = plan->next) {
@@ -3148,6 +3996,63 @@ static AstNode *clone_call(Monomorphizer *mono, AstNode *node,
       identifier->line = copy->as.call.callee->line;
       identifier->col = copy->as.call.callee->col;
       copy->as.call.callee = identifier;
+    }
+    return copy;
+  }
+
+  /*
+   * An associated method on a realm-specific owner has the same initial
+   * syntax shape as a variant constructor (`Owner.member(...)`). Honor the
+   * method plan before interpreting that shape as a realm-type constructor;
+   * otherwise non-generic owners such as `String.from_str(...)` are rewritten
+   * to `SpecializedString.from_str(...)` without emitting the specialized
+   * method block.
+   */
+  for (RealmMethodPlan *plan = mono->realm_method_plans; plan;
+       plan = plan->next) {
+    if (plan->call != node)
+      continue;
+    if (!mono->has_current_effective_realm) {
+      /*
+       * Keep the unspecialized body intact while copying its declaration.
+       * A direct call from a concrete realm is recognized by
+       * node_requires_static_realm and clones this body with a known realm.
+       */
+      return copy;
+    }
+    const char *specialized =
+        instantiate_realm_method(mono, plan, node, bindings);
+    if (specialized && copy->as.call.callee->kind == AST_FIELD_EXPR) {
+      copy->as.call.callee->as.field.field = specialized;
+      copy->as.call.type_args = NULL;
+      AstNode *representative = realm_method_representative(plan->family);
+      bool associated =
+          representative &&
+          (!representative->as.func_decl.params ||
+           strcmp(representative->as.func_decl.params->as.param.name,
+                  "self") != 0);
+      AstNode *target = copy->as.call.callee->as.field.target;
+      if (associated && target && target->kind == AST_IDENTIFIER) {
+        /*
+         * clone_node may already have rewritten an imported owner identifier
+         * to a generated alias. The inference plan retains the canonical
+         * owner and module, so use that identity for realm specialization.
+         */
+        RealmTypeFamily *owner_family =
+            plan->family->module
+                ? find_qualified_realm_type_family(
+                      mono, plan->family->module,
+                      plan->family->owner_name)
+                : find_realm_type_family(mono,
+                                         plan->family->owner_name);
+        if (owner_family) {
+          const char *owner_name = instantiate_realm_type(
+              mono, owner_family, mono->current_effective_realm,
+              node->as.call.type_args, node);
+          if (owner_name)
+            target->as.identifier.name = owner_name;
+        }
+      }
     }
     return copy;
   }
@@ -3223,23 +4128,6 @@ static AstNode *clone_call(Monomorphizer *mono, AstNode *node,
     return copy;
   }
 
-  for (RealmMethodPlan *plan = mono->realm_method_plans; plan;
-       plan = plan->next) {
-    if (plan->call != node)
-      continue;
-    if (!mono->has_current_effective_realm) {
-      mono_error(mono, node,
-                 "realm-overloaded method requires a statically known realm");
-      return copy;
-    }
-    const char *specialized =
-        instantiate_realm_method(mono, plan, node, bindings);
-    if (specialized && copy->as.call.callee->kind == AST_FIELD_EXPR) {
-      copy->as.call.callee->as.field.field = specialized;
-      copy->as.call.type_args = NULL;
-    }
-    return copy;
-  }
   RealmFunctionFamily *realm_family = NULL;
   bool realm_family_qualified = false;
   if (copy->as.call.callee->kind == AST_IDENTIFIER) {
@@ -3305,6 +4193,22 @@ static AstNode *clone_call(Monomorphizer *mono, AstNode *node,
       const char *name = copy->as.call.callee->as.field.field;
       flex_template =
           find_qualified_flex_template(mono, module, name);
+      /*
+       * clone_node may rewrite an imported module to a generated alias before
+       * this call is specialized. Flex-template lookup is keyed by the source
+       * module name, so fall back to the original callee identity rather than
+       * leaving a realm-sensitive member inside the generated module clone.
+       */
+      if (!flex_template && node->as.call.callee &&
+          node->as.call.callee->kind == AST_FIELD_EXPR &&
+          node->as.call.callee->as.field.target &&
+          node->as.call.callee->as.field.target->kind == AST_IDENTIFIER) {
+        module =
+            node->as.call.callee->as.field.target->as.identifier.name;
+        name = node->as.call.callee->as.field.field;
+        flex_template =
+            find_qualified_flex_template(mono, module, name);
+      }
       qualified = flex_template != NULL;
     }
     if (!flex_template)
@@ -3468,7 +4372,7 @@ static AstNode *clone_node(Monomorphizer *mono, AstNode *node,
           node->as.func_decl.realm == REALM_FLEX) {
         body_realm = mono->current_effective_realm;
         has_body_realm = true;
-      } else {
+      } else if (mono->cloning_realm_overload || mono->cloning_flex) {
         has_body_realm = resolve_effective_realm(
             node->as.func_decl.realm, mono->current_effective_realm,
             &body_realm);
@@ -3538,6 +4442,19 @@ static AstNode *clone_node(Monomorphizer *mono, AstNode *node,
         clone_attrs(mono, node->as.field_decl.attrs, bindings);
     break;
   case AST_METHOD_DECL:
+    if (copy->as.method_decl.iface_name &&
+        (bindings || mono->cloning_realm_overload ||
+         mono->cloning_flex)) {
+      ImportBinding *interface_import =
+          find_import(mono, copy->as.method_decl.iface_name);
+      if (interface_import && interface_import->target_decl &&
+          interface_import->target_decl->kind == AST_INTERFACE_DECL) {
+        const char *alias =
+            ensure_generated_import(mono, interface_import);
+        if (alias)
+          copy->as.method_decl.iface_name = alias;
+      }
+    }
     copy->as.method_decl.type_args =
         clone_list(mono, node->as.method_decl.type_args, bindings);
     copy->as.method_decl.methods = NULL;
@@ -3669,17 +4586,30 @@ static AstNode *clone_node(Monomorphizer *mono, AstNode *node,
     break;
   case AST_FIELD_EXPR:
     copy->as.field.target = clone_node(mono, node->as.field.target, bindings);
-    if (bindings && copy->as.field.target &&
+    if (copy->as.field.target &&
         copy->as.field.target->kind == AST_IDENTIFIER) {
       ImportBinding *import =
           find_import(mono, copy->as.field.target->as.identifier.name);
-      if (import && !generic_params(import->target_decl) &&
+      if ((bindings || mono->cloning_realm_overload ||
+           mono->cloning_flex) &&
+          import && !generic_params(import->target_decl) &&
           (import->target_decl->kind == AST_TYPE_DECL ||
            import->target_decl->kind == AST_VARIANT_DECL ||
-           import->target_decl->kind == AST_ERROR_DECL)) {
+           import->target_decl->kind == AST_ERROR_DECL ||
+           import->target_decl->kind == AST_MOD_DECL)) {
         const char *alias = ensure_generated_import(mono, import);
         if (alias)
           copy->as.field.target->as.identifier.name = alias;
+      } else {
+        AstNode *local = find_local_concrete_type(
+            mono, copy->as.field.target->as.identifier.name);
+        if (local && generic_declaration_is_public(local) &&
+            !realm_type_family_for_node(mono, local)) {
+          const char *alias =
+              ensure_generated_local_type_import(mono, local);
+          if (alias)
+            copy->as.field.target->as.identifier.name = alias;
+        }
       }
     }
     break;
@@ -3824,6 +4754,8 @@ static bool is_realm_signature_template_node(Monomorphizer *mono,
 static void collect_realm_signature_templates(Monomorphizer *mono,
                                               AstNode *declarations,
                                               const char *module) {
+  const char *saved_module = mono->current_module;
+  mono->current_module = module;
   for (AstNode *node = declarations; node; node = node->next) {
     if (is_realm_signature_template_node(mono, node)) {
       RealmSignatureTemplate *entry =
@@ -3837,6 +4769,7 @@ static void collect_realm_signature_templates(Monomorphizer *mono,
       collect_realm_signature_templates(
           mono, node->as.mod_decl.declarations, node->as.mod_decl.name);
   }
+  mono->current_module = saved_module;
 }
 
 static bool is_realm_signature_template(Monomorphizer *mono, AstNode *node) {
@@ -3900,6 +4833,8 @@ static bool declaration_contains_realm_type(Monomorphizer *mono,
 
 static bool collect_derived_realm_type_families_pass(
     Monomorphizer *mono, AstNode *declarations, const char *module) {
+  const char *saved_module = mono->current_module;
+  mono->current_module = module;
   bool changed = false;
   for (AstNode *node = declarations; node; node = node->next) {
     if ((node->kind == AST_TYPE_DECL || node->kind == AST_VARIANT_DECL) &&
@@ -3921,6 +4856,7 @@ static bool collect_derived_realm_type_families_pass(
             node->as.mod_decl.name))
       changed = true;
   }
+  mono->current_module = saved_module;
   return changed;
 }
 
@@ -4029,6 +4965,18 @@ static void collect_realm_method_families(Monomorphizer *mono,
                            node->excluded_realms;
       for (AstNode *method = node->as.method_decl.methods; method;
            method = method->next) {
+        bool associated =
+            !method->as.func_decl.params ||
+            strcmp(method->as.func_decl.params->as.param.name, "self") != 0;
+        if (!block_special && associated &&
+            method->as.func_decl.realm == REALM_FLEX &&
+            !method->realm_family_root && !method->has_overload_realm &&
+            !method->excluded_realms) {
+          add_realm_method_case(
+              mono, node, method, module, false,
+              EFFECTIVE_REALM_STACK, 0);
+          continue;
+        }
         if (block_special) {
           add_realm_method_case(
               mono, node, method, module, node->has_overload_realm,
@@ -4147,15 +5095,15 @@ bool monomorphize_program(Arena *arena, AstNode *program) {
   };
   collect_realm_type_families(
       &mono, program->as.program.declarations, NULL);
+  collect_imports(&mono, program->as.program.declarations, NULL);
   collect_derived_realm_type_families(&mono);
   collect_realm_function_families(
       &mono, program->as.program.declarations, NULL);
   collect_realm_method_families(
       &mono, program->as.program.declarations, NULL);
+  collect_templates(&mono, program->as.program.declarations, NULL);
   collect_realm_signature_templates(
       &mono, program->as.program.declarations, NULL);
-  collect_templates(&mono, program->as.program.declarations, NULL);
-  collect_imports(&mono, program->as.program.declarations, NULL);
 
   LocalType *locals = NULL;
   infer_calls_in_node(&mono, program, &locals);
@@ -4170,6 +5118,12 @@ bool monomorphize_program(Arena *arena, AstNode *program) {
   for (AstNode *node = program->as.program.declarations; node;
        node = node->next) {
     if (is_template_declaration(node) ||
+        (node->kind == AST_FUNC_DECL &&
+         node->as.func_decl.realm == REALM_FLEX &&
+         (node_requires_static_realm(
+              &mono, node->as.func_decl.body, 0) ||
+          node_has_realm_method_call(
+              &mono, node->as.func_decl.body, 0))) ||
         is_realm_function_member(&mono, node) ||
         is_realm_type_member(&mono, node) ||
         is_realm_type_method_block(&mono, node) ||

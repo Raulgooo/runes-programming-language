@@ -1,0 +1,183 @@
+use std.core.Option
+use std.io
+use std.path.Path
+use std.path.PathComponent
+use std.path.PathError
+use std.path.PathView
+use std.path.PlatformPath
+
+f view_equal_text(view: PathView, text: str) = result: bool {
+    unsafe {
+        result = view.bytes.len == text.len
+        if result {
+            for (0..view.bytes.len) |index| {
+                if view.bytes[index] != text[index] {
+                    result = false
+                    break
+                }
+            }
+        }
+    }
+}
+
+dynamic f normalized_is(
+    input: str,
+    expected: str
+) = result: bool {
+    path := Path.normalize(PathView.from_str(input))
+    result = view_equal_text(path.as_view(), expected)
+    path.deinit()
+}
+
+dynamic f main() {
+    bool ok = true
+
+    if !normalized_is("", ".") { ok = false }
+    if !normalized_is(".", ".") { ok = false }
+    if !normalized_is("././", ".") { ok = false }
+    if !normalized_is("/", "/") { ok = false }
+    if !normalized_is("///", "/") { ok = false }
+    if !normalized_is("/a//b/./c/..", "/a/b") { ok = false }
+    if !normalized_is("a/b/../../c", "c") { ok = false }
+    if !normalized_is("a/../../../b", "../../b") { ok = false }
+    if !normalized_is("/../../a", "/a") { ok = false }
+    if !normalized_is(".hidden", ".hidden") { ok = false }
+
+    raw := PathView.from_str("/alpha//beta/./")
+    if !raw.is_absolute() or raw.is_relative() { ok = false }
+    match raw.file_name() {
+        Some(name) -> {
+            if name.len != 4 { ok = false }
+            if name[0] != 0x62 or name[3] != 0x61 { ok = false }
+        }
+        None -> { ok = false }
+    }
+    match raw.parent() {
+        Some(parent) -> {
+            if !view_equal_text(parent, "/alpha//beta") { ok = false }
+        }
+        None -> { ok = false }
+    }
+    root := PathView.from_str("/")
+    match root.parent() {
+        Some(_) -> { ok = false }
+        None -> { ok = ok }
+    }
+
+    cursor := raw.components()
+    usize component_count = 0
+    match cursor.next() {
+        Some(component) -> match component {
+            Root -> {
+                component_count = component_count + 1
+                ok = ok
+            }
+            _ -> { ok = false }
+        }
+        None -> { ok = false }
+    }
+    match cursor.next() {
+        Some(component) -> match component {
+            Normal(name) -> {
+                if name.len != 5 { ok = false }
+                component_count = component_count + 1
+                ok = ok
+            }
+            _ -> { ok = false }
+        }
+        None -> { ok = false }
+    }
+    match cursor.next() {
+        Some(component) -> match component {
+            Normal(name) -> {
+                if name.len != 4 { ok = false }
+                component_count = component_count + 1
+                ok = ok
+            }
+            _ -> { ok = false }
+        }
+        None -> { ok = false }
+    }
+    match cursor.next() {
+        Some(component) -> match component {
+            Current -> {
+                component_count = component_count + 1
+                ok = ok
+            }
+            _ -> { ok = false }
+        }
+        None -> { ok = false }
+    }
+    match cursor.next() {
+        Some(_) -> { ok = false }
+        None -> { ok = ok }
+    }
+    if component_count != 4 { ok = false }
+
+    joined := Path.join(
+        PathView.from_str("/srv/app"),
+        PathView.from_str("../config/settings")
+    )
+    if !view_equal_text(joined.as_view(), "/srv/config/settings") {
+        ok = false
+    }
+    joined.deinit()
+
+    replaced := Path.join(
+        PathView.from_str("/srv/app"),
+        PathView.from_str("/etc/config")
+    )
+    if !view_equal_text(replaced.as_view(), "/etc/config") {
+        ok = false
+    }
+    replaced.deinit()
+
+    first := Path.normalize(PathView.from_str("a//b/../c"))
+    second := Path.normalize(first.as_view())
+    if !view_equal_text(first.as_view(), "a/c") { ok = false }
+    if !view_equal_text(second.as_view(), "a/c") { ok = false }
+    first.deinit()
+    second.deinit()
+
+    [4]u8 non_utf_storage = [0x66, 0x6f, 0x80, 0x6f]
+    []const u8 non_utf = non_utf_storage
+    non_utf_view := PathView.from_bytes(non_utf)
+    non_utf_path := Path.from_view(non_utf_view)
+    if non_utf_path.as_view().bytes[2] != 0x80 { ok = false }
+    non_utf_path.deinit()
+
+    match PlatformPath.tfrom_view(PathView.from_str("a/../b")) {
+        Ok(value) -> {
+            platform := value
+            if !view_equal_text(platform.as_view(), "a/../b") {
+                ok = false
+            }
+            bytes_with_nul := platform.as_bytes_with_nul()
+            if bytes_with_nul.len != 7 { ok = false }
+            if bytes_with_nul[6] != 0 { ok = false }
+            unsafe {
+                if platform.as_pointer()[0] != 0x61 { ok = false }
+            }
+            platform.deinit()
+        }
+        Err(_) -> { ok = false }
+    }
+
+    [3]u8 nul_storage = [0x61, 0x00, 0x62]
+    []const u8 nul_bytes = nul_storage
+    match PlatformPath.tfrom_view(PathView.from_bytes(nul_bytes)) {
+        Ok(value) -> {
+            PlatformPath unexpected = value
+            unexpected.deinit()
+            ok = false
+        }
+        Err(failure) -> match failure {
+            ContainsNul(index) -> {
+                if index != 1 { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    print(ok)
+}

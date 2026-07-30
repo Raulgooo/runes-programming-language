@@ -54,6 +54,9 @@ Every official API should follow these rules:
 The library should adopt consistent naming:
 
 - `new` creates an empty/default value;
+- prefixing an otherwise terminating operation with `t` exposes its
+  recoverable `Result` form: `new`/`tnew`, `push`/`tpush`,
+  `allocate`/`tallocate`;
 - `with_capacity` reserves storage;
 - `from_*` converts and takes or copies as documented;
 - `as_*` returns a borrowed view;
@@ -126,11 +129,12 @@ Provide a typed allocator capability supporting:
 
 ### Owning container policy
 
-Recommended families:
+Recommended default:
 
-- `Vec<T>`: raw/dynamic ownership with explicit `deinit`;
-- `ArenaVec<T>`: regional growth, abandoning replaced buffers until arena exit;
-- `GcVec<T>`: traced GC ownership where automatic reclamation is appropriate;
+- one realm-aware `Vec<T>` whose hidden owner identity selects dynamic,
+  regional, or GC growth and release without call-site realm arguments;
+- add explicitly named arena- or GC-specific containers only when their
+  representation or algorithm genuinely differs from `Vec<T>`;
 - `Box<T>`: one dynamically owned value;
 - `Gc<T>`: an explicit managed reference if a library-level wrapper improves
   readability;
@@ -144,8 +148,11 @@ without transferring ownership.
 
 ### Sequential collections
 
-- `Vec<T>` with reserve, append, extend, insert, remove, swap-remove, pop,
-  truncate, clear, retain, sort, deduplicate, and slice views;
+- `Vec<T>` now has concise ordinary construction/mutation plus recoverable
+  `t` forms for construction, reserve, push, pop, truncate, and clear, along
+  with indexed access, slice views, and explicit deinitialization;
+- extend the initial `Vec<T>` with append/extend, insert, remove, swap-remove,
+  retain, sort, and deduplicate;
 - `Deque<T>` as a ring buffer;
 - `SmallVec<T, N>` after const generics exist, or fixed-capacity alternatives;
 - singly/doubly linked lists only for workloads where node stability matters;
@@ -176,7 +183,7 @@ without transferring ownership.
 
 ### `text.string`
 
-- owning UTF-8 `String` and `StringBuilder`;
+- the initial owning UTF-8 `String` is implemented; add `StringBuilder`;
 - validated construction from bytes and explicit lossy conversion;
 - append scalar/string/bytes, reserve, truncate, clear, and consume to bytes;
 - byte length, scalar iteration, grapheme iteration through an optional Unicode
@@ -704,9 +711,11 @@ must not silently degrade correctness.
 ### P0: compiler bootstrap
 
 1. `Option`, iterators, comparison, and hashing interfaces.
-2. Allocator interface, `Vec`, `HashMap`, owned `String`, and `StringBuilder`.
+2. Build on the implemented allocator, `Vec`, and owned `String` with
+   `HashMap` and `StringBuilder`.
 3. Formatting, byte buffers, integer/float parsing.
-4. Files, paths, buffered I/O, environment, and process execution.
+4. Build on completed lexical paths and buffered I/O with files, environment,
+   and process execution.
 5. Diagnostics, source spans, logging, testing, and CLI parsing.
 
 Completing P0 makes a self-hosted Runes compiler practical.

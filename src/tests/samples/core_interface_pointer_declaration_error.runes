@@ -1,0 +1,8 @@
+-- EXPECT FAIL: must use self or self: *Writer as its first parameter
+interface Writer {
+    f write(self: *Reader, bytes: []const u8) = result: usize
+}
+
+interface Reader {
+    f read(self) = result: usize
+}

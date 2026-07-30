@@ -1,0 +1,107 @@
+use std.core.Result
+use std.format.Alignment
+use std.format.FormatError
+use std.format.TextFormat
+use std.format.append_bool
+use std.format.append_char
+use std.format.append_debug_str
+use std.format.append_str
+use std.format.write_bool
+use std.format.write_char
+use std.format.write_debug_str
+use std.format.write_str
+use std.string.String
+
+#[safe]
+extern f runes_str_view(value: *const u8, length: usize) = result: str
+
+f main() {
+    bool ok = true
+    [64]u8 bytes = []
+    []u8 output = bytes
+    options := TextFormat.standard()
+
+    match write_str(output, "hé🙂", options) {
+        Ok(length) -> {
+            if runes_str_view(&bytes[0], length) != "hé🙂" {
+                ok = false
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    right := TextFormat.standard()
+    right.alignment = Alignment.Right()
+    right.width = 7
+    right.padding = 0x2e
+    match write_bool(output, true, right) {
+        Ok(length) -> {
+            if runes_str_view(&bytes[0], length) != "...true" {
+                ok = false
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    match write_char(output, '🙂', options) {
+        Ok(length) -> {
+            if runes_str_view(&bytes[0], length) != "🙂" {
+                ok = false
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    match write_debug_str(
+        output,
+        "a\n\t\"\\\0\u007fé",
+        options
+    ) {
+        Ok(length) -> {
+            if runes_str_view(&bytes[0], length) != "\"a\\n\\t\\\"\\\\\\0\\x7fé\"" {
+                ok = false
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    [2]u8 tiny = [0xaa, 0xbb]
+    []u8 tiny_output = tiny
+    match write_str(tiny_output, "abc", options) {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                InsufficientSpace(required) -> {
+                    if required != 3 { ok = false }
+                }
+                _ -> { ok = false }
+            }
+        }
+    }
+    if tiny[0] != 0xaa { ok = false }
+    if tiny[1] != 0xbb { ok = false }
+
+    value := String.from_str(">")
+    match append_str(&value, "hé", options) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match append_bool(&value, false, options) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match append_char(&value, '🙂', options) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match append_debug_str(&value, "\n", options) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    if value.as_str() != ">héfalse🙂\"\\n\"" {
+        ok = false
+    }
+    value.deinit()
+
+    print(ok)
+}

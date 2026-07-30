@@ -1,0 +1,13 @@
+use std.fs
+use std.fs.OpenOptions
+use std.path.PathView
+
+dynamic f main() {
+    match fs.open(PathView.from_str("fuzz-file"), OpenOptions.read_only()) {
+        Ok(value) -> {
+            file := value
+            file.close()
+        }
+        Err(_) -> {}
+    }
+}

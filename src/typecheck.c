@@ -3,6 +3,30 @@
 #include <stdio.h>
 #include <string.h>
 
+static bool function_has_receiver(const AstNode *function) {
+  return function && function->kind == AST_FUNC_DECL &&
+         function->as.func_decl.params &&
+         strcmp(function->as.func_decl.params->as.param.name, "self") == 0;
+}
+
+static bool expression_is_type_qualifier(TypeChecker *tc,
+                                         const AstNode *expression) {
+  if (!expression)
+    return false;
+  if (expression->kind == AST_TYPE_EXPR)
+    return true;
+  if (expression->kind == AST_IDENTIFIER) {
+    Symbol *symbol =
+        symbol_table_lookup(tc->st, expression->as.identifier.name);
+    if (symbol)
+      return symbol->kind == SYM_TYPE;
+  }
+  AstNode *declaration = expression->resolved_decl;
+  return declaration &&
+         (declaration->kind == AST_TYPE_DECL ||
+          declaration->kind == AST_VARIANT_DECL);
+}
+
 void typechecker_init(TypeChecker *tc, Arena *arena, TypeContext *tctx,
                       SymbolTable *st) {
   tc->arena = arena;
@@ -181,6 +205,43 @@ static bool has_exact_self_receiver(AstNode *method) {
   AstNode *receiver = method->as.func_decl.params;
   return receiver && strcmp(receiver->as.param.name, "self") == 0 &&
          receiver->as.param.type == NULL;
+}
+
+static bool has_interface_self_receiver(AstNode *method,
+                                        const char *interface_name) {
+  if (!method || method->kind != AST_FUNC_DECL)
+    return false;
+  AstNode *receiver = method->as.func_decl.params;
+  if (!receiver || strcmp(receiver->as.param.name, "self") != 0)
+    return false;
+  if (!receiver->as.param.type)
+    return true;
+  AstNode *type = receiver->as.param.type;
+  return type->kind == AST_TYPE_EXPR &&
+         type->as.type_expr.kind == TYPE_PTR &&
+         !type->as.type_expr.nullable &&
+         type->as.type_expr.inner &&
+         type->as.type_expr.inner->kind == AST_TYPE_EXPR &&
+         type->as.type_expr.inner->as.type_expr.kind == TYPE_NAMED &&
+         strcmp(type->as.type_expr.inner->as.type_expr.name,
+                interface_name) == 0;
+}
+
+static bool interface_receiver_matches(Type *required, Type *actual,
+                                       Type *owner,
+                                       AstNode *implementation) {
+  if (!required || !actual || !owner || !implementation)
+    return false;
+  AstNode *receiver = implementation->as.func_decl.params;
+  if (required->kind != TY_POINTER)
+    return has_exact_self_receiver(implementation) &&
+           type_equals(actual, owner);
+  if (!receiver || !receiver->as.param.type ||
+      actual->kind != TY_POINTER)
+    return false;
+  return required->as.pointer.nullable == actual->as.pointer.nullable &&
+         required->as.pointer.readonly == actual->as.pointer.readonly &&
+         type_equals(actual->as.pointer.inner, owner);
 }
 
 static AstNode *find_declaration(AstNode *declarations, const char *name) {
@@ -1086,11 +1147,13 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
         AstNode *m = decl->as.interface_decl.methods;
         for (int i = 0; i < count; i++, m = m->next) {
           names[i] = m->as.func_decl.name;
-          if (!has_exact_self_receiver(m)) {
+          if (!has_interface_self_receiver(
+                  m, decl->as.interface_decl.name)) {
             typechecker_error(tc, m->line, m->col,
-                              "Interface method '%s' must have an untyped "
-                              "self receiver as its first parameter",
-                              m->as.func_decl.name);
+                              "Interface method '%s' must use self or "
+                              "self: *%s as its first parameter",
+                              m->as.func_decl.name,
+                              decl->as.interface_decl.name);
           }
           for (int prior = 0; prior < i; prior++) {
             if (strcmp(names[prior], names[i]) == 0) {
@@ -1257,6 +1320,20 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
         AstNode *method_node = decl->as.method_decl.methods;
         while (method_node) {
           if (method_node->kind == AST_FUNC_DECL) {
+            int parameter_index = 0;
+            for (AstNode *parameter = method_node->as.func_decl.params;
+                 parameter; parameter = parameter->next, parameter_index++) {
+              if (strcmp(parameter->as.param.name, "self") == 0 &&
+                  parameter_index != 0)
+                typechecker_error(
+                    tc, parameter->line, parameter->col,
+                    "Method receiver 'self' must be the first parameter");
+            }
+            if (decl->as.method_decl.iface_name &&
+                !function_has_receiver(method_node))
+              typechecker_error(
+                  tc, method_node->line, method_node->col,
+                  "Associated methods cannot implement interface methods");
             Method *m = arena_alloc(tc->arena, sizeof(Method));
             m->name = method_node->as.func_decl.name;
             m->interface_name = decl->as.method_decl.iface_name;
@@ -1354,7 +1431,7 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
                 method_node = method_node->next;
               Type *required = iface->as.interface_t.method_types[i];
               Type *actual = method_node ? method_node->resolved_type : NULL;
-              if (!has_exact_self_receiver(method_node) || !actual ||
+              if (!actual ||
                   actual->kind != TY_FUNCTION ||
                   required->kind != TY_FUNCTION ||
                   actual->as.function.strategy !=
@@ -1366,6 +1443,17 @@ static void typechecker_collect_decls(TypeChecker *tc, AstNode *node) {
                 typechecker_error(tc, decl->line, decl->col,
                                   "Interface method '%s' has an incompatible "
                                   "signature",
+                                  iface->as.interface_t.method_names[i]);
+                valid = false;
+                break;
+              }
+              if (!interface_receiver_matches(
+                      required->as.function.params[0],
+                      actual->as.function.params[0], t,
+                      method_node)) {
+                typechecker_error(tc, decl->line, decl->col,
+                                  "Interface method '%s' has an incompatible "
+                                  "receiver",
                                   iface->as.interface_t.method_names[i]);
                 valid = false;
                 break;
@@ -1542,8 +1630,12 @@ static bool is_compiler_lowered_extern(const char *name) {
   return strcmp(name, "memset") == 0 || strcmp(name, "memcpy") == 0 ||
          strcmp(name, "memcmp") == 0 || strcmp(name, "memmove") == 0 ||
          strcmp(name, "sqrt") == 0 || strcmp(name, "alloc") == 0 ||
-         strcmp(name, "try_allocate") == 0 ||
-         strcmp(name, "resize") == 0 || strcmp(name, "release") == 0 ||
+         strcmp(name, "tstorage_allocate") == 0 ||
+         strcmp(name, "tstorage_resize") == 0 ||
+         strcmp(name, "release") == 0 ||
+         strcmp(name, "tstorage_set_initialized") == 0 ||
+         strcmp(name, "storage_error") == 0 ||
+         strcmp(name, "storage_fail") == 0 ||
          strcmp(name, "raw_alloc") == 0 ||
          strcmp(name, "raw_alloc_aligned") == 0 ||
          strcmp(name, "raw_free") == 0;
@@ -1816,6 +1908,9 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     break;
   case AST_NULL_LITERAL:
     inferred = tc->tctx->type_null;
+    break;
+  case AST_TYPE_EXPR:
+    inferred = typechecker_resolve_type_expr(tc, expr);
     break;
   case AST_ARRAY_LITERAL:
     if (!expr->as.array_literal.elems) {
@@ -2214,12 +2309,17 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
     }
     if (expr->as.call.callee->kind == AST_IDENTIFIER) {
       const char *builtin = expr->as.call.callee->as.identifier.name;
-      bool try_allocate = strcmp(builtin, "try_allocate") == 0;
-      bool resize = strcmp(builtin, "resize") == 0;
+      bool try_allocate = strcmp(builtin, "tstorage_allocate") == 0;
+      bool resize = strcmp(builtin, "tstorage_resize") == 0;
       bool release = strcmp(builtin, "release") == 0;
+      bool set_initialized =
+          strcmp(builtin, "tstorage_set_initialized") == 0;
       bool storage_error = strcmp(builtin, "storage_error") == 0;
-      if (try_allocate || resize || release || storage_error) {
-        if (!storage_error && tc->current_realm == REALM_STACK)
+      bool storage_fail = strcmp(builtin, "storage_fail") == 0;
+      if (try_allocate || resize || release || set_initialized ||
+          storage_error || storage_fail) {
+        if (!storage_error && !storage_fail &&
+            tc->current_realm == REALM_STACK)
           typechecker_error(tc, expr->line, expr->col,
                             "storage intrinsic is not available in a stack "
                             "function");
@@ -2227,18 +2327,33 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         int count = 0;
         for (AstNode *item = argument; item; item = item->next)
           count++;
-        int expected = try_allocate ? 1 : resize ? 4 : release ? 1 : 0;
+        int expected =
+            try_allocate      ? 1
+            : resize || set_initialized
+                ? 4
+            : release || storage_fail ? 1
+                                      : 0;
         if (count != expected)
           typechecker_error(tc, expr->line, expr->col,
                             "storage intrinsic has the wrong argument count");
         int index = 0;
         for (AstNode *item = argument; item; item = item->next, index++) {
           Type *item_type = typechecker_infer_expr(tc, item);
-          if ((resize || release) && index == 0) {
+          if ((resize || release || set_initialized) && index == 0) {
             if (type_is_resolved(item_type) &&
-                item_type->kind != TY_POINTER)
+                (item_type->kind != TY_POINTER ||
+                 (set_initialized && item_type->as.pointer.nullable)))
               typechecker_error(tc, item->line, item->col,
-                                "storage pointer argument must be a pointer");
+                                set_initialized
+                                    ? "initialized storage pointer must be a "
+                                      "non-null pointer"
+                                    : "storage pointer argument must be a "
+                                      "pointer");
+          } else if (set_initialized && type_is_resolved(item_type) &&
+                     !type_equals(item_type, tc->tctx->type_usize)) {
+            typechecker_error(
+                tc, item->line, item->col,
+                "initialized storage lengths and capacity must be usize");
           } else if (type_is_resolved(item_type) &&
                      !type_is_integer(item_type)) {
             typechecker_error(tc, item->line, item->col,
@@ -2248,6 +2363,8 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         if (try_allocate || resize)
           inferred =
               type_new_nullable_pointer(tc->tctx, tc->tctx->type_void);
+        else if (set_initialized)
+          inferred = tc->tctx->type_bool;
         else if (storage_error)
           inferred = tc->tctx->type_i32;
         else
@@ -2375,9 +2492,12 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       if (expr->as.call.callee->kind == AST_IDENTIFIER &&
           (strcmp(expr->as.call.callee->as.identifier.name, "alloc") == 0 ||
            strcmp(expr->as.call.callee->as.identifier.name,
-                  "try_allocate") == 0 ||
-           strcmp(expr->as.call.callee->as.identifier.name, "resize") == 0 ||
-           strcmp(expr->as.call.callee->as.identifier.name, "release") == 0) &&
+                  "tstorage_allocate") == 0 ||
+           strcmp(expr->as.call.callee->as.identifier.name,
+                  "tstorage_resize") == 0 ||
+           strcmp(expr->as.call.callee->as.identifier.name, "release") == 0 ||
+           strcmp(expr->as.call.callee->as.identifier.name,
+                  "tstorage_set_initialized") == 0) &&
           tc->current_realm == REALM_STACK) {
         typechecker_error(tc, expr->line, expr->col,
                           "%s is not available in a stack function",
@@ -2389,7 +2509,10 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
 
       // Handle method call self-injection
       if (callee_t->as.function.is_method &&
-          expr->as.call.callee->kind == AST_FIELD_EXPR) {
+          expr->as.call.callee->kind == AST_FIELD_EXPR &&
+          !expression_is_type_qualifier(
+              tc,
+              expr->as.call.callee->as.field.target)) {
         Type *target_t =
             typechecker_infer_expr(tc, expr->as.call.callee->as.field.target);
         if (callee_t->as.function.param_count > 0) {
@@ -2698,9 +2821,9 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         expr->as.cast.expr->kind == AST_CALL_EXPR &&
         expr->as.cast.expr->as.call.callee->kind == AST_IDENTIFIER &&
         (strcmp(expr->as.cast.expr->as.call.callee->as.identifier.name,
-                "try_allocate") == 0 ||
+                "tstorage_allocate") == 0 ||
          strcmp(expr->as.cast.expr->as.call.callee->as.identifier.name,
-                "resize") == 0);
+                "tstorage_resize") == 0);
     if ((source_pointer || target_pointer) &&
         !type_equals(source, inferred) && !safe_pointer_widening &&
         !safe_typed_storage_cast &&
@@ -2902,6 +3025,8 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
 
     Type *target_t = typechecker_infer_expr(tc, expr->as.field.target);
     const char *fname = expr->as.field.field;
+    bool type_qualified =
+        expression_is_type_qualifier(tc, expr->as.field.target);
 
     // 1. Handle Module access (e.g. kernel.arch)
     // If target is unknown, it might be a module path.
@@ -2941,18 +3066,21 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
 
     if (base_t->kind == TY_STRUCT) {
       bool found = false;
-      for (int i = 0; i < base_t->as.struct_t.field_count; i++) {
-        if (strcmp(base_t->as.struct_t.field_names[i], fname) == 0) {
-          inferred = base_t->as.struct_t.field_types[i];
-          found = true;
-          break;
+      if (!type_qualified) {
+        for (int i = 0; i < base_t->as.struct_t.field_count; i++) {
+          if (strcmp(base_t->as.struct_t.field_names[i], fname) == 0) {
+            inferred = base_t->as.struct_t.field_types[i];
+            found = true;
+            break;
+          }
         }
       }
       if (!found) {
         // Inherent methods take precedence over interface implementations.
         Method *m = base_t->as.struct_t.methods;
         while (m) {
-          if (!m->interface_name && strcmp(m->name, fname) == 0) {
+          if (!m->interface_name && strcmp(m->name, fname) == 0 &&
+              function_has_receiver(m->node) != type_qualified) {
             inferred = m->type;
             expr->resolved_decl = m->node;
             found = true;
@@ -2965,7 +3093,8 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
       if (!found) {
         Method *selected = NULL;
         for (Method *m = base_t->as.struct_t.methods; m; m = m->next) {
-          if (!m->interface_name || strcmp(m->name, fname) != 0)
+          if (!m->interface_name || strcmp(m->name, fname) != 0 ||
+              type_qualified)
             continue;
           if (selected) {
             typechecker_error(tc, expr->line, expr->col,
@@ -2988,7 +3117,9 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
 
       if (!found) {
         typechecker_error(tc, expr->line, expr->col,
-                          "Field or method '%s' not found in struct '%s'",
+                          type_qualified
+                              ? "Associated method '%s' not found on type '%s'"
+                              : "Field or method '%s' not found in struct '%s'",
                           fname, base_t->as.struct_t.name);
         inferred = tc->tctx->type_error;
       }
@@ -3013,7 +3144,8 @@ Type *typechecker_infer_expr(TypeChecker *tc, AstNode *expr) {
         // Look for methods
         Method *m = base_t->as.variant.methods;
         while (m) {
-          if (strcmp(m->name, fname) == 0) {
+          if (strcmp(m->name, fname) == 0 &&
+              function_has_receiver(m->node) != type_qualified) {
             inferred = m->type;
             expr->resolved_decl = m->node;
             found = true;
@@ -3466,7 +3598,15 @@ static void typechecker_check_node(TypeChecker *tc, AstNode *node) {
       }
     }
     tc->current_realm = func_realm;
-    tc->current_declared_realm = declared_realm;
+    /*
+     * Root main is an orchestration realm even though its surface declaration
+     * is written as unqualified `f main()`. Preserve REALM_MAIN while checking
+     * nested declarations so main may define/call every concrete realm. A
+     * non-root function named main is not marked is_main and keeps the normal
+     * declared-realm rules.
+     */
+    tc->current_declared_realm =
+        node->as.func_decl.is_main ? REALM_MAIN : declared_realm;
 
     Scope *function_parent = tc->st->current;
     symbol_table_push(tc->st);
@@ -4272,8 +4412,8 @@ static uint32_t provenance_of_call(AstNode *expr, MemoryRealm realm) {
     const char *name = callee->as.identifier.name;
     if (strcmp(name, "alloc") == 0)
       return provenance_for_realm(realm);
-    if (strcmp(name, "try_allocate") == 0 ||
-        strcmp(name, "resize") == 0)
+    if (strcmp(name, "tstorage_allocate") == 0 ||
+        strcmp(name, "tstorage_resize") == 0)
       return provenance_for_realm(realm);
     if (strcmp(name, "raw_alloc") == 0 ||
         strcmp(name, "raw_alloc_aligned") == 0)

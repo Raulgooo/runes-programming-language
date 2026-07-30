@@ -1,0 +1,10 @@
+-- EXPECT FAIL: storage intrinsic is not available in a stack function
+use std.vec.Vec
+
+stack f invalid() {
+    Vec<i32>.new()
+}
+
+f main() {
+    invalid()
+}

@@ -1,0 +1,129 @@
+use std.core.Result
+use std.fs
+use std.fs.File
+use std.fs.FileReadError
+use std.fs.FsError
+use std.fs.OpenOptions
+use std.io.SeekFrom
+use std.io.write_all_to
+use std.path.PathView
+
+#[safe]
+extern f runes_storage_debug_fail_after(count: usize)
+
+#[safe]
+extern f runes_storage_debug_clear_failure()
+
+dynamic f path_allocation_failure() = result: bool {
+    runes_storage_debug_fail_after(0)
+    result = match fs.open(
+        PathView.from_str("never-opened.bin"),
+        OpenOptions.read_only()
+    ) {
+        Ok(value) -> {
+            unexpected := value
+            unexpected.close()
+            false
+        }
+        Err(failure) -> match failure {
+            Allocation(_, _) -> true,
+            _ -> false,
+        },
+    }
+    runes_storage_debug_clear_failure()
+}
+
+dynamic f file_read_failures() = result: bool {
+    result = true
+    options := OpenOptions.read_write()
+    options = options.with_create(true)
+    options = options.with_truncate(true)
+    match fs.open(
+        PathView.from_str("invalid-utf8.bin"),
+        options
+    ) {
+        Ok(value) -> {
+            file := value
+            [2]u8 storage = [0xff, 0xfe]
+            []const u8 bytes = storage
+            match write_all_to<File>(&file, bytes) {
+                Ok(count) -> {
+                    if count != 2 { result = false }
+                }
+                Err(_) -> { result = false }
+            }
+
+            match file.seek(SeekFrom.Start(0)) {
+                Ok(_) -> {}
+                Err(_) -> { result = false }
+            }
+            bool limit_ok = false
+            match file.read_to_end(1) {
+                Ok(unexpected) -> {
+                    bytes_read := unexpected
+                    bytes_read.deinit()
+                }
+                Err(failure) -> match failure {
+                    LimitExceeded(limit) -> {
+                        limit_ok = limit == 1
+                    }
+                    _ -> { limit_ok = false }
+                }
+            }
+            result = result and limit_ok
+
+            match file.seek(SeekFrom.Start(0)) {
+                Ok(_) -> {}
+                Err(_) -> { result = false }
+            }
+            bool utf8_ok = false
+            match file.read_to_string(2) {
+                Ok(unexpected) -> {
+                    text := unexpected
+                    text.deinit()
+                }
+                Err(failure) -> match failure {
+                    InvalidUtf8 -> { utf8_ok = true }
+                    _ -> { utf8_ok = false }
+                }
+            }
+            result = result and utf8_ok
+
+            match file.seek(SeekFrom.Start(0)) {
+                Ok(_) -> {}
+                Err(_) -> { result = false }
+            }
+            runes_storage_debug_fail_after(0)
+            bool allocation_ok = false
+            match file.read_to_end(2) {
+                Ok(unexpected) -> {
+                    bytes_read := unexpected
+                    bytes_read.deinit()
+                }
+                Err(failure) -> match failure {
+                    Allocation(_) -> { allocation_ok = true }
+                    _ -> { allocation_ok = false }
+                }
+            }
+            runes_storage_debug_clear_failure()
+            result = result and allocation_ok
+
+            match file.close() {
+                Ok(closed) -> {
+                    if !closed { result = false }
+                }
+                Err(_) -> { result = false }
+            }
+        }
+        Err(_) -> { result = false }
+    }
+
+    match fs.remove_file(PathView.from_str("invalid-utf8.bin")) {
+        Ok(_) -> {}
+        Err(_) -> { result = false }
+    }
+}
+
+dynamic f main() {
+    print(path_allocation_failure(), " ", file_read_failures())
+}

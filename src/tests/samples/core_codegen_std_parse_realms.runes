@@ -1,0 +1,32 @@
+use std.core.Result
+use std.parse.IntegerParse
+use std.parse.parse_bool
+use std.parse.parse_i64_with
+
+flex f check() = result: bool {
+    result = true
+    match parse_i64_with("-0x2a", IntegerParse.auto()) {
+        Ok(value) -> { if value != -42 { result = false } }
+        Err(_) -> { result = false }
+    }
+    match parse_bool("true") {
+        Ok(value) -> { if !value { result = false } }
+        Err(_) -> { result = false }
+    }
+}
+
+dynamic f dynamic_case() = result: bool {
+    result = check()
+}
+
+regional f regional_case() = result: bool {
+    result = check()
+}
+
+gc f gc_case() = result: bool {
+    result = check()
+}
+
+f main() {
+    print(dynamic_case(), " ", regional_case(), " ", gc_case())
+}

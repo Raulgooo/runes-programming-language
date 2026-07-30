@@ -1,0 +1,246 @@
+use std.core.IoError
+use std.core.Result
+use std.format.FormatError
+use std.format.IntegerFormat
+use std.format.TextFormat
+use std.format.write_debug_str_to
+use std.format.write_str_to
+use std.format.write_u64_to
+use std.io.FixedBufferWriter
+use std.io.StringWriter
+use std.io.WriteError
+use std.io.Writer
+use std.string.String
+
+#[safe]
+extern f runes_str_view(value: *const u8, length: usize) = result: str
+
+type ScriptedWriter = {
+    output: []u8
+    position: usize
+    maximum: usize
+    interrupts: usize
+    zero_progress: bool
+    fail: bool
+    invalid_count: bool
+}
+
+method Writer for ScriptedWriter {
+    flex f write(
+        self: *ScriptedWriter,
+        bytes: []const u8
+    ) = outcome: Result<usize, WriteError> {
+        unsafe {
+            if self.interrupts > 0 {
+                self.interrupts = self.interrupts - 1
+                outcome = Result.Err<usize, WriteError>(
+                    WriteError.Io(IoError.Interrupted())
+                )
+                return
+            }
+            if self.zero_progress {
+                outcome = Result.Ok<usize, WriteError>(0)
+                return
+            }
+            if self.invalid_count {
+                outcome = Result.Ok<usize, WriteError>(bytes.len + 1)
+                return
+            }
+            if self.fail {
+                outcome = Result.Err<usize, WriteError>(
+                    WriteError.Io(IoError.BrokenPipe())
+                )
+                return
+            }
+            usize count = bytes.len
+            if count > self.maximum {
+                count = self.maximum
+            }
+            for (0..count) |index| {
+                self.output[self.position + index] = bytes[index]
+            }
+            self.position = self.position + count
+            outcome = Result.Ok<usize, WriteError>(count)
+        }
+    }
+}
+
+f scripted(
+    output: []u8,
+    maximum: usize
+) = result: ScriptedWriter {
+    result = ScriptedWriter(
+        output: output,
+        position: 0,
+        maximum: maximum,
+        interrupts: 0,
+        zero_progress: false,
+        fail: false,
+        invalid_count: false
+    )
+}
+
+dynamic f main() {
+    bool ok = true
+    [128]u8 storage = []
+    []u8 output = storage
+
+    partial := scripted(output, 3)
+    partial.interrupts = 2
+    options := IntegerFormat.hex_upper()
+    options.prefix = true
+    options.width = 18
+    options.padding = 0x30
+    match write_u64_to<ScriptedWriter>(
+        &partial,
+        0x123456789abcdef0,
+        options
+    ) {
+        Ok(written) -> {
+            if written != 18 {
+                ok = false
+            }
+            if runes_str_view(&storage[0], written) != "0X123456789ABCDEF0" {
+                ok = false
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    text_writer := scripted(output, 1)
+    match write_debug_str_to<ScriptedWriter>(
+        &text_writer,
+        "é\n",
+        TextFormat.standard()
+    ) {
+        Ok(written) -> {
+            if runes_str_view(&storage[0], written) != "\"é\\n\"" {
+                ok = false
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    zero := scripted(output, 4)
+    zero.zero_progress = true
+    match write_str_to<ScriptedWriter>(
+        &zero,
+        "x",
+        TextFormat.standard()
+    ) {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                Writer(reason) -> match reason {
+                    NoProgress -> { ok = ok }
+                    _ -> { ok = false }
+                }
+                _ -> { ok = false }
+            }
+        }
+    }
+
+    invalid := scripted(output, 4)
+    invalid.invalid_count = true
+    match write_str_to<ScriptedWriter>(
+        &invalid,
+        "x",
+        TextFormat.standard()
+    ) {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                Writer(reason) -> match reason {
+                    InvalidCount(count) -> {
+                        if count != 2 { ok = false }
+                    }
+                    _ -> { ok = false }
+                }
+                _ -> { ok = false }
+            }
+        }
+    }
+
+    broken := scripted(output, 4)
+    broken.fail = true
+    match write_str_to<ScriptedWriter>(
+        &broken,
+        "x",
+        TextFormat.standard()
+    ) {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                Writer(reason) -> match reason {
+                    Io(io_failure) -> match io_failure {
+                        BrokenPipe -> { ok = ok }
+                        _ -> { ok = false }
+                    }
+                    _ -> { ok = false }
+                }
+                _ -> { ok = false }
+            }
+        }
+    }
+
+    [4]u8 fixed_storage = []
+    []u8 fixed_slice = fixed_storage
+    fixed := FixedBufferWriter.new(fixed_slice)
+    match write_str_to<FixedBufferWriter>(
+        &fixed,
+        "hello",
+        TextFormat.standard()
+    ) {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                Writer(reason) -> match reason {
+                    NoProgress -> {
+                        if fixed.position != 4 { ok = false }
+                    }
+                    _ -> { ok = false }
+                }
+                _ -> { ok = false }
+            }
+        }
+    }
+
+    value := String.from_str("")
+    string_writer := StringWriter(target: &value)
+    match write_str_to<StringWriter>(
+        &string_writer,
+        "é",
+        TextFormat.standard()
+    ) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match write_u64_to<StringWriter>(
+        &string_writer,
+        42,
+        IntegerFormat.decimal()
+    ) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    if value.as_str() != "é42" {
+        ok = false
+    }
+    [2]u8 malformed = [0xc3, 0x28]
+    []const u8 malformed_view = malformed
+    match string_writer.write(malformed_view) {
+        Ok(_) -> { ok = false }
+        Err(reason) -> {
+            match reason {
+                InvalidUtf8 -> { ok = ok }
+                _ -> { ok = false }
+            }
+        }
+    }
+    if value.as_str() != "é42" {
+        ok = false
+    }
+    value.deinit()
+
+    print(ok)
+}

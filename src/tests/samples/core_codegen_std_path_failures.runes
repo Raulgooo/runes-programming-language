@@ -1,0 +1,44 @@
+use std.core.AllocationError
+use std.path.PathError
+use std.path.PathView
+use std.path.Path
+
+extern f runes_storage_debug_fail_after(count: usize)
+extern f runes_storage_debug_clear_failure()
+
+dynamic f main() {
+    bool ok = true
+
+    runes_storage_debug_fail_after(0)
+    match Path.tnormalize(PathView.from_str("a/b")) {
+        Ok(value) -> {
+            path := value
+            path.deinit()
+            ok = false
+        }
+        Err(failure) -> match failure {
+            OutOfMemory -> { ok = ok }
+            _ -> { ok = false }
+        }
+    }
+    runes_storage_debug_clear_failure()
+
+    runes_storage_debug_fail_after(0)
+    match Path.tjoin(
+        PathView.from_str("a"),
+        PathView.from_str("b")
+    ) {
+        Ok(value) -> {
+            path := value
+            path.deinit()
+            ok = false
+        }
+        Err(failure) -> match failure {
+            OutOfMemory -> { ok = ok }
+            _ -> { ok = false }
+        }
+    }
+    runes_storage_debug_clear_failure()
+
+    print(ok)
+}

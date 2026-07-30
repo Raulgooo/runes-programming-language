@@ -1,0 +1,178 @@
+use std.core.Result
+use std.string.String
+use std.string.StringError
+use std.text.is_valid_utf8
+
+dynamic f repeated_growth() = result: bool {
+    result = true
+    value := String.new()
+    for (0..32) |_| {
+        value.push('a')
+        if !is_valid_utf8(value.as_str()) {
+            result = false
+        }
+        value.push('é')
+        if !is_valid_utf8(value.as_str()) {
+            result = false
+        }
+        value.push('界')
+        if !is_valid_utf8(value.as_str()) {
+            result = false
+        }
+        value.push('🌍')
+        if !is_valid_utf8(value.as_str()) {
+            result = false
+        }
+    }
+    char maximum = 0x10ffff as char
+    value.push(maximum)
+    if value.byte_len() != 324 {
+        result = false
+    }
+    if !is_valid_utf8(value.as_str()) {
+        result = false
+    }
+    value.deinit()
+}
+
+dynamic f operation_pairs() = result: bool {
+    result = true
+    ordinary := String.new()
+    if ordinary.reserve(4) < 4 {
+        result = false
+    }
+    ordinary.deinit()
+
+    match String.tnew() {
+        Ok(value) -> {
+            match value.treserve(4) {
+                Ok(capacity) -> {
+                    if capacity < 4 {
+                        result = false
+                    }
+                }
+                Err(_) -> {
+                    result = false
+                }
+            }
+            value.deinit()
+        }
+        Err(_) -> {
+            result = false
+        }
+    }
+
+    match String.twith_capacity(0) {
+        Ok(value) -> {
+            match value.tpush('A') {
+                Ok(_) -> {}
+                Err(_) -> {
+                    result = false
+                }
+            }
+            match value.tpush_str("é") {
+                Ok(length) -> {
+                    if length != 3 {
+                        result = false
+                    }
+                }
+                Err(_) -> {
+                    result = false
+                }
+            }
+            match value.tclear() {
+                Ok(length) -> {
+                    if length != 0 {
+                        result = false
+                    }
+                }
+                Err(_) -> {
+                    result = false
+                }
+            }
+            value.deinit()
+        }
+        Err(_) -> {
+            result = false
+        }
+    }
+
+    match String.tfrom_str("copy") {
+        Ok(value) -> {
+            if value.as_str() != "copy" {
+                result = false
+            }
+            value.deinit()
+        }
+        Err(_) -> {
+            result = false
+        }
+    }
+}
+
+dynamic f main() {
+    value := String.from_str("hé")
+    bool ok = operation_pairs()
+    if !repeated_growth() {
+        ok = false
+    }
+    if value.byte_len() != 3 {
+        ok = false
+    }
+    if value.push('界') != 6 {
+        ok = false
+    }
+    if value.push_str("\0!") != 8 {
+        ok = false
+    }
+    if value.as_str() != "hé界\0!" {
+        ok = false
+    }
+    if value.as_bytes().len != 8 {
+        ok = false
+    }
+    match value.ttruncate(4) {
+        Ok(_) -> {
+            ok = false
+        }
+        Err(failure) -> {
+            ok = match failure {
+                InvalidBoundary(index) -> index == 4,
+                _ -> false,
+            }
+        }
+    }
+    match value.ttruncate(3) {
+        Ok(length) -> {
+            if length != 3 {
+                ok = false
+            }
+        }
+        Err(_) -> {
+            ok = false
+        }
+    }
+    if value.as_str() != "hé" {
+        ok = false
+    }
+
+    [2]u8 malformed = [0xc0, 0x80]
+    unsafe {
+        []const u8 malformed_view = const_slice(&malformed, 2)
+        match String.from_bytes(malformed_view) {
+            Ok(unexpected) -> {
+                unexpected.deinit()
+                ok = false
+            }
+            Err(failure) -> {
+                ok = match failure {
+                    InvalidUtf8 -> true,
+                    _ -> false,
+                }
+            }
+        }
+    }
+
+    print(ok)
+    value.deinit()
+}

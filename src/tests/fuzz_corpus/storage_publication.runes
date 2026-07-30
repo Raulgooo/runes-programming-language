@@ -1,0 +1,10 @@
+extern f tstorage_set_initialized(
+    pointer: *void,
+    expected_old: usize,
+    new_initialized: usize,
+    capacity: usize
+) = result: bool
+
+gc f publish(pointer: *u8) = result: bool {
+    result = tstorage_set_initialized(pointer, 0, 1, 1)
+}

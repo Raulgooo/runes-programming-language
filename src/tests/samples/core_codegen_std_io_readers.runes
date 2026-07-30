@@ -1,0 +1,265 @@
+use std.core.IoError
+use std.core.Result
+use std.io.BufferedReader
+use std.io.ExactReadError
+use std.io.LineReadError
+use std.io.ReadError
+use std.io.Reader
+use std.io.SeekFrom
+use std.io.SliceReader
+use std.io.read_exact_from
+use std.io.read_line_bytes_from
+use std.io.read_line_from
+
+#[safe]
+extern f runes_str_view(value: *const u8, length: usize) = result: str
+
+type ScriptedReader = {
+    input: []const u8
+    position: usize
+    maximum: usize
+    interrupts: usize
+    calls: usize
+    zero_progress: bool
+    invalid_count: bool
+}
+
+method Reader for ScriptedReader {
+    flex f read(
+        self: *ScriptedReader,
+        bytes: []u8
+    ) = outcome: Result<usize, ReadError> {
+        unsafe {
+            self.calls = self.calls + 1
+            if self.interrupts > 0 {
+                self.interrupts = self.interrupts - 1
+                outcome = Result.Err<usize, ReadError>(
+                    ReadError.Io(IoError.Interrupted())
+                )
+                return
+            }
+            if self.zero_progress {
+                outcome = Result.Ok<usize, ReadError>(0)
+                return
+            }
+            if self.invalid_count {
+                outcome = Result.Ok<usize, ReadError>(bytes.len + 1)
+                return
+            }
+            if bytes.len == 0 {
+                outcome = Result.Ok<usize, ReadError>(0)
+                return
+            }
+            if self.position >= self.input.len {
+                outcome = Result.Err<usize, ReadError>(
+                    ReadError.Io(IoError.EndOfInput())
+                )
+                return
+            }
+            usize count = self.input.len - self.position
+            if count > bytes.len {
+                count = bytes.len
+            }
+            if count > self.maximum {
+                count = self.maximum
+            }
+            for (0..count) |index| {
+                bytes[index] = self.input[self.position + index]
+            }
+            self.position = self.position + count
+            outcome = Result.Ok<usize, ReadError>(count)
+        }
+    }
+}
+
+f scripted(
+    input: []const u8,
+    maximum: usize
+) = result: ScriptedReader {
+    result = ScriptedReader(
+        input: input,
+        position: 0,
+        maximum: maximum,
+        interrupts: 0,
+        calls: 0,
+        zero_progress: false,
+        invalid_count: false
+    )
+}
+
+dynamic f main() {
+    bool ok = true
+
+    [6]u8 source_storage = [0x61, 0x62, 0x63, 0x64, 0x65, 0x66]
+    []const u8 source = source_storage
+    slice := SliceReader.new(source)
+    [4]u8 exact_storage = []
+    []u8 exact = exact_storage
+    match read_exact_from<SliceReader>(&slice, exact) {
+        Ok(count) -> {
+            if count != 4 { ok = false }
+            if runes_str_view(&exact_storage[0], 4) != "abcd" {
+                ok = false
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+    match slice.seek(SeekFrom.Current(-2)) {
+        Ok(position) -> { if position != 2 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    [2]u8 seek_storage = []
+    []u8 seek_output = seek_storage
+    match read_exact_from<SliceReader>(&slice, seek_output) {
+        Ok(_) -> {
+            if runes_str_view(&seek_storage[0], 2) != "cd" {
+                ok = false
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+    match slice.seek(SeekFrom.End(-1)) {
+        Ok(position) -> { if position != 5 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match slice.seek(SeekFrom.Start(7)) {
+        Ok(_) -> { ok = false }
+        Err(reason) -> match reason {
+            InvalidInput -> { ok = ok }
+            _ -> { ok = false }
+        }
+    }
+
+    partitioned := scripted(source, 1)
+    partitioned.interrupts = 3
+    [6]u8 partitioned_storage = []
+    []u8 partitioned_output = partitioned_storage
+    match read_exact_from<ScriptedReader>(
+        &partitioned,
+        partitioned_output
+    ) {
+        Ok(count) -> {
+            if count != 6 { ok = false }
+            if partitioned.calls != 9 { ok = false }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    truncated := scripted(source, 3)
+    [8]u8 short_storage = []
+    []u8 short_output = short_storage
+    match read_exact_from<ScriptedReader>(&truncated, short_output) {
+        Ok(_) -> { ok = false }
+        Err(failure) -> match failure {
+            UnexpectedEnd(completed) -> {
+                if completed != 6 { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    zero := scripted(source, 3)
+    zero.zero_progress = true
+    match read_exact_from<ScriptedReader>(&zero, exact) {
+        Ok(_) -> { ok = false }
+        Err(failure) -> match failure {
+            UnexpectedEnd(completed) -> {
+                if completed != 0 { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    invalid := scripted(source, 3)
+    invalid.invalid_count = true
+    match read_exact_from<ScriptedReader>(&invalid, exact) {
+        Ok(_) -> { ok = false }
+        Err(failure) -> match failure {
+            Read(reason) -> match reason {
+                InvalidCount(count) -> {
+                    if count != 5 { ok = false }
+                }
+                _ -> { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    [13]u8 lines_storage = [
+        0x61, 0x6c, 0x70, 0x68, 0x61, 0x0a,
+        0x62, 0x65, 0x74, 0x61, 0x0a, 0xc3, 0xa9
+    ]
+    []const u8 lines = lines_storage
+    line_source := scripted(lines, 13)
+    [3]u8 read_buffer_storage = []
+    []u8 read_buffer = read_buffer_storage
+    buffered := BufferedReader<ScriptedReader>.new(
+        &line_source,
+        read_buffer
+    )
+    [8]u8 line_storage = []
+    []u8 line_output = line_storage
+
+    match read_line_from<BufferedReader<ScriptedReader>>(
+        &buffered,
+        line_output
+    ) {
+        Ok(value) -> { if value != "alpha" { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match read_line_from<BufferedReader<ScriptedReader>>(
+        &buffered,
+        line_output
+    ) {
+        Ok(value) -> { if value != "beta" { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match read_line_from<BufferedReader<ScriptedReader>>(
+        &buffered,
+        line_output
+    ) {
+        Ok(value) -> { if value != "é" { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match read_line_from<BufferedReader<ScriptedReader>>(
+        &buffered,
+        line_output
+    ) {
+        Ok(_) -> { ok = false }
+        Err(reason) -> match reason {
+            EndOfInput -> { ok = ok }
+            _ -> { ok = false }
+        }
+    }
+    -- Four backend reads cover thirteen input bytes plus EOF; line scanning
+    -- does not call the backend once per byte.
+    if line_source.calls != 6 {
+        ok = false
+    }
+
+    [5]u8 long_storage = [0x61, 0x62, 0x63, 0x64, 0x0a]
+    []const u8 long_source = long_storage
+    long_reader := SliceReader.new(long_source)
+    [3]u8 limited_storage = []
+    []u8 limited = limited_storage
+    match read_line_bytes_from<SliceReader>(&long_reader, limited) {
+        Ok(_) -> { ok = false }
+        Err(reason) -> match reason {
+            TooLong(limit) -> { if limit != 3 { ok = false } }
+            _ -> { ok = false }
+        }
+    }
+
+    [3]u8 malformed_storage = [0xc3, 0x28, 0x0a]
+    []const u8 malformed = malformed_storage
+    malformed_reader := SliceReader.new(malformed)
+    match read_line_from<SliceReader>(&malformed_reader, line_output) {
+        Ok(_) -> { ok = false }
+        Err(reason) -> match reason {
+            InvalidUtf8 -> { ok = ok }
+            _ -> { ok = false }
+        }
+    }
+
+    print(ok)
+}

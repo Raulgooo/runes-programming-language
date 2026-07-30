@@ -1,0 +1,188 @@
+use std.core.ParseError
+use std.core.Result
+use std.parse.IntegerParse
+use std.parse.parse_bool
+use std.parse.parse_char
+use std.parse.parse_i8
+use std.parse.parse_i8_with
+use std.parse.parse_u8
+use std.parse.parse_u64
+use std.parse.parse_u64_with
+
+#[safe]
+extern f runes_str_view(value: *const u8, length: usize) = result: str
+
+f main() {
+    bool ok = true
+
+    match parse_u8("9999") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                OutOfRange(index) -> { if index != 2 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_i8("-129") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                OutOfRange(index) -> { if index != 3 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_u64("") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                UnexpectedEnd(index) -> { if index != 0 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_u64("+") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                UnexpectedEnd(index) -> { if index != 1 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_u64_with("0x", IntegerParse.auto()) {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                UnexpectedEnd(index) -> { if index != 2 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_u64("-1") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                InvalidSyntax(index) -> { if index != 0 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_u64(" 1") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                InvalidSyntax(index) -> { if index != 0 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_u64("1 ") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                InvalidSyntax(index) -> { if index != 1 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_u64("1_0") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                InvalidSyntax(index) -> { if index != 1 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_u64("0x10") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                InvalidSyntax(index) -> { if index != 1 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_u64_with("102", IntegerParse.binary()) {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                InvalidSyntax(index) -> { if index != 2 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_i8_with("-0b10000000", IntegerParse.auto()) {
+        Ok(value) -> { if value != -128 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_u64_with("+0Xff", IntegerParse.auto()) {
+        Ok(value) -> { if value != 255 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+
+    match parse_bool("tru") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                UnexpectedEnd(index) -> { if index != 3 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_bool("True") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                InvalidSyntax(index) -> { if index != 0 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_bool("truex") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                InvalidSyntax(index) -> { if index != 4 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+
+    match parse_char("") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                UnexpectedEnd(index) -> { if index != 0 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    match parse_char("éx") {
+        Ok(_) -> { ok = false }
+        Err(failure) -> {
+            match failure {
+                InvalidSyntax(index) -> { if index != 2 { ok = false } }
+                _ -> { ok = false }
+            }
+        }
+    }
+    [2]u8 malformed = [0xc3, 0x28]
+    unsafe {
+        match parse_char(runes_str_view(&malformed, 2)) {
+            Ok(_) -> { ok = false }
+            Err(failure) -> {
+                match failure {
+                    InvalidSyntax(index) -> {
+                        if index != 0 { ok = false }
+                    }
+                    _ -> { ok = false }
+                }
+            }
+        }
+    }
+
+    print(ok)
+}

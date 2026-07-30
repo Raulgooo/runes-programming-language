@@ -1,6 +1,8 @@
-use std.allocation.allocate_array
+use std.allocation.tallocate
+use std.allocation.tallocate_array
+use std.allocation.tpublish_initialized
 use std.allocation.release_array
-use std.allocation.resize_array
+use std.allocation.tresize_array
 use std.core.AllocationError
 use std.core.Result
 
@@ -9,6 +11,12 @@ extern f runes_storage_debug_fail_after(count: usize)
 
 #[safe]
 extern f runes_storage_debug_clear_failure()
+
+#[safe]
+extern f runes_gc_collect()
+
+#[safe]
+extern f runes_gc_debug_object_count() = result: usize
 
 type Buffer<T> = {
     data: *T
@@ -24,12 +32,41 @@ in gc type Buffer<T> = {
 }
 
 method Buffer<T> {
+    flex f push(
+        self: *Buffer<T>,
+        value: T
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            if self.len >= self.capacity {
+                outcome = Result.Err<usize, AllocationError>(
+                    AllocationError.CapacityOverflow()
+                )
+            } else {
+                self.data[self.len] = value
+                match tpublish_initialized<T>(
+                    self.data,
+                    self.len,
+                    self.len + 1,
+                    self.capacity
+                ) {
+                    Ok(new_length) -> {
+                        self.len = new_length
+                        outcome = Result.Ok<usize, AllocationError>(new_length)
+                    }
+                    Err(failure) -> {
+                        outcome = Result.Err<usize, AllocationError>(failure)
+                    }
+                }
+            }
+        }
+    }
+
     flex f grow(
         self: *Buffer<T>,
         new_capacity: usize
     ) = outcome: Result<usize, AllocationError> {
         unsafe {
-            match resize_array<T>(
+            match tresize_array<T>(
                 self.data,
                 self.len,
                 self.capacity,
@@ -44,6 +81,71 @@ method Buffer<T> {
                     outcome = Result.Err<usize, AllocationError>(failure)
                 }
             }
+        }
+    }
+
+    flex f pop(
+        self: *Buffer<T>
+    ) = outcome: Result<T, AllocationError> {
+        unsafe {
+            if self.len == 0 {
+                outcome = Result.Err<T, AllocationError>(
+                    AllocationError.CapacityOverflow()
+                )
+            } else {
+                usize new_length = self.len - 1
+                T value = self.data[new_length]
+                match tpublish_initialized<T>(
+                    self.data,
+                    self.len,
+                    new_length,
+                    self.capacity
+                ) {
+                    Ok(_) -> {
+                        self.len = new_length
+                        outcome = Result.Ok<T, AllocationError>(value)
+                    }
+                    Err(failure) -> {
+                        outcome = Result.Err<T, AllocationError>(failure)
+                    }
+                }
+            }
+        }
+    }
+
+    flex f truncate(
+        self: *Buffer<T>,
+        new_length: usize
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            if new_length > self.len {
+                outcome = Result.Err<usize, AllocationError>(
+                    AllocationError.CapacityOverflow()
+                )
+            } else {
+                match tpublish_initialized<T>(
+                    self.data,
+                    self.len,
+                    new_length,
+                    self.capacity
+                ) {
+                    Ok(_) -> {
+                        self.len = new_length
+                        outcome = Result.Ok<usize, AllocationError>(new_length)
+                    }
+                    Err(failure) -> {
+                        outcome = Result.Err<usize, AllocationError>(failure)
+                    }
+                }
+            }
+        }
+    }
+
+    flex f clear(
+        self: *Buffer<T>
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            outcome = self.truncate(0)
         }
     }
 
@@ -64,22 +166,36 @@ f grow_owned(
 }
 
 dynamic f dynamic_case() = result: i32 {
-    match allocate_array<i32>(2) {
+    match tallocate_array<i32>(2) {
         Ok(pointer) -> {
-            unsafe {
-                pointer[0] = 10
-                pointer[1] = 20
-            }
             Buffer<i32> buffer = Buffer<i32>(
                 data: pointer,
-                len: 2,
+                len: 0,
                 capacity: 2
             )
+            buffer.push(10)
+            buffer.push(20)
             match grow_owned(&buffer, 4) {
                 Ok(_) -> {
-                    unsafe {
-                        buffer.data[2] = 30
-                        result = buffer.data[0] + buffer.data[1] + buffer.data[2]
+                    match buffer.push(30) {
+                        Ok(_) -> {
+                            unsafe {
+                                result = buffer.data[0] + buffer.data[1] + buffer.data[2]
+                            }
+                            match buffer.pop() {
+                                Ok(value) -> {
+                                    if value != 30 {
+                                        result = -4
+                                    }
+                                }
+                                Err(_) -> {
+                                    result = -5
+                                }
+                            }
+                        }
+                        Err(_) -> {
+                            result = -3
+                        }
                     }
                 }
                 Err(_) -> {
@@ -95,21 +211,25 @@ dynamic f dynamic_case() = result: i32 {
 }
 
 regional f regional_case() = result: i32 {
-    match allocate_array<i32>(1) {
+    match tallocate_array<i32>(1) {
         Ok(pointer) -> {
-            unsafe {
-                pointer[0] = 7
-            }
             Buffer<i32> buffer = Buffer<i32>(
                 data: pointer,
-                len: 1,
+                len: 0,
                 capacity: 1
             )
+            buffer.push(7)
             match grow_owned(&buffer, 3) {
                 Ok(_) -> {
-                    unsafe {
-                        buffer.data[1] = 8
-                        result = buffer.data[0] + buffer.data[1]
+                    match buffer.push(8) {
+                        Ok(_) -> {
+                            unsafe {
+                                result = buffer.data[0] + buffer.data[1]
+                            }
+                        }
+                        Err(_) -> {
+                            result = -3
+                        }
                     }
                 }
                 Err(_) -> {
@@ -125,22 +245,26 @@ regional f regional_case() = result: i32 {
 }
 
 gc f gc_case() = result: i32 {
-    match allocate_array<i32>(1) {
+    match tallocate_array<i32>(1) {
         Ok(pointer) -> {
-            unsafe {
-                pointer[0] = 40
-            }
             Buffer<i32> buffer = Buffer<i32>(
                 data: pointer,
-                len: 1,
+                len: 0,
                 capacity: 1,
                 traced: true
             )
+            buffer.push(40)
             match grow_owned(&buffer, 2) {
                 Ok(_) -> {
-                    unsafe {
-                        buffer.data[1] = 2
-                        result = buffer.data[0] + buffer.data[1]
+                    match buffer.push(2) {
+                        Ok(_) -> {
+                            unsafe {
+                                result = buffer.data[0] + buffer.data[1]
+                            }
+                        }
+                        Err(_) -> {
+                            result = -3
+                        }
                     }
                 }
                 Err(_) -> {
@@ -157,16 +281,14 @@ gc f gc_case() = result: i32 {
 
 dynamic f failure_preserves_buffer() = result: bool {
     result = false
-    match allocate_array<i32>(1) {
+    match tallocate_array<i32>(1) {
         Ok(pointer) -> {
-            unsafe {
-                pointer[0] = 99
-            }
             Buffer<i32> buffer = Buffer<i32>(
                 data: pointer,
-                len: 1,
+                len: 0,
                 capacity: 1
             )
+            buffer.push(99)
             runes_storage_debug_fail_after(0)
             match grow_owned(&buffer, 8) {
                 Ok(_) -> {
@@ -194,6 +316,168 @@ dynamic f failure_preserves_buffer() = result: bool {
     }
 }
 
+type Cell = {
+    value: i32
+}
+
+type Link = {
+    target: *Cell
+}
+
+dynamic f high_level_dynamic_allocate() = result: i32 {
+    match tallocate<Cell>(Cell(value: 7)) {
+        Ok(pointer) -> {
+            unsafe {
+                result = pointer.value
+            }
+            release_array<Cell>(pointer)
+        }
+        Err(_) -> {
+            result = -1
+        }
+    }
+}
+
+regional f high_level_regional_allocate() = result: i32 {
+    match tallocate<Cell>(Cell(value: 8)) {
+        Ok(pointer) -> {
+            unsafe {
+                result = pointer.value
+            }
+            release_array<Cell>(pointer)
+        }
+        Err(_) -> {
+            result = -1
+        }
+    }
+}
+
+gc f make_gc_link() = outcome: Result<*Link, AllocationError> {
+    match tallocate<Cell>(Cell(value: 123)) {
+        Ok(cell) -> {
+            match tallocate<Link>(Link(target: cell)) {
+                Ok(link) -> {
+                    outcome = Result.Ok<*Link, AllocationError>(link)
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<*Link, AllocationError>(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<*Link, AllocationError>(failure)
+        }
+    }
+}
+
+gc f make_pointer_buffer(
+) = outcome: Result<Buffer<*Cell>, AllocationError> {
+    match tallocate_array<*Cell>(2) {
+        Ok(storage) -> {
+            Buffer<*Cell> buffer = Buffer<*Cell>(
+                data: storage,
+                len: 0,
+                capacity: 2,
+                traced: true
+            )
+            match tallocate<Cell>(Cell(value: 51)) {
+                Ok(first) -> {
+                    match tallocate<Cell>(Cell(value: 52)) {
+                        Ok(second) -> {
+                            match buffer.push(first) {
+                                Ok(_) -> {
+                                    match buffer.push(second) {
+                                        Ok(_) -> {
+                                            outcome = Result.Ok<
+                                                Buffer<*Cell>,
+                                                AllocationError
+                                            >(buffer)
+                                        }
+                                        Err(failure) -> {
+                                            outcome = Result.Err<
+                                                Buffer<*Cell>,
+                                                AllocationError
+                                            >(failure)
+                                        }
+                                    }
+                                }
+                                Err(failure) -> {
+                                    outcome = Result.Err<
+                                        Buffer<*Cell>,
+                                        AllocationError
+                                    >(failure)
+                                }
+                            }
+                        }
+                        Err(failure) -> {
+                            outcome = Result.Err<
+                                Buffer<*Cell>,
+                                AllocationError
+                            >(failure)
+                        }
+                    }
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<
+                        Buffer<*Cell>,
+                        AllocationError
+                    >(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<
+                Buffer<*Cell>,
+                AllocationError
+            >(failure)
+        }
+    }
+}
+
+gc f pointer_buffer_gc_case() = result: bool {
+    result = false
+    runes_gc_collect()
+    usize baseline = runes_gc_debug_object_count()
+    match make_pointer_buffer() {
+        Ok(buffer) -> {
+            runes_gc_collect()
+            unsafe {
+                result = buffer.data[0].value == 51
+                if buffer.data[1].value != 52 {
+                    result = false
+                }
+            }
+            if runes_gc_debug_object_count() != baseline + 3 {
+                result = false
+            }
+            buffer.clear()
+            runes_gc_collect()
+            if runes_gc_debug_object_count() != baseline + 1 {
+                result = false
+            }
+            buffer.release()
+        }
+        Err(_) -> {
+            result = false
+        }
+    }
+}
+
+gc f high_level_gc_allocate() = result: i32 {
+    match make_gc_link() {
+        Ok(link) -> {
+            runes_gc_collect()
+            unsafe {
+                result = link.target.value
+            }
+            release_array<Link>(link)
+        }
+        Err(_) -> {
+            result = -1
+        }
+    }
+}
+
 f main() {
     print(
         dynamic_case(),
@@ -202,6 +486,14 @@ f main() {
         " ",
         gc_case(),
         " ",
-        failure_preserves_buffer()
+        failure_preserves_buffer(),
+        " ",
+        high_level_dynamic_allocate(),
+        " ",
+        high_level_regional_allocate(),
+        " ",
+        high_level_gc_allocate(),
+        " ",
+        pointer_buffer_gc_case()
     )
 }

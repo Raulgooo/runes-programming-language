@@ -1,0 +1,49 @@
+use std.fs
+use std.fs.File
+use std.fs.OpenOptions
+use std.io.write_all_to
+use std.path.PathView
+
+flex f realm_case(path: PathView) = result: bool {
+    result = true
+    match fs.open(path, OpenOptions.create()) {
+        Ok(value) -> {
+            file := value
+            [5]u8 storage = [0x72, 0x65, 0x61, 0x6c, 0x6d]
+            []const u8 bytes = storage
+            match write_all_to<File>(&file, bytes) {
+                Ok(count) -> {
+                    if count != 5 { result = false }
+                }
+                Err(_) -> { result = false }
+            }
+            match file.close() {
+                Ok(closed) -> {
+                    if !closed { result = false }
+                }
+                Err(_) -> { result = false }
+            }
+        }
+        Err(_) -> { result = false }
+    }
+    match fs.remove_file(path) {
+        Ok(_) -> {}
+        Err(_) -> { result = false }
+    }
+}
+
+dynamic f dynamic_case() = result: bool {
+    result = realm_case(PathView.from_str("dynamic.bin"))
+}
+
+regional f regional_case() = result: bool {
+    result = realm_case(PathView.from_str("regional.bin"))
+}
+
+gc f gc_case() = result: bool {
+    result = realm_case(PathView.from_str("gc.bin"))
+}
+
+dynamic f main() {
+    print(dynamic_case(), " ", regional_case(), " ", gc_case())
+}

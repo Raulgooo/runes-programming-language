@@ -1,0 +1,246 @@
+-- Allocation-free operations over borrowed UTF-8 text.
+--
+-- Every position returned or accepted by this module is a byte offset.
+-- Operations that create str views validate UTF-8 scalar boundaries.
+-- Returned views borrow their source and must not outlive its storage.
+
+use std.core.Option
+
+-- Private runtime ABI used to validate and traverse length-bearing UTF-8.
+extern f runes_str_is_utf8(value: str) = result: bool
+extern f runes_str_is_scalar_boundary(
+    value: str,
+    index: usize
+) = result: bool
+extern f runes_str_decode_next(
+    value: str,
+    index: *usize,
+    scalar: *char
+) = result: bool
+
+pub type TextSplit = {
+    before: str
+    after: str
+}
+
+-- Non-owning forward cursor over Unicode scalar values.
+-- byte_index is the byte offset of the next scalar.
+pub type ScalarCursor = {
+    source: str
+    byte_index: usize
+}
+
+pub method ScalarCursor {
+    f new(source: str) = result: ScalarCursor {
+        result = ScalarCursor(
+            source: source,
+            byte_index: 0
+        )
+    }
+
+    f position(self) = result: usize {
+        result = self.byte_index
+    }
+
+    f is_done(self) = result: bool {
+        result = self.byte_index >= self.source.len
+    }
+
+    f next(self: *ScalarCursor) = result: Option<char> {
+        unsafe {
+            char scalar = '\0'
+            if runes_str_decode_next(
+                self.source,
+                &self.byte_index,
+                &scalar
+            ) {
+                result = Option.Some<char>(scalar)
+            } else {
+                result = Option.None<char>()
+            }
+        }
+    }
+}
+
+pub f scalars(source: str) = result: ScalarCursor {
+    result = ScalarCursor.new(source)
+}
+
+pub f is_empty(value: str) = result: bool {
+    result = value.len == 0
+}
+
+pub f byte_len(value: str) = result: usize {
+    result = value.len
+}
+
+pub f is_valid_utf8(value: str) = result: bool {
+    result = runes_str_is_utf8(value)
+}
+
+pub f is_scalar_boundary(
+    value: str,
+    byte_index: usize
+) = result: bool {
+    result = runes_str_is_scalar_boundary(value, byte_index)
+}
+
+pub f scalar_count(value: str) = result: usize {
+    result = 0
+    usize byte_index = 0
+    char scalar = '\0'
+    while runes_str_decode_next(value, &byte_index, &scalar) {
+        result = result + 1
+    }
+}
+
+pub f starts_with(value: str, prefix: str) = result: bool {
+    result = prefix.len <= value.len
+    if result {
+        for (0..prefix.len) |byte_index| {
+            if value[byte_index] != prefix[byte_index] {
+                result = false
+                break
+            }
+        }
+    }
+}
+
+pub f ends_with(value: str, suffix: str) = result: bool {
+    result = suffix.len <= value.len
+    if result {
+        usize start = value.len - suffix.len
+        for (0..suffix.len) |byte_index| {
+            if value[start + byte_index] != suffix[byte_index] {
+                result = false
+                break
+            }
+        }
+    }
+}
+
+pub f find(value: str, needle: str) = result: Option<usize> {
+    result = Option.None<usize>()
+
+    if needle.len == 0 {
+        result = Option.Some<usize>(0)
+        return
+    }
+
+    if needle.len > value.len {
+        return
+    }
+
+    usize final_start = value.len - needle.len
+    for (0..=final_start) |start| {
+        bool matches = true
+        for (0..needle.len) |offset| {
+            if value[start + offset] != needle[offset] {
+                matches = false
+                break
+            }
+        }
+        if matches {
+            result = Option.Some<usize>(start)
+            return
+        }
+    }
+}
+
+pub f contains(value: str, needle: str) = result: bool {
+    result = match find(value, needle) {
+        Some(_) -> true,
+        None -> false,
+    }
+}
+
+-- Return the half-open byte range [start, end) when both endpoints are valid
+-- scalar boundaries. Invalid order, bounds, or boundaries return None.
+pub f substring(
+    value: str,
+    start: usize,
+    end: usize
+) = result: Option<str> {
+    result = Option.None<str>()
+    if start <= end {
+        if end <= value.len {
+            if runes_str_is_scalar_boundary(value, start) {
+                if runes_str_is_scalar_boundary(value, end) {
+                    result = Option.Some<str>(value[start..end])
+                }
+            }
+        }
+    }
+}
+
+f is_ascii_whitespace(value: u8) = result: bool {
+    result = value == 0x20
+    if value >= 0x09 {
+        if value <= 0x0d {
+            result = true
+        }
+    }
+}
+
+pub f trim_ascii_start(value: str) = result: str {
+    usize start = 0
+    while start < value.len {
+        if !is_ascii_whitespace(value[start]) {
+            break
+        }
+        start = start + 1
+    }
+    result = value[start..value.len]
+}
+
+pub f trim_ascii_end(value: str) = result: str {
+    usize end = value.len
+    while end > 0 {
+        if !is_ascii_whitespace(value[end - 1]) {
+            break
+        }
+        end = end - 1
+    }
+    result = value[0..end]
+}
+
+pub f trim_ascii(value: str) = result: str {
+    usize start = 0
+    while start < value.len {
+        if !is_ascii_whitespace(value[start]) {
+            break
+        }
+        start = start + 1
+    }
+
+    usize end = value.len
+    while end > start {
+        if !is_ascii_whitespace(value[end - 1]) {
+            break
+        }
+        end = end - 1
+    }
+
+    result = value[start..end]
+}
+
+pub f split_once(
+    value: str,
+    delimiter: str
+) = result: Option<TextSplit> {
+    result = Option.None<TextSplit>()
+    match find(value, delimiter) {
+        Some(byte_index) -> {
+            usize after_start = byte_index + delimiter.len
+            result = Option.Some<TextSplit>(
+                TextSplit(
+                    before: value[0..byte_index],
+                    after: value[after_start..value.len]
+                )
+            )
+        }
+        None -> {
+            result = Option.None<TextSplit>()
+        }
+    }
+}

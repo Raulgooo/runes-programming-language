@@ -16,6 +16,14 @@ Current notes:
    combines inferred `flex` specialization, realm-aware storage primitives,
    compile-time realm blocks, optional realm-specific definitions for types,
    interfaces, functions, and methods, blacklists, and testing methodology.
+4. [GC initialized storage before `Vec<T>`](gc-initialized-storage-before-vec-plan.md)
+   records the implemented initialized-prefix publication contract, the safe
+   `allocate<T>(value)`/`tallocate<T>(value)` shapes, and the completed
+   compiler/runtime test gate before public vector library work.
+5. [Associated (static) methods](associated-methods-plan.md) proposes
+   type-qualified calls such as `Vec<i32>.new()`, formalizes no-`self`
+   functions in method blocks, defines realm behavior, and specifies the
+   compiler, library migration, tooling, and testing milestones.
 
 When a decision becomes stable, update the specification, reference,
 implementation-status document, feature matrix, compiler tests, and relevant

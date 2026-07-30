@@ -1,0 +1,10 @@
+-- EXPECT FAIL: Method receiver 'self' must be the first parameter
+type Box = {
+    value: i32
+}
+
+method Box {
+    f broken(value: i32, self) = result: i32 {
+        result = value
+    }
+}

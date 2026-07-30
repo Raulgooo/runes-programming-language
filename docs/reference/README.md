@@ -35,6 +35,14 @@ automatically a language guarantee.
 | Realms, allocation, lifetimes, promotion, GC, pointers, and unsafe operations | [Memory and unsafe](memory-and-unsafe.md) |
 | Modules, projects, visibility, FFI, ABI attributes, builtins, and commands | [Modules, FFI, and tooling](modules-ffi-tooling.md) |
 | Implemented standard-library modules and APIs | [Standard library](standard-library.md) |
+| Borrowed UTF-8 search, views, trimming, splitting, and traversal | [Borrowed text](text.md) |
+| Owning realm-aware growable UTF-8 text | [`String`](string.md) |
+| Typed formatting into buffers, `String`, and static writers | [Formatting](format.md) |
+| Allocation-free integer, boolean, and Unicode-scalar parsing | [Parsing](parse.md) |
+| Readers, writers, buffering, line input, and standard streams | [I/O](io.md) |
+| Byte-preserving lexical paths and syscall representation | [Paths](path.md) |
+| Owning hosted files, metadata, bounded reads, and path operations | [Filesystem](fs.md) |
+| Complete `Vec<T>` API, ownership, realm, and safety contract | [`Vec<T>`](vec.md) |
 | Supported, partial, unsupported, and platform-dependent behavior | [Implementation status](implementation-status.md) |
 | Normative compact rules | [Specification](../specv0_1.md) |
 | Coverage evidence and documentation ownership | [Feature matrix](../feature-matrix.md) |

@@ -1,0 +1,104 @@
+use std.core.ParseError
+use std.core.Result
+use std.parse.IntegerParse
+use std.parse.parse_bool
+use std.parse.parse_char
+use std.parse.parse_i8
+use std.parse.parse_i16
+use std.parse.parse_i32
+use std.parse.parse_i64
+use std.parse.parse_u8
+use std.parse.parse_u16
+use std.parse.parse_u32
+use std.parse.parse_u64
+use std.parse.parse_u64_with
+use std.parse.parse_usize
+
+f main() {
+    bool ok = true
+
+    match parse_i8("-128") {
+        Ok(value) -> { if value != -128 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_i8("127") {
+        Ok(value) -> { if value != 127 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_u8("255") {
+        Ok(value) -> { if value != 255 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_i16("-32768") {
+        Ok(value) -> { if value != -32768 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_u16("65535") {
+        Ok(value) -> { if value != 65535 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_i32("-2147483648") {
+        Ok(value) -> { if value != -2147483648 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_u32("4294967295") {
+        Ok(value) -> { if value != 4294967295 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_i64("-9223372036854775808") {
+        Ok(value) -> {
+            i64 minimum = -9223372036854775807
+            minimum = minimum - 1
+            if value != minimum { ok = false }
+        }
+        Err(_) -> { ok = false }
+    }
+    match parse_i64("9223372036854775807") {
+        Ok(value) -> { if value != 9223372036854775807 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_u64("18446744073709551615") {
+        Ok(value) -> {
+            if value != 18446744073709551615 { ok = false }
+        }
+        Err(_) -> { ok = false }
+    }
+    match parse_usize("18446744073709551615") {
+        Ok(value) -> {
+            if value != 18446744073709551615 { ok = false }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    match parse_u64_with("0x2A", IntegerParse.auto()) {
+        Ok(value) -> { if value != 42 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_u64_with("101010", IntegerParse.binary()) {
+        Ok(value) -> { if value != 42 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_u64_with("52", IntegerParse.octal()) {
+        Ok(value) -> { if value != 42 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_u64_with("2a", IntegerParse.hexadecimal()) {
+        Ok(value) -> { if value != 42 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+
+    match parse_bool("true") {
+        Ok(value) -> { if !value { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_bool("false") {
+        Ok(value) -> { if value { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match parse_char("界") {
+        Ok(value) -> { if value != '界' { ok = false } }
+        Err(_) -> { ok = false }
+    }
+
+    print(ok)
+}

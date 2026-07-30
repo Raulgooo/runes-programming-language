@@ -1,0 +1,228 @@
+use std.core.Result
+use std.format.Alignment
+use std.format.FormatError
+use std.format.IntegerFormat
+use std.format.SignPolicy
+use std.format.append_i64
+use std.format.append_i8
+use std.format.append_i16
+use std.format.append_i32
+use std.format.append_u64
+use std.format.append_u8
+use std.format.append_u16
+use std.format.append_u32
+use std.format.append_usize
+use std.format.write_i64
+use std.format.write_i8
+use std.format.write_i16
+use std.format.write_i32
+use std.format.write_u64
+use std.format.write_u8
+use std.format.write_u16
+use std.format.write_u32
+use std.format.write_usize
+use std.string.String
+
+#[safe]
+extern f runes_str_view(value: *const u8, length: usize) = result: str
+
+dynamic f main() {
+    bool ok = true
+    [64]u8 buffer = []
+    []u8 output = buffer
+
+    decimal := IntegerFormat.decimal()
+    i64 minimum = -9223372036854775807
+    minimum = minimum - 1
+    match write_i64(output, minimum, decimal) {
+        Ok(length) -> {
+            str value = runes_str_view(&buffer[0], length)
+            if value != "-9223372036854775808" {
+                ok = false
+            }
+        }
+        Err(_) -> {
+            ok = false
+        }
+    }
+
+    hex := IntegerFormat.hex_upper()
+    hex.prefix = true
+    hex.sign = SignPolicy.Always()
+    hex.width = 20
+    hex.padding = 0x30
+    match write_u64(output, 0x2a, hex) {
+        Ok(length) -> {
+            str value = runes_str_view(&buffer[0], length)
+            if value != "+0X0000000000000002A" {
+                ok = false
+            }
+        }
+        Err(_) -> {
+            ok = false
+        }
+    }
+
+    left := IntegerFormat.decimal()
+    left.alignment = Alignment.Left()
+    left.width = 5
+    left.padding = 0x2e
+    match write_u64(output, 42, left) {
+        Ok(length) -> {
+            str value = runes_str_view(&buffer[0], length)
+            if value != "42..." {
+                ok = false
+            }
+        }
+        Err(_) -> {
+            ok = false
+        }
+    }
+
+    [2]u8 tiny = [0xaa, 0xbb]
+    []u8 short_output = tiny
+    match write_u64(short_output, 100, decimal) {
+        Ok(_) -> {
+            ok = false
+        }
+        Err(failure) -> {
+            match failure {
+                InsufficientSpace(required) -> {
+                    if required != 3 {
+                        ok = false
+                    }
+                }
+                _ -> {
+                    ok = false
+                }
+            }
+        }
+    }
+    if tiny[0] != 0xaa {
+        ok = false
+    }
+    if tiny[1] != 0xbb {
+        ok = false
+    }
+
+    [20]u8 exact = []
+    []u8 exact_output = exact
+    match write_u64(
+        exact_output,
+        18446744073709551615,
+        decimal
+    ) {
+        Ok(length) -> {
+            str value = runes_str_view(&exact[0], length)
+            if value != "18446744073709551615" {
+                ok = false
+            }
+        }
+        Err(_) -> {
+            ok = false
+        }
+    }
+
+    invalid := IntegerFormat.decimal()
+    invalid.padding = 0xff
+    match write_u64(output, 1, invalid) {
+        Ok(_) -> {
+            ok = false
+        }
+        Err(failure) -> {
+            match failure {
+                InvalidPadding(byte) -> {
+                    if byte != 0xff {
+                        ok = false
+                    }
+                }
+                _ -> {
+                    ok = false
+                }
+            }
+        }
+    }
+
+    match write_u8(output, 255, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match write_u16(output, 65535, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match write_u32(output, 4294967295, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match write_usize(output, 42, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match write_i8(output, -128, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match write_i16(output, -32768, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match write_i32(output, -2147483647 - 1, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+
+    text := String.from_str("value=")
+    match append_i64(&text, -42, decimal) {
+        Ok(_) -> {}
+        Err(_) -> {
+            ok = false
+        }
+    }
+    match append_u64(&text, 255, hex) {
+        Ok(_) -> {}
+        Err(_) -> {
+            ok = false
+        }
+    }
+    if text.as_str() != "value=-42+0X000000000000000FF" {
+        ok = false
+    }
+    text.deinit()
+
+    widths := String.from_str("")
+    match append_u8(&widths, 1, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match append_u16(&widths, 2, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match append_u32(&widths, 3, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match append_usize(&widths, 4, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match append_i8(&widths, -1, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match append_i16(&widths, -2, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match append_i32(&widths, -3, decimal) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    if widths.as_str() != "1234-1-2-3" {
+        ok = false
+    }
+    widths.deinit()
+
+    print(ok)
+}

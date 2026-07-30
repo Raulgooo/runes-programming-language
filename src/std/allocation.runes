@@ -1,17 +1,20 @@
--- Typed, fallible, realm-sensitive backing-storage operations.
+-- Typed, realm-sensitive backing-storage operations.
 --
 -- Fresh allocation follows the effective realm. Resize and release are
 -- intended to be called by an owning type's methods, whose specialization
 -- executes in the receiver's persistent owner realm. The runtime rejects a
 -- pointer that is not owned by that selected backend.
+--
+-- t-prefixed operations return Result. Ordinary operations delegate to them
+-- and invoke AllocationError.fail() when recovery was not requested.
 
 use std.core.AllocationError
 use std.core.Result
 
-pub flex f allocate_array<T>(
+pub flex f tallocate_array<T>(
     count: usize
 ) = outcome: Result<*T, AllocationError> {
-    ?*T pointer = try_allocate(count) as ?*T
+    ?*T pointer = tstorage_allocate(count) as ?*T
     if pointer == null {
         AllocationError failure = match storage_error() {
             2 -> AllocationError.CapacityOverflow(),
@@ -24,13 +27,60 @@ pub flex f allocate_array<T>(
     }
 }
 
-pub flex f resize_array<T>(
+pub flex f tpublish_initialized<T>(
+    pointer: *T,
+    expected_old: usize,
+    new_initialized: usize,
+    capacity: usize
+) = outcome: Result<usize, AllocationError> {
+    if tstorage_set_initialized(
+        pointer,
+        expected_old,
+        new_initialized,
+        capacity
+    ) {
+        outcome = Result.Ok<usize, AllocationError>(new_initialized)
+    } else {
+        AllocationError failure = match storage_error() {
+            2 -> AllocationError.CapacityOverflow(),
+            3 -> AllocationError.OwnerUnavailable(),
+            _ -> AllocationError.OutOfMemory(),
+        }
+        outcome = Result.Err<usize, AllocationError>(failure)
+    }
+}
+
+pub flex f tallocate<T>(
+    value: T
+) = outcome: Result<*T, AllocationError> {
+    match tallocate_array<T>(1) {
+        Ok(pointer) -> {
+            unsafe {
+                pointer[0] = value
+            }
+            match tpublish_initialized<T>(pointer, 0, 1, 1) {
+                Ok(_) -> {
+                    outcome = Result.Ok<*T, AllocationError>(pointer)
+                }
+                Err(failure) -> {
+                    release_array<T>(pointer)
+                    outcome = Result.Err<*T, AllocationError>(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<*T, AllocationError>(failure)
+        }
+    }
+}
+
+pub flex f tresize_array<T>(
     pointer: *T,
     initialized: usize,
     old_capacity: usize,
     new_capacity: usize
 ) = outcome: Result<*T, AllocationError> {
-    ?*T replacement = resize(
+    ?*T replacement = tstorage_resize(
         pointer,
         initialized,
         old_capacity,
@@ -50,4 +100,79 @@ pub flex f resize_array<T>(
 
 pub flex f release_array<T>(pointer: *T) {
     release(pointer)
+}
+
+-- Ordinary names are the concise application-facing operations. They share
+-- the t-prefixed implementation and terminate through the runtime storage
+-- failure policy when recovery was not requested.
+pub flex f allocate_array<T>(count: usize) = outcome: *T {
+    match tallocate_array<T>(count) {
+        Ok(pointer) -> {
+            outcome = pointer
+        }
+        Err(failure) -> {
+            failure.fail()
+            unsafe {
+                outcome = unwrap(null as ?*T)
+            }
+        }
+    }
+}
+
+pub flex f publish_initialized<T>(
+    pointer: *T,
+    expected_old: usize,
+    new_initialized: usize,
+    capacity: usize
+) = outcome: usize {
+    match tpublish_initialized<T>(
+        pointer,
+        expected_old,
+        new_initialized,
+        capacity
+    ) {
+        Ok(length) -> {
+            outcome = length
+        }
+        Err(failure) -> {
+            failure.fail()
+            outcome = 0
+        }
+    }
+}
+
+pub flex f allocate<T>(value: T) = outcome: *T {
+    match tallocate<T>(value) {
+        Ok(pointer) -> {
+            outcome = pointer
+        }
+        Err(failure) -> {
+            failure.fail()
+            unsafe {
+                outcome = unwrap(null as ?*T)
+            }
+        }
+    }
+}
+
+pub flex f resize_array<T>(
+    pointer: *T,
+    initialized: usize,
+    old_capacity: usize,
+    new_capacity: usize
+) = outcome: *T {
+    match tresize_array<T>(
+        pointer,
+        initialized,
+        old_capacity,
+        new_capacity
+    ) {
+        Ok(replacement) -> {
+            outcome = replacement
+        }
+        Err(failure) -> {
+            failure.fail()
+            outcome = pointer
+        }
+    }
 }

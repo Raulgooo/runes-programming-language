@@ -1,0 +1,16 @@
+-- EXPECT RUNTIME FAIL: storage operation failed: out of memory
+
+use std.vec.Vec
+
+#[safe]
+extern f runes_storage_debug_fail_after(count: usize)
+
+dynamic f fail_ordinary_constructor() {
+    runes_storage_debug_fail_after(0)
+    values := Vec<i32>.new()
+    values.deinit()
+}
+
+f main() {
+    fail_ordinary_constructor()
+}

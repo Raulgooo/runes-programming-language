@@ -1,0 +1,249 @@
+use std.bytes.equal
+use std.core.Result
+use std.fs
+use std.fs.File
+use std.fs.FsError
+use std.fs.OpenOptions
+use std.io.SeekFrom
+use std.io.read_exact_from
+use std.io.write_all_to
+use std.path.PathView
+
+dynamic f main() {
+    bool ok = true
+
+    match fs.open(
+        PathView.from_str("missing-file"),
+        OpenOptions.read_only()
+    ) {
+        Ok(value) -> {
+            unexpected := value
+            unexpected.close()
+            ok = false
+        }
+        Err(failure) -> match failure {
+            Io(operation, reason) -> {
+                bool expected_operation = match operation {
+                    Open -> true,
+                    _ -> false,
+                }
+                bool expected_reason = match reason {
+                    NotFound -> true,
+                    _ -> false,
+                }
+                if !expected_operation or !expected_reason { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    match fs.open(
+        PathView.from_str(""),
+        OpenOptions.read_only()
+    ) {
+        Ok(value) -> {
+            unexpected := value
+            unexpected.close()
+            ok = false
+        }
+        Err(failure) -> match failure {
+            Io(operation, reason) -> {
+                bool expected_operation = match operation {
+                    Open -> true,
+                    _ -> false,
+                }
+                bool expected_reason = match reason {
+                    NotFound -> true,
+                    _ -> false,
+                }
+                if !expected_operation or !expected_reason { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    options := OpenOptions.read_write()
+    options = options.with_create(true)
+    options = options.with_truncate(true)
+    match fs.open(PathView.from_str("data.bin"), options) {
+        Ok(value) -> {
+            file := value
+            [5]u8 content_storage = [
+                0x68, 0x65, 0x6c, 0x6c, 0x6f
+            ]
+            []const u8 content = content_storage
+            match write_all_to<File>(&file, content) {
+                Ok(count) -> {
+                    if count != 5 { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.flush() {
+                Ok(_) -> { ok = ok }
+                Err(_) -> { ok = false }
+            }
+            match file.sync_data() {
+                Ok(_) -> { ok = ok }
+                Err(_) -> { ok = false }
+            }
+            match file.metadata() {
+                Ok(info) -> {
+                    if info.length != 5 { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.seek(SeekFrom.Start(0)) {
+                Ok(position) -> {
+                    if position != 0 { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            [5]u8 read_storage = []
+            []u8 read_bytes = read_storage
+            match read_exact_from<File>(&file, read_bytes) {
+                Ok(count) -> {
+                    if count != 5 { ok = false }
+                    []const u8 observed = read_bytes
+                    if !equal(observed, content) { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.seek(SeekFrom.Start(0)) {
+                Ok(_) -> { ok = ok }
+                Err(_) -> { ok = false }
+            }
+            match file.read_to_string(5) {
+                Ok(text) -> {
+                    loaded := text
+                    if loaded.as_str() != "hello" { ok = false }
+                    loaded.deinit()
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.set_length(3) {
+                Ok(length) -> {
+                    if length != 3 { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.sync_all() {
+                Ok(_) -> { ok = ok }
+                Err(_) -> { ok = false }
+            }
+            match file.close() {
+                Ok(closed) -> {
+                    if !closed { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.close() {
+                Ok(closed) -> {
+                    if closed { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    match fs.open(
+        PathView.from_str("data.bin"),
+        OpenOptions.append()
+    ) {
+        Ok(value) -> {
+            file := value
+            [2]u8 suffix_storage = [0x21, 0x21]
+            []const u8 suffix = suffix_storage
+            match write_all_to<File>(&file, suffix) {
+                Ok(count) -> {
+                    if count != 2 { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.close() {
+                Ok(closed) -> {
+                    if !closed { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    match fs.open(
+        PathView.from_str("data.bin"),
+        OpenOptions.create_new()
+    ) {
+        Ok(value) -> {
+            unexpected := value
+            unexpected.close()
+            ok = false
+        }
+        Err(failure) -> match failure {
+            Io(operation, reason) -> {
+                bool expected_operation = match operation {
+                    Open -> true,
+                    _ -> false,
+                }
+                bool expected_reason = match reason {
+                    AlreadyExists -> true,
+                    _ -> false,
+                }
+                if !expected_operation or !expected_reason { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    match fs.rename(
+        PathView.from_str("data.bin"),
+        PathView.from_str("renamed.bin")
+    ) {
+        Ok(_) -> { ok = ok }
+        Err(_) -> { ok = false }
+    }
+    match fs.metadata(PathView.from_str("renamed.bin")) {
+        Ok(info) -> {
+            if info.length != 5 { ok = false }
+        }
+        Err(_) -> { ok = false }
+    }
+    match fs.remove_file(PathView.from_str("renamed.bin")) {
+        Ok(_) -> { ok = ok }
+        Err(_) -> { ok = false }
+    }
+    match fs.create_directory(PathView.from_str("folder"), 448) {
+        Ok(_) -> { ok = ok }
+        Err(_) -> { ok = false }
+    }
+    match fs.remove_directory(PathView.from_str("folder")) {
+        Ok(_) -> { ok = ok }
+        Err(_) -> { ok = false }
+    }
+
+    [3]u8 nul_storage = [0x61, 0, 0x62]
+    []const u8 nul_path = nul_storage
+    match fs.open(
+        PathView.from_bytes(nul_path),
+        OpenOptions.read_only()
+    ) {
+        Ok(value) -> {
+            unexpected := value
+            unexpected.close()
+            ok = false
+        }
+        Err(failure) -> match failure {
+            InvalidPath(operation, index) -> {
+                bool expected_operation = match operation {
+                    Open -> true,
+                    _ -> false,
+                }
+                if !expected_operation { ok = false }
+                if index != 1 { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    print(ok)
+}

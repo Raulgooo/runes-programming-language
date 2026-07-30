@@ -1,0 +1,495 @@
+-- Strict, locale-independent, allocation-free parsing.
+--
+-- The unqualified integer functions parse decimal and require the complete
+-- input to be consumed. The `_with` forms accept an explicit IntegerParse.
+-- Error indexes are UTF-8 byte offsets.
+
+use std.core.ParseError
+use std.core.Result
+
+#[safe]
+extern f runes_str_decode_next(
+    value: str,
+    index: *usize,
+    scalar: *char
+) = result: bool
+
+pub type IntegerBase =
+    | Decimal
+    | Binary
+    | Octal
+    | Hexadecimal
+    | Auto
+
+pub type IntegerParse = {
+    base: IntegerBase
+}
+
+pub method IntegerParse {
+    f decimal() = result: IntegerParse {
+        result = IntegerParse(base: IntegerBase.Decimal())
+    }
+
+    f binary() = result: IntegerParse {
+        result = IntegerParse(base: IntegerBase.Binary())
+    }
+
+    f octal() = result: IntegerParse {
+        result = IntegerParse(base: IntegerBase.Octal())
+    }
+
+    f hexadecimal() = result: IntegerParse {
+        result = IntegerParse(base: IntegerBase.Hexadecimal())
+    }
+
+    f auto() = result: IntegerParse {
+        result = IntegerParse(base: IntegerBase.Auto())
+    }
+}
+
+type ParsedInteger = {
+    magnitude: u64
+    negative: bool
+}
+
+type IntegerOutcome =
+    | Parsed(ParsedInteger)
+    | Failed(ParseError)
+
+f digit_value(byte: u8) = result: u8 {
+    if byte >= 0x30 and byte <= 0x39 {
+        result = byte - 0x30
+    } else if byte >= 0x41 and byte <= 0x46 {
+        result = byte - 0x41 + 10
+    } else if byte >= 0x61 and byte <= 0x66 {
+        result = byte - 0x61 + 10
+    } else {
+        result = 0xff
+    }
+}
+
+f selected_radix(
+    value: str,
+    options: IntegerParse,
+    index: *usize
+) = result: u8 {
+    unsafe {
+        result = match options.base {
+            Decimal -> 10 as u8,
+            Binary -> 2 as u8,
+            Octal -> 8 as u8,
+            Hexadecimal -> 16 as u8,
+            Auto -> 10 as u8,
+        }
+        bool automatic = match options.base {
+            Auto -> true,
+            _ -> false,
+        }
+        if automatic {
+            if value.len - *index >= 2 and value[*index] == 0x30 {
+                u8 prefix = value[*index + 1]
+                if prefix == 0x62 or prefix == 0x42 {
+                    result = 2
+                    *index = *index + 2
+                } else if prefix == 0x6f or prefix == 0x4f {
+                    result = 8
+                    *index = *index + 2
+                } else if prefix == 0x78 or prefix == 0x58 {
+                    result = 16
+                    *index = *index + 2
+                }
+            }
+        }
+    }
+}
+
+f parse_unsigned_limit(
+    value: str,
+    options: IntegerParse,
+    limit: u64
+) = outcome: IntegerOutcome {
+    if value.len == 0 {
+        outcome = IntegerOutcome.Failed(ParseError.UnexpectedEnd(0))
+        return
+    }
+
+    usize index = 0
+    if value[0] == 0x2b {
+        index = 1
+    } else if value[0] == 0x2d {
+        outcome = IntegerOutcome.Failed(ParseError.InvalidSyntax(0))
+        return
+    }
+    if index == value.len {
+        outcome = IntegerOutcome.Failed(ParseError.UnexpectedEnd(index))
+        return
+    }
+
+    u8 radix = selected_radix(value, options, &index)
+    if index == value.len {
+        outcome = IntegerOutcome.Failed(ParseError.UnexpectedEnd(index))
+        return
+    }
+
+    u64 magnitude = 0
+    while index < value.len {
+        u8 digit = digit_value(value[index])
+        if digit == 0xff or digit >= radix {
+            outcome = IntegerOutcome.Failed(
+                ParseError.InvalidSyntax(index)
+            )
+            return
+        }
+        u64 wide_radix = radix as u64
+        u64 wide_digit = digit as u64
+        if magnitude > limit / wide_radix or
+            (magnitude == limit / wide_radix and
+             wide_digit > limit % wide_radix) {
+            outcome = IntegerOutcome.Failed(
+                ParseError.OutOfRange(index)
+            )
+            return
+        }
+        magnitude = magnitude * wide_radix + wide_digit
+        index = index + 1
+    }
+    outcome = IntegerOutcome.Parsed(
+        ParsedInteger(magnitude: magnitude, negative: false)
+    )
+}
+
+f parse_signed_limit(
+    value: str,
+    options: IntegerParse,
+    positive_limit: u64,
+    negative_limit: u64
+) = outcome: IntegerOutcome {
+    if value.len == 0 {
+        outcome = IntegerOutcome.Failed(ParseError.UnexpectedEnd(0))
+        return
+    }
+
+    usize index = 0
+    bool negative = false
+    if value[0] == 0x2b {
+        index = 1
+    } else if value[0] == 0x2d {
+        index = 1
+        negative = true
+    }
+    if index == value.len {
+        outcome = IntegerOutcome.Failed(ParseError.UnexpectedEnd(index))
+        return
+    }
+
+    u8 radix = selected_radix(value, options, &index)
+    if index == value.len {
+        outcome = IntegerOutcome.Failed(ParseError.UnexpectedEnd(index))
+        return
+    }
+
+    u64 limit = positive_limit
+    if negative {
+        limit = negative_limit
+    }
+    u64 magnitude = 0
+    while index < value.len {
+        u8 digit = digit_value(value[index])
+        if digit == 0xff or digit >= radix {
+            outcome = IntegerOutcome.Failed(
+                ParseError.InvalidSyntax(index)
+            )
+            return
+        }
+        u64 wide_radix = radix as u64
+        u64 wide_digit = digit as u64
+        if magnitude > limit / wide_radix or
+            (magnitude == limit / wide_radix and
+             wide_digit > limit % wide_radix) {
+            outcome = IntegerOutcome.Failed(
+                ParseError.OutOfRange(index)
+            )
+            return
+        }
+        magnitude = magnitude * wide_radix + wide_digit
+        index = index + 1
+    }
+    outcome = IntegerOutcome.Parsed(
+        ParsedInteger(magnitude: magnitude, negative: negative)
+    )
+}
+
+f to_i64(value: ParsedInteger) = result: i64 {
+    if value.negative {
+        if value.magnitude == 9223372036854775808 {
+            i64 minimum = -9223372036854775807
+            result = minimum - 1
+        } else {
+            result = 0 - (value.magnitude as i64)
+        }
+    } else {
+        result = value.magnitude as i64
+    }
+}
+
+pub f parse_u64_with(
+    value: str,
+    options: IntegerParse
+) = outcome: Result<u64, ParseError> {
+    match parse_unsigned_limit(value, options, 18446744073709551615) {
+        Parsed(parsed) -> {
+            outcome = Result.Ok<u64, ParseError>(parsed.magnitude)
+        }
+        Failed(failure) -> {
+            outcome = Result.Err<u64, ParseError>(failure)
+        }
+    }
+}
+
+pub f parse_u64(value: str) = outcome: Result<u64, ParseError> {
+    outcome = parse_u64_with(value, IntegerParse.decimal())
+}
+
+pub f parse_u32_with(
+    value: str,
+    options: IntegerParse
+) = outcome: Result<u32, ParseError> {
+    match parse_unsigned_limit(value, options, 4294967295) {
+        Parsed(parsed) -> {
+            outcome = Result.Ok<u32, ParseError>(
+                parsed.magnitude as u32
+            )
+        }
+        Failed(failure) -> {
+            outcome = Result.Err<u32, ParseError>(failure)
+        }
+    }
+}
+
+pub f parse_u32(value: str) = outcome: Result<u32, ParseError> {
+    outcome = parse_u32_with(value, IntegerParse.decimal())
+}
+
+pub f parse_u16_with(
+    value: str,
+    options: IntegerParse
+) = outcome: Result<u16, ParseError> {
+    match parse_unsigned_limit(value, options, 65535) {
+        Parsed(parsed) -> {
+            outcome = Result.Ok<u16, ParseError>(
+                parsed.magnitude as u16
+            )
+        }
+        Failed(failure) -> {
+            outcome = Result.Err<u16, ParseError>(failure)
+        }
+    }
+}
+
+pub f parse_u16(value: str) = outcome: Result<u16, ParseError> {
+    outcome = parse_u16_with(value, IntegerParse.decimal())
+}
+
+pub f parse_u8_with(
+    value: str,
+    options: IntegerParse
+) = outcome: Result<u8, ParseError> {
+    match parse_unsigned_limit(value, options, 255) {
+        Parsed(parsed) -> {
+            outcome = Result.Ok<u8, ParseError>(
+                parsed.magnitude as u8
+            )
+        }
+        Failed(failure) -> {
+            outcome = Result.Err<u8, ParseError>(failure)
+        }
+    }
+}
+
+pub f parse_u8(value: str) = outcome: Result<u8, ParseError> {
+    outcome = parse_u8_with(value, IntegerParse.decimal())
+}
+
+pub f parse_usize_with(
+    value: str,
+    options: IntegerParse
+) = outcome: Result<usize, ParseError> {
+    match parse_unsigned_limit(value, options, 18446744073709551615) {
+        Parsed(parsed) -> {
+            outcome = Result.Ok<usize, ParseError>(
+                parsed.magnitude as usize
+            )
+        }
+        Failed(failure) -> {
+            outcome = Result.Err<usize, ParseError>(failure)
+        }
+    }
+}
+
+pub f parse_usize(value: str) = outcome: Result<usize, ParseError> {
+    outcome = parse_usize_with(value, IntegerParse.decimal())
+}
+
+pub f parse_i64_with(
+    value: str,
+    options: IntegerParse
+) = outcome: Result<i64, ParseError> {
+    match parse_signed_limit(
+        value,
+        options,
+        9223372036854775807,
+        9223372036854775808
+    ) {
+        Parsed(parsed) -> {
+            outcome = Result.Ok<i64, ParseError>(to_i64(parsed))
+        }
+        Failed(failure) -> {
+            outcome = Result.Err<i64, ParseError>(failure)
+        }
+    }
+}
+
+pub f parse_i64(value: str) = outcome: Result<i64, ParseError> {
+    outcome = parse_i64_with(value, IntegerParse.decimal())
+}
+
+pub f parse_i32_with(
+    value: str,
+    options: IntegerParse
+) = outcome: Result<i32, ParseError> {
+    match parse_signed_limit(value, options, 2147483647, 2147483648) {
+        Parsed(parsed) -> {
+            outcome = Result.Ok<i32, ParseError>(
+                to_i64(parsed) as i32
+            )
+        }
+        Failed(failure) -> {
+            outcome = Result.Err<i32, ParseError>(failure)
+        }
+    }
+}
+
+pub f parse_i32(value: str) = outcome: Result<i32, ParseError> {
+    outcome = parse_i32_with(value, IntegerParse.decimal())
+}
+
+pub f parse_i16_with(
+    value: str,
+    options: IntegerParse
+) = outcome: Result<i16, ParseError> {
+    match parse_signed_limit(value, options, 32767, 32768) {
+        Parsed(parsed) -> {
+            outcome = Result.Ok<i16, ParseError>(
+                to_i64(parsed) as i16
+            )
+        }
+        Failed(failure) -> {
+            outcome = Result.Err<i16, ParseError>(failure)
+        }
+    }
+}
+
+pub f parse_i16(value: str) = outcome: Result<i16, ParseError> {
+    outcome = parse_i16_with(value, IntegerParse.decimal())
+}
+
+pub f parse_i8_with(
+    value: str,
+    options: IntegerParse
+) = outcome: Result<i8, ParseError> {
+    match parse_signed_limit(value, options, 127, 128) {
+        Parsed(parsed) -> {
+            outcome = Result.Ok<i8, ParseError>(
+                to_i64(parsed) as i8
+            )
+        }
+        Failed(failure) -> {
+            outcome = Result.Err<i8, ParseError>(failure)
+        }
+    }
+}
+
+pub f parse_i8(value: str) = outcome: Result<i8, ParseError> {
+    outcome = parse_i8_with(value, IntegerParse.decimal())
+}
+
+f parse_exact_word(
+    value: str,
+    expected: str
+) = outcome: Result<bool, ParseError> {
+    usize index = 0
+    while index < value.len and index < expected.len {
+        if value[index] != expected[index] {
+            outcome = Result.Err<bool, ParseError>(
+                ParseError.InvalidSyntax(index)
+            )
+            return
+        }
+        index = index + 1
+    }
+    if index < expected.len {
+        outcome = Result.Err<bool, ParseError>(
+            ParseError.UnexpectedEnd(index)
+        )
+    } else if index < value.len {
+        outcome = Result.Err<bool, ParseError>(
+            ParseError.InvalidSyntax(index)
+        )
+    } else {
+        outcome = Result.Ok<bool, ParseError>(true)
+    }
+}
+
+pub f parse_bool(value: str) = outcome: Result<bool, ParseError> {
+    if value.len == 0 {
+        outcome = Result.Err<bool, ParseError>(
+            ParseError.UnexpectedEnd(0)
+        )
+    } else if value[0] == 0x74 {
+        match parse_exact_word(value, "true") {
+            Ok(_) -> {
+                outcome = Result.Ok<bool, ParseError>(true)
+            }
+            Err(failure) -> {
+                outcome = Result.Err<bool, ParseError>(failure)
+            }
+        }
+    } else if value[0] == 0x66 {
+        match parse_exact_word(value, "false") {
+            Ok(_) -> {
+                outcome = Result.Ok<bool, ParseError>(false)
+            }
+            Err(failure) -> {
+                outcome = Result.Err<bool, ParseError>(failure)
+            }
+        }
+    } else {
+        outcome = Result.Err<bool, ParseError>(
+            ParseError.InvalidSyntax(0)
+        )
+    }
+}
+
+pub f parse_char(value: str) = outcome: Result<char, ParseError> {
+    if value.len == 0 {
+        outcome = Result.Err<char, ParseError>(
+            ParseError.UnexpectedEnd(0)
+        )
+        return
+    }
+    unsafe {
+        usize index = 0
+        char scalar = '\0'
+        if !runes_str_decode_next(value, &index, &scalar) {
+            outcome = Result.Err<char, ParseError>(
+                ParseError.InvalidSyntax(0)
+            )
+        } else if index != value.len {
+            outcome = Result.Err<char, ParseError>(
+                ParseError.InvalidSyntax(index)
+            )
+        } else {
+            outcome = Result.Ok<char, ParseError>(scalar)
+        }
+    }
+}

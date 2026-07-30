@@ -6,8 +6,12 @@ but it does not assume prior experience with compilers, type systems, manual
 memory management, or systems programming.
 
 Runes is experimental. It compiles to C11, currently targets hosted Linux
-x86-64, and is not self-hosted. The compiler runtime is implemented; most of
-the standard library still needs to be written.
+x86-64, and is not self-hosted. Its application foundation now includes
+borrowed and owning UTF-8 text, realm-aware vectors, typed formatting and
+parsing, static readers/writers, explicit buffering, bounded line input, and
+safe standard-terminal I/O, byte-preserving lexical paths, and owning hosted
+files. Networking, concurrency, and broader application libraries still need
+work.
 
 ## Reading order
 
@@ -29,6 +33,9 @@ the standard library still needs to be written.
    commands, limitations, and keywords.
 9. [Glossary](09-glossary.md): plain-language definitions of compiler and
    systems terms used throughout the handbook.
+10. [Using the standard library](10-using-the-standard-library.md): combine
+    text, parsing, `Vec<T>`, `String`, formatting, writers, terminal I/O, and
+    lexical paths and files.
 
 You do not need to understand memory realms or pointers before writing ordinary
 calculations, parsers, data transformations, and command-line logic. Begin with
@@ -65,5 +72,8 @@ runtime check, and implementation limitation.
 | What does `pub` change? | [Visibility](05-projects-and-modules.md#public-and-private-declarations) |
 | Which function realm should I choose? | [Realm selection](06-memory-realms.md#choosing-a-realm) |
 | Why does `read` require `unsafe`? | [Safe I/O wrappers](07-unsafe-ffi-and-io.md#safe-wrappers-around-unsafe-ffi) |
+| How do I parse and format application data? | [Using the standard library](10-using-the-standard-library.md) |
+| How do I join or normalize paths? | [Using the standard library](10-using-the-standard-library.md#work-with-paths) |
+| How do I safely open and close a file? | [Using the standard library](10-using-the-standard-library.md#open-and-use-files) |
 | What is implemented but incomplete? | [Current limitations](08-reference.md#current-limitations) |
 | What does an unfamiliar term mean? | [Glossary](09-glossary.md) |

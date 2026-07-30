@@ -1,0 +1,304 @@
+use std.allocation.tallocate
+use std.core.AllocationError
+use std.core.Result
+use std.vec.Vec
+use std.vec.new as legacy_vec_new
+use std.vec.tnew as legacy_vec_tnew
+
+#[safe]
+extern f runes_gc_collect()
+
+#[safe]
+extern f runes_gc_debug_object_count() = result: usize
+
+#[safe]
+extern f runes_storage_debug_fail_after(count: usize)
+
+#[safe]
+extern f runes_storage_debug_clear_failure()
+
+type Cell = {
+    value: i32
+}
+
+flex f push_owned<T>(
+    values: *Vec<T>,
+    value: T
+) = result: bool {
+    unsafe {
+        result = values.push(value) > 0
+    }
+}
+
+regional f child_growth(values: *Vec<i32>) = result: bool {
+    unsafe {
+        result = match values.tpush(9) {
+            Ok(_) -> false,
+            Err(_) -> true,
+        }
+    }
+}
+
+dynamic f dynamic_vec() = result: bool {
+    result = false
+    values := Vec<i32>.new()
+    if values.is_empty() {
+        values.push(10)
+        push_owned(&values, 20)
+        values.push(30)
+        bool set = values.set(1, 25)
+        []const i32 view = values.as_slice()
+        []i32 mutable = values.as_mut_slice()
+        mutable[0] = 5
+        bool values_ok = view.len == 3
+        if view[0] != 5 {
+            values_ok = false
+        }
+        if view[1] != 25 {
+            values_ok = false
+        }
+        if view[2] != 30 {
+            values_ok = false
+        }
+        bool pop_ok = match values.pop() {
+            Some(value) -> value == 30,
+            None -> false,
+        }
+        bool get_ok = match values.get(1) {
+            Some(value) -> value == 25,
+            None -> false,
+        }
+        result = set
+        if !values_ok {
+            result = false
+        }
+        if !pop_ok {
+            result = false
+        }
+        if !get_ok {
+            result = false
+        }
+        if values.len() != 2 {
+            result = false
+        }
+        values.clear()
+        if !values.is_empty() {
+            result = false
+        }
+    }
+    values.deinit()
+    values.deinit()
+}
+
+regional f regional_vec() = result: bool {
+    result = false
+    values := Vec<i32>.with_capacity(0)
+    push_owned(&values, 7)
+    bool child_rejected = child_growth(&values)
+    push_owned(&values, 8)
+    values.truncate(1)
+    result = child_rejected
+    if values.capacity() < 2 {
+        result = false
+    }
+    if values.len() != 1 {
+        result = false
+    }
+    result = match values.get(0) {
+        Some(value) -> value == 7,
+        None -> false,
+    }
+    values.deinit()
+}
+
+gc f make_pointer_vec(
+) = outcome: Result<Vec<*Cell>, AllocationError> {
+    match Vec<*Cell>.tnew() {
+        Ok(values) -> {
+            match tallocate<Cell>(Cell(value: 41)) {
+                Ok(first) -> {
+                    match tallocate<Cell>(Cell(value: 42)) {
+                        Ok(second) -> {
+                            push_owned(&values, first)
+                            push_owned(&values, second)
+                            outcome = Result.Ok<
+                                Vec<*Cell>,
+                                AllocationError
+                            >(values)
+                        }
+                        Err(failure) -> {
+                            outcome = Result.Err<
+                                Vec<*Cell>,
+                                AllocationError
+                            >(failure)
+                        }
+                    }
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<
+                        Vec<*Cell>,
+                        AllocationError
+                    >(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<Vec<*Cell>, AllocationError>(failure)
+        }
+    }
+}
+
+gc f gc_pointer_vec_inner() = result: bool {
+    result = false
+    runes_gc_collect()
+    usize baseline = runes_gc_debug_object_count()
+    match make_pointer_vec() {
+        Ok(values) -> {
+            runes_gc_collect()
+            result = runes_gc_debug_object_count() == baseline + 3
+            unsafe {
+                if unwrap(values.data)[0].value != 41 {
+                    result = false
+                }
+                if unwrap(values.data)[1].value != 42 {
+                    result = false
+                }
+            }
+            values.clear()
+            runes_gc_collect()
+            if runes_gc_debug_object_count() != baseline + 1 {
+                result = false
+            }
+            values.deinit()
+            runes_gc_collect()
+            -- The Result<Vec<T>, _> match subject still contains a copied
+            -- handle until this function frame leaves.
+            if runes_gc_debug_object_count() != baseline + 1 {
+                result = false
+            }
+        }
+        Err(_) -> {
+            result = false
+        }
+    }
+}
+
+gc f gc_pointer_vec() = result: bool {
+    runes_gc_collect()
+    usize baseline = runes_gc_debug_object_count()
+    result = gc_pointer_vec_inner()
+    runes_gc_collect()
+    if runes_gc_debug_object_count() != baseline {
+        result = false
+    }
+}
+
+dynamic f failed_growth_preserves_vec() = result: bool {
+    result = false
+    values := Vec<i32>.new()
+    values.push(99)
+    runes_storage_debug_fail_after(0)
+    match values.tpush(100) {
+        Ok(_) -> {
+            result = false
+        }
+        Err(_) -> {
+            result = values.len() == 1
+            bool value_changed = match values.get(0) {
+                Some(value) -> value != 99,
+                None -> true,
+            }
+            if value_changed {
+                result = false
+            }
+        }
+    }
+    runes_storage_debug_clear_failure()
+    values.deinit()
+    runes_storage_debug_fail_after(0)
+    match legacy_vec_tnew<i32>() {
+        Ok(unexpected) -> {
+            unexpected.deinit()
+            result = false
+        }
+        Err(_) -> {
+            result = result
+        }
+    }
+    runes_storage_debug_clear_failure()
+}
+
+dynamic f overflow_is_error() = result: bool {
+    result = false
+    values := Vec<i32>.new()
+    values.push(1)
+    usize maximum = ~(0 as usize)
+    match values.treserve(maximum) {
+        Ok(_) -> {
+            result = false
+        }
+        Err(failure) -> {
+            result = match failure {
+                CapacityOverflow -> true,
+                _ -> false,
+            }
+        }
+    }
+    values.deinit()
+}
+
+dynamic f paired_api_works() = result: bool {
+    result = false
+    match Vec<i32>.twith_capacity(2) {
+        Ok(values) -> {
+            bool pushed = match values.tpush(10) {
+                Ok(length) -> length == 1,
+                Err(_) -> false,
+            }
+            bool popped = match values.tpop() {
+                Ok(item) -> {
+                    match item {
+                        Some(value) -> value == 10,
+                        None -> false,
+                    }
+                }
+                Err(_) -> false,
+            }
+            bool truncated = match values.ttruncate(0) {
+                Ok(length) -> length == 0,
+                Err(_) -> false,
+            }
+            bool cleared = match values.tclear() {
+                Ok(length) -> length == 0,
+                Err(_) -> false,
+            }
+            result = pushed and popped and truncated and cleared
+            values.deinit()
+        }
+        Err(_) -> {
+            result = false
+        }
+    }
+
+    legacy := legacy_vec_new<i32>()
+    if !legacy.is_empty() {
+        result = false
+    }
+    legacy.deinit()
+}
+
+f main() {
+    print(
+        dynamic_vec(),
+        " ",
+        regional_vec(),
+        " ",
+        gc_pointer_vec(),
+        " ",
+        failed_growth_preserves_vec(),
+        " ",
+        overflow_is_error(),
+        " ",
+        paired_api_works()
+    )
+}

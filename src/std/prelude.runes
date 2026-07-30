@@ -4,15 +4,22 @@
 extern f raw_alloc(size: usize) = result: *void
 extern f raw_free(ptr: *void)
 extern f alloc(size: usize) = result: *void
-extern f try_allocate(count: usize) = result: ?*void
-extern f resize(
+extern f tstorage_allocate(count: usize) = result: ?*void
+extern f tstorage_resize(
     pointer: *void,
     initialized: usize,
     old_capacity: usize,
     new_capacity: usize
 ) = result: ?*void
 extern f release(pointer: *void)
+extern f tstorage_set_initialized(
+    pointer: *void,
+    expected_old: usize,
+    new_initialized: usize,
+    capacity: usize
+) = result: bool
 extern f storage_error() = result: i32
+extern f storage_fail(code: i32)
 
 -- Scoped collector controls. `gc_collect` is an explicit safepoint; the debug
 -- counters are runtime diagnostics and not collection-library APIs.
@@ -41,8 +48,12 @@ extern f runes_utf8_encode(
     length: *usize
 ) = result: bool
 extern f runes_str_hash(value: str) = result: u64
+extern f runes_str_view(
+    value: *const u8,
+    length: usize
+) = result: str
 extern f runes_str_from_bytes(
-    value: *u8,
+    value: *const u8,
     length: usize,
     result: *str
 ) = result: bool

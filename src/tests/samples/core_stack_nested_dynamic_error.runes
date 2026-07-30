@@ -1,0 +1,6 @@
+-- EXPECT FAIL: Cannot nest dynamic function inside stack realm
+f outer() {
+    dynamic f invalid() {}
+}
+
+f main() {}

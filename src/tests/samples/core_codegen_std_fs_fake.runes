@@ -1,0 +1,163 @@
+use std.fs
+use std.fs.File
+use std.fs.FsError
+use std.fs.OpenOptions
+use std.io.read_exact_from
+use std.io.write_all_to
+use std.path.PathView
+
+#[safe]
+#[link_name("runes_test_fs_open_attempts")]
+extern f open_attempts() = result: i32
+
+#[safe]
+#[link_name("runes_test_fs_close_attempts")]
+extern f close_attempts() = result: i32
+
+#[safe]
+#[link_name("runes_test_fs_metadata_attempts")]
+extern f metadata_attempts() = result: i32
+
+#[safe]
+#[link_name("runes_test_fs_read_attempts")]
+extern f read_attempts() = result: i32
+
+#[safe]
+#[link_name("runes_test_fs_write_attempts")]
+extern f write_attempts() = result: i32
+
+dynamic f main() {
+    bool ok = true
+
+    match fs.open(PathView.from_str("fake"), OpenOptions.read_only()) {
+        Ok(value) -> {
+            file := value
+            match file.metadata() {
+                Ok(info) -> {
+                    if info.length != 123 { ok = false }
+                    if info.permissions != 416 { ok = false }
+                    if info.modified_seconds != 99 { ok = false }
+                    bool regular = match info.kind {
+                        Regular -> true,
+                        _ -> false,
+                    }
+                    if !regular { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.sync_data() {
+                Ok(_) -> { ok = false }
+                Err(failure) -> match failure {
+                    Io(operation, reason) -> {
+                        bool expected_operation = match operation {
+                            SyncData -> true,
+                            _ -> false,
+                        }
+                        bool expected_reason = match reason {
+                            Unsupported -> true,
+                            _ -> false,
+                        }
+                        if !expected_operation or !expected_reason {
+                            ok = false
+                        }
+                    }
+                    _ -> { ok = false }
+                }
+            }
+            match file.close() {
+                Ok(_) -> { ok = false }
+                Err(reason) -> {
+                    bool interrupted = match reason {
+                        Interrupted -> true,
+                        _ -> false,
+                    }
+                    if !interrupted { ok = false }
+                }
+            }
+            if file.opened() { ok = false }
+            match file.close() {
+                Ok(closed) -> {
+                    if closed { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    match fs.open(PathView.from_str("partial"), OpenOptions.read_write()) {
+        Ok(value) -> {
+            file := value
+            [3]u8 output_storage = [0x78, 0x79, 0x7a]
+            []const u8 output = output_storage
+            match write_all_to<File>(&file, output) {
+                Ok(count) -> {
+                    if count != 3 { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+
+            [3]u8 input_storage = []
+            []u8 input = input_storage
+            match read_exact_from<File>(&file, input) {
+                Ok(count) -> {
+                    if count != 3 { ok = false }
+                    if input[0] != 0x61 { ok = false }
+                    if input[1] != 0x62 { ok = false }
+                    if input[2] != 0x63 { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+            match file.close() {
+                Ok(closed) -> {
+                    if !closed { ok = false }
+                }
+                Err(_) -> { ok = false }
+            }
+        }
+        Err(_) -> { ok = false }
+    }
+
+    match fs.open(PathView.from_str("denied"), OpenOptions.read_only()) {
+        Ok(value) -> {
+            unexpected := value
+            unexpected.close()
+            ok = false
+        }
+        Err(failure) -> match failure {
+            Io(_, reason) -> {
+                bool denied = match reason {
+                    PermissionDenied -> true,
+                    _ -> false,
+                }
+                if !denied { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    match fs.open(PathView.from_str("exists"), OpenOptions.create_new()) {
+        Ok(value) -> {
+            unexpected := value
+            unexpected.close()
+            ok = false
+        }
+        Err(failure) -> match failure {
+            Io(_, reason) -> {
+                bool exists = match reason {
+                    AlreadyExists -> true,
+                    _ -> false,
+                }
+                if !exists { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    if open_attempts() != 4 { ok = false }
+    if close_attempts() != 2 { ok = false }
+    if metadata_attempts() != 1 { ok = false }
+    if read_attempts() != 3 { ok = false }
+    if write_attempts() != 3 { ok = false }
+    print(ok)
+}

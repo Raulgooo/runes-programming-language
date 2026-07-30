@@ -330,10 +330,12 @@ static void resolve_node(Resolver *r, AstNode *node) {
         strcmp(node->as.identifier.name, "unwrap") != 0 &&
         strcmp(node->as.identifier.name, "slice") != 0 &&
         strcmp(node->as.identifier.name, "const_slice") != 0 &&
-        strcmp(node->as.identifier.name, "try_allocate") != 0 &&
-        strcmp(node->as.identifier.name, "resize") != 0 &&
+        strcmp(node->as.identifier.name, "tstorage_allocate") != 0 &&
+        strcmp(node->as.identifier.name, "tstorage_resize") != 0 &&
         strcmp(node->as.identifier.name, "release") != 0 &&
-        strcmp(node->as.identifier.name, "storage_error") != 0) {
+        strcmp(node->as.identifier.name, "tstorage_set_initialized") != 0 &&
+        strcmp(node->as.identifier.name, "storage_error") != 0 &&
+        strcmp(node->as.identifier.name, "storage_fail") != 0) {
       Symbol *symbol = symbol_table_lookup(r->st, node->as.identifier.name);
       if (symbol)
         node->resolved_decl = symbol->node;

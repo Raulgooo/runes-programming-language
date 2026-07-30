@@ -1,4 +1,4 @@
--- EXPECT FAIL: has an incompatible signature
+-- EXPECT FAIL: has an incompatible receiver
 interface Value {
     f get(self) = result: i32
 }

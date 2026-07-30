@@ -504,9 +504,10 @@ static AstNode *node_children(AstNode *node) {
 
 static void append_symbol_list(Buffer *buffer, AstNode *node);
 
-static void append_symbol(Buffer *buffer, AstNode *node) {
+static void append_symbol_with_kind(Buffer *buffer, AstNode *node,
+                                    int kind_override) {
   const char *name = node_name(node);
-  int kind = node_symbol_kind(node);
+  int kind = kind_override ? kind_override : node_symbol_kind(node);
   if (!name || !kind)
     return;
   buffer_append(buffer, "{\"name\":");
@@ -524,6 +525,10 @@ static void append_symbol(Buffer *buffer, AstNode *node) {
   buffer_append(buffer, "}");
 }
 
+static void append_symbol(Buffer *buffer, AstNode *node) {
+  append_symbol_with_kind(buffer, node, 0);
+}
+
 static void append_symbol_list(Buffer *buffer, AstNode *node) {
   bool first = true;
   for (; node; node = node->next) {
@@ -532,7 +537,13 @@ static void append_symbol_list(Buffer *buffer, AstNode *node) {
       for (; methods; methods = methods->next) {
         if (!first)
           buffer_append(buffer, ",");
-        append_symbol(buffer, methods);
+        bool has_receiver =
+            methods->kind == AST_FUNC_DECL &&
+            methods->as.func_decl.params &&
+            strcmp(methods->as.func_decl.params->as.param.name, "self") == 0;
+        // LSP SymbolKind: Method = 6, Function = 12. Associated members have
+        // no receiver and therefore remain functions in the outline.
+        append_symbol_with_kind(buffer, methods, has_receiver ? 6 : 12);
         first = false;
       }
       continue;

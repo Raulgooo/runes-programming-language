@@ -101,6 +101,11 @@ static void test_realm_storage(void) {
   assert(dynamic && runes_storage_last_error() == RUNES_STORAGE_OK);
   dynamic[0] = 10;
   dynamic[1] = 20;
+  assert(runes_storage_set_initialized_dynamic(
+      dynamic, 0, 2, 2, &i32_descriptor, 1, 1));
+  assert(!runes_storage_set_initialized_dynamic(
+      dynamic, 2, 3, 2, &i32_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_CAPACITY_OVERFLOW);
   int32_t *grown = runes_storage_try_resize_dynamic(
       dynamic, 2, 2, 4, &i32_descriptor, 1, 1);
   assert(grown && grown[0] == 10 && grown[1] == 20);
@@ -126,7 +131,12 @@ static void test_realm_storage(void) {
       runes_storage_try_allocate_regional(1, &i32_descriptor, 1, 1);
   assert(regional);
   regional[0] = 7;
+  assert(runes_storage_set_initialized_regional(
+      regional, 0, 1, 1, &i32_descriptor, 1, 1));
   void *child = runes_arena_scope_enter(1, 1);
+  assert(!runes_storage_set_initialized_regional(
+      regional, 1, 1, 1, &i32_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_OWNER_UNAVAILABLE);
   assert(!runes_storage_try_resize_regional(
       regional, 1, 1, 2, &i32_descriptor, 1, 1));
   assert(runes_storage_last_error() == RUNES_STORAGE_OWNER_UNAVAILABLE);
@@ -143,27 +153,105 @@ static void test_realm_storage(void) {
   assert(after.dynamic_allocations >= before.dynamic_allocations + 2);
   assert(after.dynamic_releases >= before.dynamic_releases + 2);
   assert(after.regional_allocations >= before.regional_allocations + 2);
+  assert(after.initialized_publications >=
+         before.initialized_publications + 2);
+  assert(after.rejected_transitions >= before.rejected_transitions + 2);
 }
 
 static void test_gc_typed_storage(void) {
   runes_gc_set_threshold(SIZE_MAX);
   void *frame = runes_gc_frame_enter(1, 1);
   runes_gc_scope_enter(1, 1);
-  TestGcNode *node = runes_gc_alloc(
-      sizeof(*node), _Alignof(TestGcNode), &gc_node_descriptor, 1, 1);
   TestGcNode **values = runes_storage_try_allocate_gc(
-      4, &gc_node_pointer_descriptor, 1, 1);
+      3, &gc_node_pointer_descriptor, 1, 1);
   assert(values);
-  values[0] = node;
-  values = runes_storage_try_resize_gc(
-      values, 1, 4, 8, &gc_node_pointer_descriptor, 1, 1);
-  assert(values && values[0] == node);
   void *root = runes_gc_root_push(
       &values, &gc_node_pointer_descriptor, 1, 1);
   (void)root;
+
+  TestGcNode *first = runes_gc_alloc(
+      sizeof(*first), _Alignof(TestGcNode), &gc_node_descriptor, 1, 1);
+  TestGcNode *second = runes_gc_alloc(
+      sizeof(*second), _Alignof(TestGcNode), &gc_node_descriptor, 1, 1);
+  (void)runes_gc_alloc(
+      sizeof(TestGcNode), _Alignof(TestGcNode), &gc_node_descriptor, 1, 1);
+  first->value = 11;
+  second->value = 22;
+  values[0] = first;
+  assert(runes_storage_set_initialized_gc(
+      values, 0, 1, 3, &gc_node_pointer_descriptor, 1, 1));
+  values[1] = second;
+  assert(runes_storage_set_initialized_gc(
+      values, 1, 2, 3, &gc_node_pointer_descriptor, 1, 1));
+
+  assert(!runes_storage_set_initialized_gc(
+      values, 1, 2, 3, &gc_node_pointer_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_OWNER_UNAVAILABLE);
+  assert(!runes_storage_set_initialized_gc(
+      values, 2, 4, 3, &gc_node_pointer_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_CAPACITY_OVERFLOW);
+  assert(!runes_storage_set_initialized_gc(
+      values + 1, 2, 2, 3, &gc_node_pointer_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_OWNER_UNAVAILABLE);
+  assert(!runes_storage_set_initialized_gc(
+      values, 2, 2, 3, &i32_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_OWNER_UNAVAILABLE);
+  assert(!runes_storage_set_initialized_gc(
+      values, 2, 2, 4, &gc_node_pointer_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_OWNER_UNAVAILABLE);
+
+  int32_t *dynamic =
+      runes_storage_try_allocate_dynamic(1, &i32_descriptor, 1, 1);
+  assert(dynamic);
+  assert(!runes_storage_set_initialized_gc(
+      dynamic, 0, 1, 1, &i32_descriptor, 1, 1));
+  assert(runes_storage_last_error() == RUNES_STORAGE_OWNER_UNAVAILABLE);
+  runes_storage_release_dynamic(dynamic);
+
+  runes_gc_commit_allocations();
+  runes_gc_collect();
+  assert(runes_gc_stats().object_count == 3);
+  assert(values[0]->value == 11 && values[1]->value == 22);
+
+  values = runes_storage_try_resize_gc(
+      values, 2, 3, 5, &gc_node_pointer_descriptor, 1, 1);
+  assert(values && values[0] == first && values[1] == second);
+  runes_gc_commit_allocations();
+  runes_gc_collect();
+  assert(runes_gc_stats().object_count == 3);
+
+  assert(runes_storage_set_initialized_gc(
+      values, 2, 1, 5, &gc_node_pointer_descriptor, 1, 1));
+  runes_gc_collect();
+  assert(runes_gc_stats().object_count == 2);
+  values[1] = NULL;
+
+  assert(runes_storage_set_initialized_gc(
+      values, 1, 0, 5, &gc_node_pointer_descriptor, 1, 1));
+  runes_gc_collect();
+  assert(runes_gc_stats().object_count == 1);
+  values[0] = NULL;
+
+  TestGcNode *third = runes_gc_alloc(
+      sizeof(*third), _Alignof(TestGcNode), &gc_node_descriptor, 1, 1);
+  third->value = 33;
+  values[0] = third;
+  assert(runes_storage_set_initialized_gc(
+      values, 0, 1, 5, &gc_node_pointer_descriptor, 1, 1));
   runes_gc_commit_allocations();
   runes_gc_collect();
   assert(runes_gc_stats().object_count == 2);
+  runes_storage_release_gc(values);
+  assert(runes_storage_last_error() == RUNES_STORAGE_OK);
+  runes_gc_collect();
+  assert(runes_gc_stats().object_count == 1);
+
+  TestGcNode **empty = runes_storage_try_allocate_gc(
+      0, &gc_node_pointer_descriptor, 1, 1);
+  assert(empty);
+  assert(runes_storage_set_initialized_gc(
+      empty, 0, 0, 0, &gc_node_pointer_descriptor, 1, 1));
+  runes_gc_commit_allocations();
   runes_gc_scope_leave();
   runes_gc_frame_leave(frame);
   runes_gc_collect();
@@ -209,7 +297,9 @@ static void test_utf8(void) {
   static const uint8_t surrogate[] = {0xed, 0xa0, 0x80};
   static const uint8_t truncated[] = {0xf0, 0x9f, 0x8c};
   RunesStr text = bytes(valid, sizeof(valid));
+  RunesStr view = runes_str_view(valid, sizeof(valid));
 
+  assert(view.ptr == valid && view.len == sizeof(valid));
   assert(runes_str_is_utf8(text));
   assert(!runes_str_is_utf8(bytes(overlong, sizeof(overlong))));
   assert(!runes_str_is_utf8(bytes(surrogate, sizeof(surrogate))));

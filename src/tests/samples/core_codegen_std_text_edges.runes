@@ -1,0 +1,224 @@
+use std.text.ScalarCursor
+use std.text.contains
+use std.text.ends_with
+use std.text.find
+use std.text.is_empty
+use std.text.scalar_count
+use std.text.split_once
+use std.text.starts_with
+use std.text.substring
+use std.text.trim_ascii
+
+f observations() = result: bool {
+    result = is_empty("")
+    if !starts_with("", "") {
+        result = false
+    }
+    if !ends_with("", "") {
+        result = false
+    }
+    if scalar_count("") != 0 {
+        result = false
+    }
+    if scalar_count("a\u00e9世🌍") != 4 {
+        result = false
+    }
+}
+
+f searches() = result: bool {
+    result = true
+    if !starts_with("abc", "") {
+        result = false
+    }
+    if starts_with("a", "ab") {
+        result = false
+    }
+    if !ends_with("abc", "") {
+        result = false
+    }
+    if ends_with("a", "ba") {
+        result = false
+    }
+    if contains("abc", "z") {
+        result = false
+    }
+    if !contains("aaaa", "aa") {
+        result = false
+    }
+    match find("a\u00e9世\u00e9", "世\u00e9") {
+        Some(position) -> {
+            if position != 3 {
+                result = false
+            }
+        }
+        None -> {
+            result = false
+        }
+    }
+    match find("short", "longer") {
+        Some(_) -> {
+            result = false
+        }
+        None -> {
+            result = result
+        }
+    }
+}
+
+f substrings() = result: bool {
+    result = true
+    str value = "a\u00e9世"
+    match substring(value, 0, 0) {
+        Some(part) -> {
+            if part != "" {
+                result = false
+            }
+        }
+        None -> {
+            result = false
+        }
+    }
+    match substring(value, value.len, value.len) {
+        Some(part) -> {
+            if part != "" {
+                result = false
+            }
+        }
+        None -> {
+            result = false
+        }
+    }
+    match substring(value, 1, 3) {
+        Some(part) -> {
+            if part != "\u00e9" {
+                result = false
+            }
+        }
+        None -> {
+            result = false
+        }
+    }
+    match substring(value, 2, 3) {
+        Some(_) -> {
+            result = false
+        }
+        None -> {
+            result = result
+        }
+    }
+    match substring(value, 3, 2) {
+        Some(_) -> {
+            result = false
+        }
+        None -> {
+            result = result
+        }
+    }
+    match substring(value, 0, value.len + 1) {
+        Some(_) -> {
+            result = false
+        }
+        None -> {
+            result = result
+        }
+    }
+}
+
+f trimming() = result: bool {
+    result = trim_ascii("\t\n\u000b\u000c\r value \t") == "value"
+    if trim_ascii("") != "" {
+        result = false
+    }
+    if trim_ascii("unchanged") != "unchanged" {
+        result = false
+    }
+    if trim_ascii("\u00a0value\u00a0") != "\u00a0value\u00a0" {
+        result = false
+    }
+}
+
+f splitting() = result: bool {
+    result = true
+    match split_once("abc", "z") {
+        Some(_) -> {
+            result = false
+        }
+        None -> {
+            result = result
+        }
+    }
+    match split_once("::tail", "::") {
+        Some(parts) -> {
+            if parts.before != "" {
+                result = false
+            }
+            if parts.after != "tail" {
+                result = false
+            }
+        }
+        None -> {
+            result = false
+        }
+    }
+    match split_once("head世", "世") {
+        Some(parts) -> {
+            if parts.before != "head" {
+                result = false
+            }
+            if parts.after != "" {
+                result = false
+            }
+        }
+        None -> {
+            result = false
+        }
+    }
+}
+
+f cursors() = result: bool {
+    result = true
+    ScalarCursor empty = ScalarCursor.new("")
+    if !empty.is_done() {
+        result = false
+    }
+    match empty.next() {
+        Some(_) -> {
+            result = false
+        }
+        None -> {
+            result = result
+        }
+    }
+
+    ScalarCursor cursor = ScalarCursor.new("🌍")
+    if cursor.position() != 0 {
+        result = false
+    }
+    match cursor.next() {
+        Some(scalar) -> {
+            if scalar != '🌍' {
+                result = false
+            }
+        }
+        None -> {
+            result = false
+        }
+    }
+    if cursor.position() != 4 {
+        result = false
+    }
+    if !cursor.is_done() {
+        result = false
+    }
+}
+
+f main() {
+    print(
+        observations(), " ",
+        searches(), " ",
+        substrings(), " ",
+        trimming(), " ",
+        splitting(), " ",
+        cursors()
+    )
+}

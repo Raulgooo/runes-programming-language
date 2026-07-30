@@ -1,0 +1,12 @@
+-- EXPECT RUNTIME FAIL: storage operation failed: out of memory
+
+use std.string.String
+
+#[safe]
+extern f runes_storage_debug_fail_after(count: usize)
+
+dynamic f main() {
+    runes_storage_debug_fail_after(0)
+    value := String.new()
+    value.deinit()
+}

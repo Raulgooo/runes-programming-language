@@ -1,0 +1,11 @@
+type Box<T> = { value: T }
+method Box<T> {
+    flex f new(value: T) = result: Box<T> {
+        result = Box<T>(value: value)
+    }
+    f get(self) = result: T { result = self.value }
+}
+dynamic f main() {
+    Box<i32> value = Box<i32>.new(42)
+    print(value.get())
+}

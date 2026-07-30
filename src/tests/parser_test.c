@@ -98,9 +98,13 @@ void test_generic_syntax() {
         "type Pair<T, U: Value> = { first: T, second: U }\n"
         "type Maybe<T> = | None | Some(T)\n"
         "f identity<T>(value: T) = result: T { result = value }\n"
-        "method Pair<T, U> { f keep<V>(self, value: V) = result: V { result = value } }\n"
+        "method Pair<T, U> {\n"
+        "  f make() = result: Pair<T, U> {}\n"
+        "  f keep<V>(self, value: V) = result: V { result = value }\n"
+        "}\n"
         "f main() {\n"
         "  Pair<i32, Maybe<i32>> pair\n"
+        "  Pair<i32, Maybe<i32>> made = Pair<i32, Maybe<i32>>.make()\n"
         "  i32 answer = identity<i32>(42)\n"
         "  bool ordered = 1 < 2\n"
         "}\n";
@@ -131,12 +135,20 @@ void test_generic_syntax() {
     assert(identity->kind == AST_FUNC_DECL &&
            identity->as.func_decl.generic_params);
     assert(methods->kind == AST_METHOD_DECL && methods->as.method_decl.type_args);
-    assert(methods->as.method_decl.methods->as.func_decl.generic_params);
+    assert(methods->as.method_decl.methods->next);
+    assert(methods->as.method_decl.methods->next->as.func_decl.generic_params);
 
     AstNode *statement = main_fn->as.func_decl.body->as.block.statements;
     assert(statement->kind == AST_VAR_DECL);
     assert(statement->as.var_decl.type->as.type_expr.type_args);
-    AstNode *answer = statement->next;
+    AstNode *made = statement->next;
+    assert(made->as.var_decl.init->kind == AST_CALL_EXPR);
+    AstNode *associated = made->as.var_decl.init->as.call.callee;
+    assert(associated->kind == AST_FIELD_EXPR);
+    assert(strcmp(associated->as.field.field, "make") == 0);
+    assert(associated->as.field.target->kind == AST_TYPE_EXPR);
+    assert(associated->as.field.target->as.type_expr.type_args);
+    AstNode *answer = made->next;
     assert(answer->as.var_decl.init->kind == AST_CALL_EXPR);
     assert(answer->as.var_decl.init->as.call.type_args);
     AstNode *ordered = answer->next;

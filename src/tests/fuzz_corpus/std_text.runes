@@ -1,0 +1,19 @@
+use std.text.ScalarCursor
+use std.text.split_once
+use std.text.substring
+
+f main() {
+    str value = "a\u00e9世\0"
+    ScalarCursor cursor = ScalarCursor.new(value)
+    while !cursor.is_done() {
+        cursor.next()
+    }
+    match substring(value, 1, 3) {
+        Some(part) -> print(part),
+        None -> print("invalid"),
+    }
+    match split_once(value, "世") {
+        Some(parts) -> print(parts.before, parts.after),
+        None -> print("missing"),
+    }
+}

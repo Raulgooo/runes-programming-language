@@ -1,0 +1,15 @@
+use std.io.BufferedReader
+use std.io.SliceReader
+use std.io.read_line_from
+
+dynamic f main() {
+    [4]u8 source_storage = [0xc3, 0x28, 0x0a, 0x00]
+    []const u8 source = source_storage
+    reader := SliceReader.new(source)
+    [1]u8 staging_storage = []
+    []u8 staging = staging_storage
+    buffered := BufferedReader<SliceReader>.new(&reader, staging)
+    [3]u8 output_storage = []
+    []u8 output = output_storage
+    read_line_from<BufferedReader<SliceReader>>(&buffered, output)
+}

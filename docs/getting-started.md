@@ -56,8 +56,9 @@ To inspect the generated C:
 
 ## 4. Use arrays and pointers
 
-Runes v0.1 has fixed arrays, non-owning slices, and raw pointers. Owning dynamic
-containers remain user-library types.
+Runes v0.1 has fixed arrays, non-owning slices, and raw pointers. The standard
+library also supplies realm-aware owning `Vec<T>` and `String`; use fixed
+storage when ownership or growth is unnecessary.
 
 ```runes
 f sum(values: [4]i32) = result: i32 {
@@ -75,7 +76,31 @@ f main() {
 }
 ```
 
-## 5. Start a project
+## 5. Use the current standard library
+
+Library modules are explicit imports:
+
+```runes
+use std.io
+
+f main() {
+    match io.write_line("ready") {
+        Ok(_) -> {}
+        Err(_) -> {}
+    }
+}
+```
+
+The current application foundation includes `Vec<T>`, `String`, borrowed text,
+formatting, parsing, static readers/writers, caller-buffered I/O, bounded line
+input, hosted Linux standard streams, and byte-preserving lexical paths. Start with the
+[standard-library handbook chapter](guide/10-using-the-standard-library.md);
+use the [I/O reference](reference/io.md) for exact stream behavior and the
+[path reference](reference/path.md) for normalization and syscall conversion.
+Hosted Linux x86-64 also provides owning files and basic path operations; see
+the [filesystem reference](reference/fs.md).
+
+## 6. Start a project
 
 Create `runes.toml` beside the project source directory:
 
@@ -118,7 +143,7 @@ External modules are discovered relative to the declaring file and then from
 configured module roots. `mod parser` loads exactly one of `parser.runes` or
 `parser/mod.runes`; supplying both is an error.
 
-## 6. Useful compiler commands
+## 7. Useful compiler commands
 
 ```bash
 ./runes --lex-only hello.runes
@@ -136,7 +161,7 @@ make test-codegen
 make test-sanitize
 ```
 
-## 7. Editor highlighting and icons
+## 8. Editor highlighting and icons
 
 VS Code support is in `runes-lang/`. For Zed, install the local Tree-sitter
 language extension and Runes file-icon theme with:

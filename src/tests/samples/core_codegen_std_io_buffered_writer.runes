@@ -1,0 +1,233 @@
+use std.core.IoError
+use std.core.Result
+use std.io.BufferedWriter
+use std.io.Closer
+use std.io.WriteError
+use std.io.Writer
+use std.io.flush_buffered
+use std.io.write_all_to
+
+#[safe]
+extern f runes_str_view(value: *const u8, length: usize) = result: str
+
+type ScriptedWriter = {
+    output: []u8
+    position: usize
+    maximum: usize
+    calls: usize
+    interrupts: usize
+    fail_at: usize
+    zero_progress: bool
+    invalid_count: bool
+}
+
+method Writer for ScriptedWriter {
+    flex f write(
+        self: *ScriptedWriter,
+        bytes: []const u8
+    ) = outcome: Result<usize, WriteError> {
+        unsafe {
+            self.calls = self.calls + 1
+            if self.interrupts > 0 {
+                self.interrupts = self.interrupts - 1
+                outcome = Result.Err<usize, WriteError>(
+                    WriteError.Io(IoError.Interrupted())
+                )
+                return
+            }
+            if self.fail_at != 0 and self.calls == self.fail_at {
+                outcome = Result.Err<usize, WriteError>(
+                    WriteError.Io(IoError.BrokenPipe())
+                )
+                return
+            }
+            if self.zero_progress {
+                outcome = Result.Ok<usize, WriteError>(0)
+                return
+            }
+            if self.invalid_count {
+                outcome = Result.Ok<usize, WriteError>(bytes.len + 1)
+                return
+            }
+            usize count = bytes.len
+            if count > self.maximum {
+                count = self.maximum
+            }
+            for (0..count) |index| {
+                self.output[self.position + index] = bytes[index]
+            }
+            self.position = self.position + count
+            outcome = Result.Ok<usize, WriteError>(count)
+        }
+    }
+}
+
+f scripted(
+    output: []u8,
+    maximum: usize
+) = result: ScriptedWriter {
+    result = ScriptedWriter(
+        output: output,
+        position: 0,
+        maximum: maximum,
+        calls: 0,
+        interrupts: 0,
+        fail_at: 0,
+        zero_progress: false,
+        invalid_count: false
+    )
+}
+
+type ScriptedCloser = {
+    closed: bool
+    fail: bool
+}
+
+method Closer for ScriptedCloser {
+    flex f close(
+        self: *ScriptedCloser
+    ) = outcome: Result<bool, IoError> {
+        unsafe {
+            if self.fail {
+                outcome = Result.Err<bool, IoError>(
+                    IoError.PermissionDenied()
+                )
+            } else if self.closed {
+                outcome = Result.Ok<bool, IoError>(false)
+            } else {
+                self.closed = true
+                outcome = Result.Ok<bool, IoError>(true)
+            }
+        }
+    }
+}
+
+dynamic f main() {
+    bool ok = true
+    [64]u8 output_storage = []
+    []u8 output = output_storage
+    [4]u8 buffer_storage = []
+    []u8 buffer = buffer_storage
+    [11]u8 message_storage = [
+        0x68, 0x65, 0x6c, 0x6c, 0x6f, 0x20,
+        0x77, 0x6f, 0x72, 0x6c, 0x64
+    ]
+    []const u8 message = message_storage
+
+    sink := scripted(output, 2)
+    writer := BufferedWriter<ScriptedWriter>.new(&sink, buffer)
+    match write_all_to<BufferedWriter<ScriptedWriter>>(
+        &writer,
+        message
+    ) {
+        Ok(count) -> { if count != 11 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    if sink.position != 8 or writer.pending() != 3 {
+        ok = false
+    }
+    sink.interrupts = 2
+    match writer.flush() {
+        Ok(count) -> { if count != 3 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    if sink.position != 11 or writer.pending() != 0 {
+        ok = false
+    }
+    if runes_str_view(&output_storage[0], 11) != "hello world" {
+        ok = false
+    }
+
+    failure_sink := scripted(output, 2)
+    failure_sink.fail_at = 2
+    failure_writer := BufferedWriter<ScriptedWriter>.new(
+        &failure_sink,
+        buffer
+    )
+    [4]u8 failure_bytes_storage = [0x61, 0x62, 0x63, 0x64]
+    []const u8 failure_bytes = failure_bytes_storage
+    match failure_writer.write(failure_bytes) {
+        Ok(count) -> { if count != 4 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match flush_buffered<ScriptedWriter>(&failure_writer) {
+        Ok(_) -> { ok = false }
+        Err(reason) -> match reason {
+            Io(io_failure) -> match io_failure {
+                BrokenPipe -> { ok = ok }
+                _ -> { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+    -- The first two bytes made progress. Only the unsent suffix remains.
+    if failure_sink.position != 2 or failure_writer.pending() != 2 {
+        ok = false
+    }
+    failure_sink.fail_at = 0
+    match failure_writer.flush() {
+        Ok(count) -> { if count != 2 { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    if runes_str_view(&output_storage[0], 4) != "abcd" {
+        ok = false
+    }
+
+    zero_sink := scripted(output, 4)
+    zero_sink.zero_progress = true
+    zero_writer := BufferedWriter<ScriptedWriter>.new(&zero_sink, buffer)
+    match zero_writer.write(failure_bytes) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match zero_writer.flush() {
+        Ok(_) -> { ok = false }
+        Err(reason) -> match reason {
+            NoProgress -> {
+                if zero_writer.pending() != 4 { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    invalid_sink := scripted(output, 4)
+    invalid_sink.invalid_count = true
+    invalid_writer := BufferedWriter<ScriptedWriter>.new(
+        &invalid_sink,
+        buffer
+    )
+    match invalid_writer.write(failure_bytes) {
+        Ok(_) -> {}
+        Err(_) -> { ok = false }
+    }
+    match invalid_writer.flush() {
+        Ok(_) -> { ok = false }
+        Err(reason) -> match reason {
+            InvalidCount(count) -> {
+                if count != 5 { ok = false }
+                if invalid_writer.pending() != 4 { ok = false }
+            }
+            _ -> { ok = false }
+        }
+    }
+
+    closer := ScriptedCloser(closed: false, fail: false)
+    match closer.close() {
+        Ok(changed) -> { if !changed { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    match closer.close() {
+        Ok(changed) -> { if changed { ok = false } }
+        Err(_) -> { ok = false }
+    }
+    failing_closer := ScriptedCloser(closed: false, fail: true)
+    match failing_closer.close() {
+        Ok(_) -> { ok = false }
+        Err(reason) -> match reason {
+            PermissionDenied -> { ok = ok }
+            _ -> { ok = false }
+        }
+    }
+
+    print(ok)
+}

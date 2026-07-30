@@ -1,0 +1,448 @@
+-- Realm-aware owning UTF-8 text.
+--
+-- String is a distinct wrapper over Vec<u8>. Every byte in the Vec's logical
+-- initialized prefix is valid UTF-8; spare capacity is not part of the text.
+-- The bytes field is visible only because field privacy is not implemented.
+-- Library users must not modify it directly.
+--
+-- String is an owning value. Until Runes has move-only types, copying String
+-- duplicates its ownership handle. Call deinit() exactly once for each live
+-- dynamic String. Borrowed str/byte views must end before mutation or deinit.
+
+use std.allocation.tpublish_initialized
+use std.core.AllocationError
+use std.core.Result
+use std.vec.Vec
+
+-- Private ABI dependencies are carried with realm-specialized methods by the
+-- monomorphizer. They are not application-level String operations.
+#[safe]
+extern f runes_str_is_scalar_boundary(
+    value: str,
+    index: usize
+) = result: bool
+
+#[safe]
+extern f runes_str_from_bytes(
+    value: *const u8,
+    length: usize,
+    result: *str
+) = result: bool
+
+#[safe]
+extern f runes_str_view(
+    value: *const u8,
+    length: usize
+) = result: str
+
+#[safe]
+extern f runes_utf8_encode(
+    scalar: char,
+    output: *u8,
+    length: *usize
+) = result: bool
+
+pub type StringError =
+    | InvalidUtf8
+    | InvalidBoundary(usize)
+    | Allocation(AllocationError)
+
+pub type String = {
+    bytes: Vec<u8>
+}
+
+-- Preserve the hidden owner realm carried by the GC Vec member.
+pub in gc type String = {
+    bytes: Vec<u8>
+}
+
+pub method String {
+    -- Recoverably construct an empty String with capacity 1.
+    flex f tnew() = outcome: Result<String, AllocationError> {
+        match Vec<u8>.tnew() {
+            Ok(bytes) -> {
+                outcome = Result.Ok<String, AllocationError>(
+                    String(bytes: bytes)
+                )
+            }
+            Err(failure) -> {
+                outcome = Result.Err<String, AllocationError>(failure)
+            }
+        }
+    }
+
+    -- Recoverably construct an empty String with at least capacity 1.
+    flex f twith_capacity(
+        capacity: usize
+    ) = outcome: Result<String, AllocationError> {
+        match Vec<u8>.twith_capacity(capacity) {
+            Ok(bytes) -> {
+                outcome = Result.Ok<String, AllocationError>(
+                    String(bytes: bytes)
+                )
+            }
+            Err(failure) -> {
+                outcome = Result.Err<String, AllocationError>(failure)
+            }
+        }
+    }
+
+    -- Construct empty text or terminate on allocation failure.
+    flex f new() = outcome: String {
+        match String.tnew() {
+            Ok(value) -> {
+                outcome = value
+            }
+            Err(failure) -> {
+                failure.fail()
+                outcome = String(
+                    bytes: Vec<u8>(
+                        data: null,
+                        length: 0,
+                        reserved: 0
+                    )
+                )
+            }
+        }
+    }
+
+    -- Construct with requested capacity or terminate on allocation failure.
+    flex f with_capacity(capacity: usize) = outcome: String {
+        match String.twith_capacity(capacity) {
+            Ok(value) -> {
+                outcome = value
+            }
+            Err(failure) -> {
+                failure.fail()
+                outcome = String(
+                    bytes: Vec<u8>(
+                        data: null,
+                        length: 0,
+                        reserved: 0
+                    )
+                )
+            }
+        }
+    }
+
+    -- Recoverably copy valid borrowed text.
+    flex f tfrom_str(
+        value: str
+    ) = outcome: Result<String, AllocationError> {
+        match String.twith_capacity(value.len) {
+            Ok(owned) -> {
+                match owned.tpush_str(value) {
+                    Ok(_) -> {
+                        outcome = Result.Ok<String, AllocationError>(
+                            owned
+                        )
+                    }
+                    Err(failure) -> {
+                        owned.deinit()
+                        outcome = Result.Err<
+                            String,
+                            AllocationError
+                        >(failure)
+                    }
+                }
+            }
+            Err(failure) -> {
+                outcome = Result.Err<String, AllocationError>(failure)
+            }
+        }
+    }
+
+    -- Copy valid borrowed text or terminate on allocation failure.
+    flex f from_str(value: str) = outcome: String {
+        match String.tfrom_str(value) {
+            Ok(owned) -> {
+                outcome = owned
+            }
+            Err(failure) -> {
+                failure.fail()
+                outcome = String(
+                    bytes: Vec<u8>(
+                        data: null,
+                        length: 0,
+                        reserved: 0
+                    )
+                )
+            }
+        }
+    }
+
+    -- Validate and copy arbitrary bytes. No String is returned for malformed
+    -- UTF-8, and M2 intentionally provides no lossy conversion.
+    flex f from_bytes(
+        value: []const u8
+    ) = outcome: Result<String, StringError> {
+        str validated = ""
+        unsafe {
+            if !runes_str_from_bytes(value.ptr, value.len, &validated) {
+                outcome = Result.Err<String, StringError>(
+                    StringError.InvalidUtf8()
+                )
+            } else {
+                match String.tfrom_str(validated) {
+                    Ok(owned) -> {
+                        outcome = Result.Ok<String, StringError>(owned)
+                    }
+                    Err(failure) -> {
+                        outcome = Result.Err<String, StringError>(
+                            StringError.Allocation(failure)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    flex f byte_len(self) = result: usize {
+        result = self.bytes.length
+    }
+
+    flex f capacity(self) = result: usize {
+        result = self.bytes.reserved
+    }
+
+    flex f is_empty(self) = result: bool {
+        result = self.bytes.length == 0
+    }
+
+    -- Borrow the initialized bytes as text in O(1). The private runtime helper
+    -- does not revalidate because every mutation preserves the invariant.
+    flex f as_str(self) = result: str {
+        unsafe {
+            result = runes_str_view(
+                unwrap(self.bytes.data),
+                self.bytes.length
+            )
+        }
+    }
+
+    flex f as_bytes(self) = result: []const u8 {
+        result = self.bytes.as_slice()
+    }
+
+    flex f treserve(
+        self: *String,
+        additional: usize
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            match (&self.bytes).treserve(additional) {
+                Ok(capacity) -> {
+                    -- Vec.treserve may be a no-op when capacity already
+                    -- suffices. Still validate this String's persistent
+                    -- owner before a pre-reserved compound append.
+                    -- Publishing the unchanged initialized prefix is
+                    -- side-effect free but rejects nested-region mismatch.
+                    match tpublish_initialized<u8>(
+                        unwrap(self.bytes.data),
+                        self.bytes.length,
+                        self.bytes.length,
+                        self.bytes.reserved
+                    ) {
+                        Ok(_) -> {
+                            outcome = Result.Ok<
+                                usize,
+                                AllocationError
+                            >(capacity)
+                        }
+                        Err(failure) -> {
+                            outcome = Result.Err<
+                                usize,
+                                AllocationError
+                            >(failure)
+                        }
+                    }
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, AllocationError>(failure)
+                }
+            }
+        }
+    }
+
+    flex f reserve(
+        self: *String,
+        additional: usize
+    ) = outcome: usize {
+        unsafe {
+            outcome = (&self.bytes).reserve(additional)
+        }
+    }
+
+    -- Append borrowed valid UTF-8. On failure, the old text and length remain
+    -- valid; capacity may already have grown.
+    flex f tpush_str(
+        self: *String,
+        value: str
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            []const u8 source = const_slice(value.ptr, value.len)
+            usize old_length = self.bytes.length
+            if source.len == 0 {
+                outcome = Result.Ok<usize, AllocationError>(old_length)
+            } else {
+                match (&self.bytes).treserve(source.len) {
+                    Ok(_) -> {
+                        *u8 destination = unwrap(self.bytes.data)
+                        for (0..source.len) |byte_index| {
+                            destination[old_length + byte_index] =
+                                source[byte_index]
+                        }
+                        match tpublish_initialized<u8>(
+                            destination,
+                            old_length,
+                            old_length + source.len,
+                            self.bytes.reserved
+                        ) {
+                            Ok(new_length) -> {
+                                self.bytes.length = new_length
+                                outcome = Result.Ok<
+                                    usize,
+                                    AllocationError
+                                >(new_length)
+                            }
+                            Err(failure) -> {
+                                outcome = Result.Err<
+                                    usize,
+                                    AllocationError
+                                >(failure)
+                            }
+                        }
+                    }
+                    Err(failure) -> {
+                        outcome = Result.Err<usize, AllocationError>(
+                            failure
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    flex f push_str(
+        self: *String,
+        value: str
+    ) = outcome: usize {
+        unsafe {
+            match self.tpush_str(value) {
+                Ok(length) -> {
+                    outcome = length
+                }
+                Err(failure) -> {
+                    failure.fail()
+                    outcome = 0
+                }
+            }
+        }
+    }
+
+    -- A char is always a valid Unicode scalar. Encode it into temporary bytes
+    -- and publish the whole scalar in one operation.
+    flex f tpush(
+        self: *String,
+        scalar: char
+    ) = outcome: Result<usize, AllocationError> {
+        [4]u8 encoded = [0, 0, 0, 0]
+        usize encoded_length = 0
+        unsafe {
+            runes_utf8_encode(scalar, &encoded, &encoded_length)
+            str source = runes_str_view(&encoded, encoded_length)
+            outcome = self.tpush_str(source)
+        }
+    }
+
+    flex f push(
+        self: *String,
+        scalar: char
+    ) = outcome: usize {
+        unsafe {
+            match self.tpush(scalar) {
+                Ok(length) -> {
+                    outcome = length
+                }
+                Err(failure) -> {
+                    failure.fail()
+                    outcome = 0
+                }
+            }
+        }
+    }
+
+    -- Recoverably shrink at a UTF-8 scalar boundary.
+    flex f ttruncate(
+        self: *String,
+        new_length: usize
+    ) = outcome: Result<usize, StringError> {
+        unsafe {
+            if new_length >= self.bytes.length {
+                outcome = Result.Ok<usize, StringError>(self.bytes.length)
+            } else if !runes_str_is_scalar_boundary(
+                self.as_str(),
+                new_length
+            ) {
+                outcome = Result.Err<usize, StringError>(
+                    StringError.InvalidBoundary(new_length)
+                )
+            } else {
+                match (&self.bytes).ttruncate(new_length) {
+                    Ok(length) -> {
+                        outcome = Result.Ok<usize, StringError>(length)
+                    }
+                    Err(failure) -> {
+                        outcome = Result.Err<usize, StringError>(
+                            StringError.Allocation(failure)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    -- Ordinary truncate terminates for an invalid boundary or storage error.
+    flex f truncate(
+        self: *String,
+        new_length: usize
+    ) = outcome: usize {
+        unsafe {
+            if new_length < self.bytes.length {
+                -- Slicing forces the runtime's checked boundary diagnostic.
+                str checked = self.as_str()[0..new_length]
+                if checked.len == new_length {
+                    outcome = (&self.bytes).truncate(new_length)
+                }
+            } else {
+                outcome = self.bytes.length
+            }
+        }
+    }
+
+    flex f tclear(
+        self: *String
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            match (&self.bytes).tclear() {
+                Ok(length) -> {
+                    outcome = Result.Ok<usize, AllocationError>(length)
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, AllocationError>(failure)
+                }
+            }
+        }
+    }
+
+    flex f clear(self: *String) = outcome: usize {
+        unsafe {
+            outcome = (&self.bytes).clear()
+        }
+    }
+
+    flex f deinit(self: *String) {
+        unsafe {
+            (&self.bytes).deinit()
+        }
+    }
+}

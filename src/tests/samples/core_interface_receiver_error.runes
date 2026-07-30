@@ -1,4 +1,4 @@
--- EXPECT FAIL: must have an untyped self receiver
+-- EXPECT FAIL: must use self or self: *Value as its first parameter
 interface Value {
     f get(value: i32) = result: i32
 }

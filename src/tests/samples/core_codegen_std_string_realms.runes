@@ -1,0 +1,102 @@
+use std.core.AllocationError
+use std.core.Result
+use std.string.String
+
+#[safe]
+extern f runes_gc_collect()
+
+#[safe]
+extern f runes_gc_debug_object_count() = result: usize
+
+regional f nested_growth(value: *String) = result: bool {
+    unsafe {
+        result = match value.tpush_str("nested") {
+            Ok(_) -> false,
+            Err(failure) -> match failure {
+                OwnerUnavailable -> true,
+                _ -> false,
+            },
+        }
+    }
+}
+
+regional f nested_publication(value: *String) = result: bool {
+    unsafe {
+        result = match value.tpush('é') {
+            Ok(_) -> false,
+            Err(failure) -> match failure {
+                OwnerUnavailable -> value.as_str() == "p",
+                _ -> false,
+            },
+        }
+    }
+}
+
+dynamic f dynamic_string() = result: bool {
+    value := String.with_capacity(1)
+    value.push('a')
+    value.push_str("é界")
+    result = value.as_str() == "aé界"
+    if value.capacity() < value.byte_len() {
+        result = false
+    }
+    value.deinit()
+}
+
+regional f regional_string() = result: bool {
+    value := String.with_capacity(1)
+    value.push('r')
+    result = nested_growth(&value)
+    if value.as_str() != "r" {
+        result = false
+    }
+    value.push_str("egion")
+    if value.as_str() != "region" {
+        result = false
+    }
+    publication := String.with_capacity(8)
+    publication.push('p')
+    if !nested_publication(&publication) {
+        result = false
+    }
+    if publication.byte_len() != 1 {
+        result = false
+    }
+    publication.deinit()
+    value.deinit()
+}
+
+gc f gc_string_inner() = result: bool {
+    runes_gc_collect()
+    usize baseline = runes_gc_debug_object_count()
+    value := String.from_str("gc")
+    runes_gc_collect()
+    result = runes_gc_debug_object_count() == baseline + 1
+    value.push_str(" text")
+    runes_gc_collect()
+    if runes_gc_debug_object_count() != baseline + 1 {
+        result = false
+    }
+    if value.as_str() != "gc text" {
+        result = false
+    }
+    value.clear()
+    if !value.is_empty() {
+        result = false
+    }
+    value.deinit()
+}
+
+gc f gc_string() = result: bool {
+    runes_gc_collect()
+    usize baseline = runes_gc_debug_object_count()
+    result = gc_string_inner()
+    runes_gc_collect()
+    if runes_gc_debug_object_count() != baseline {
+        result = false
+    }
+}
+
+f main() {
+    print(dynamic_string(), " ", regional_string(), " ", gc_string())
+}

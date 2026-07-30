@@ -1,0 +1,109 @@
+pub mod factory {
+    pub type Box<T> = {
+        value: T
+    }
+
+    pub method Box<T> {
+        f new(value: T) = result: Box<T> {
+            result = Box<T>(value: value)
+        }
+
+        f identity<U>(value: U) = result: U {
+            result = value
+        }
+
+        f get(self) = result: T {
+            result = self.value
+        }
+    }
+}
+
+use factory.Box as Crate
+
+type RealmMarker<T> = {
+    value: T
+}
+
+type RealmOverride = {
+    value: i32
+}
+
+method RealmMarker<T> {
+    flex f current(value: T) = result: i32 {
+        when realm dynamic {
+            result = 10
+        } else {
+            when realm regional {
+                result = 20
+            } else {
+                when realm gc {
+                    result = 30
+                } else {
+                    result = 40
+                }
+            }
+        }
+    }
+}
+
+method RealmOverride {
+    flex f current() = result: i32 {
+        result = 1
+    }
+
+    in gc f current() = result: i32 {
+        result = 2
+    }
+}
+
+dynamic f dynamic_marker() = result: i32 {
+    result = RealmMarker<i32>.current(1)
+}
+
+regional f regional_marker() = result: i32 {
+    result = RealmMarker<i32>.current(1)
+}
+
+gc f gc_marker() = result: i32 {
+    result = RealmMarker<i32>.current(1)
+}
+
+dynamic f dynamic_override() = result: i32 {
+    result = RealmOverride.current()
+}
+
+regional f regional_override() = result: i32 {
+    result = RealmOverride.current()
+}
+
+gc f gc_override() = result: i32 {
+    result = RealmOverride.current()
+}
+
+f main() {
+    Crate<i32> explicit = Crate<i32>.new(41)
+    Crate<i32> inferred = Crate.new(42)
+    factory.Box<i32> qualified = factory.Box<i32>.new(43)
+    u64 kept = Crate<i32>.identity<u64>(99)
+    print(
+        explicit.get(),
+        " ",
+        inferred.get(),
+        " ",
+        qualified.get(),
+        " ",
+        kept,
+        " ",
+        dynamic_marker(),
+        " ",
+        regional_marker(),
+        " ",
+        gc_marker(),
+        " ",
+        dynamic_override(),
+        " ",
+        regional_override(),
+        " ",
+        gc_override()
+    )
+}

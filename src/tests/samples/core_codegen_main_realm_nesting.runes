@@ -1,0 +1,29 @@
+f main() {
+    f stack_child() = result: i32 {
+        result = 1
+    }
+
+    flex f flex_child() = result: i32 {
+        result = 2
+    }
+
+    regional f regional_child() = result: i32 {
+        result = 4
+    }
+
+    dynamic f dynamic_child() = result: i32 {
+        result = 8
+    }
+
+    gc f gc_child() = result: i32 {
+        result = 16
+    }
+
+    print(
+        stack_child() +
+        flex_child() +
+        regional_child() +
+        dynamic_child() +
+        gc_child()
+    )
+}

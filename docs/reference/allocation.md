@@ -213,18 +213,17 @@ its caller.
 The realm qualifier is therefore part of the allocation contract, not merely
 an optimization hint.
 
-## Typed fallible storage
+## Typed storage and recoverable `t` operations
 
 `std.allocation` is the safe foundation for owning containers:
 
 ```runes
-use std.allocation.allocate_array
-use std.allocation.resize_array
+use std.allocation.tallocate_array
 use std.allocation.release_array
 use std.core.Result
 
 dynamic f example() {
-    match allocate_array<i32>(4) {
+    match tallocate_array<i32>(4) {
         Ok(pointer) -> {
             -- initialize and use pointer[0..4] here
             release_array<i32>(pointer)
@@ -239,19 +238,54 @@ dynamic f example() {
 The exported operations are:
 
 ```runes
-allocate_array<T>(count) -> Result<*T, AllocationError>
+allocate<T>(value) -> *T
+tallocate<T>(value) -> Result<*T, AllocationError>
+
+allocate_array<T>(count) -> *T
+tallocate_array<T>(count) -> Result<*T, AllocationError>
+
+publish_initialized<T>(
+    pointer,
+    expected_old,
+    new_initialized,
+    capacity
+) -> usize
+tpublish_initialized<T>(...) -> Result<usize, AllocationError>
+
 resize_array<T>(
     pointer,
     initialized,
     old_capacity,
     new_capacity
-) -> Result<*T, AllocationError>
+) -> *T
+tresize_array<T>(...) -> Result<*T, AllocationError>
+
 release_array<T>(pointer)
 ```
 
-They derive element size, alignment, and the GC descriptor from `T`. Capacity
-multiplication is checked in the runtime. A failed resize leaves the original
-pointer and contents valid.
+`allocate<T>(value)` is the high-level initialized operation. It allocates one
+slot, writes `value`, publishes that slot to the GC tracer when applicable,
+and returns only after initialization succeeds. It does not require a cast and
+never exposes uninitialized `T` through its safe call boundary. If failure
+must be recoverable, use `tallocate<T>(value)`.
+
+The standard-library naming rule is consistent: the ordinary spelling
+terminates through the runtime failure policy, while `t` followed immediately
+by the operation name returns `Result`. Thus `allocate/tallocate`,
+`resize_array/tresize_array`, and `Vec.push/Vec.tpush` are pairs that share one
+fallible implementation.
+
+The array and publication functions are container-authoring operations.
+`tallocate_array` creates recoverable capacity with initialized length zero.
+After writing a new initialized prefix, a recoverable container operation must
+call `tpublish_initialized` before any GC safepoint. Ordinary container
+operations can use the non-`t` counterparts. Shrinking, popping, truncating,
+and clearing must publish the reduced length so removed pointer-bearing
+elements stop being traced.
+
+All operations derive element size, alignment, and the GC descriptor from
+`T`. Capacity multiplication is checked in the runtime. A failed resize leaves
+the original pointer and contents valid.
 
 Fresh allocation follows the effective execution realm. Resize and release
 are intended to be called from an owning type's receiver-specialized method,
@@ -261,14 +295,23 @@ regional resize allocates replacement storage in the same active arena and
 retains the old arena bytes; GC resize allocates a traced sequence and makes
 the old sequence collectible.
 
+GC publication validates the exact allocation base, element descriptor,
+capacity, and expected old initialized length. It rejects stale or mismatched
+updates rather than silently changing tracing metadata. Dynamic and regional
+publication validates bounds; regional publication also validates the directly
+active owner arena. The operation is non-allocating and does not collect.
+
 Regional replacement from a nested child arena is rejected with
 `OwnerUnavailable`; it never silently changes the storage owner. Stack
 specializations of these owning operations are compile-time errors.
 
-`release_array` releases dynamic backing memory. In regional and GC realms it
-relinquishes the handle without individually freeing backing memory. External
-resources stored in elements still require their own cleanup.
+`release_array` releases dynamic backing memory. Regional release relinquishes
+the handle without individually freeing arena memory. GC release clears the
+initialized prefix so former elements are no longer traced; the backing object
+is reclaimed later when unreachable. External resources stored in elements
+still require their own cleanup before release.
 
-The compiler intrinsics beneath this module (`try_allocate`, `resize`,
-`release`, and `storage_error`) are prelude/runtime contracts. Application
-code should use `std.allocation`, not call them directly.
+The compiler intrinsics beneath this module (`tstorage_allocate`,
+`tstorage_resize`, `release`, `tstorage_set_initialized`, `storage_error`, and
+`storage_fail`) are prelude/runtime contracts. Application code should use
+`std.allocation`, not call them directly.

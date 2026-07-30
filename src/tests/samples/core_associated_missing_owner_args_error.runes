@@ -1,0 +1,16 @@
+-- EXPECT FAIL: cannot infer type argument 'T' for generic type 'Box'
+type Box<T> = {
+    value: T
+}
+
+method Box<T> {
+    f empty() = result: Box<T> {
+        T value
+        result = Box<T>(value: value)
+    }
+}
+
+f main() {
+    Box<i32> value = Box.empty()
+    print(value.value)
+}

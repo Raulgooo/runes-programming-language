@@ -1,0 +1,19 @@
+use std.core.Result
+use std.path.Path
+use std.path.PathError
+use std.path.PathView
+use std.path.PlatformPath
+
+dynamic f main() {
+    path := Path.normalize(PathView.from_str("/a//b/../c"))
+    joined := Path.join(path.as_view(), PathView.from_str("./d"))
+    match PlatformPath.tfrom_view(joined.as_view()) {
+        Ok(value) -> {
+            platform := value
+            platform.deinit()
+        }
+        Err(_) -> {}
+    }
+    joined.deinit()
+    path.deinit()
+}

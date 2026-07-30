@@ -115,6 +115,7 @@ pub type IoError =
     | Interrupted
     | PermissionDenied
     | NotFound
+    | AlreadyExists
     | BrokenPipe
     | InvalidInput
     | WouldBlock
@@ -130,3 +131,17 @@ pub type AllocationError =
     | OutOfMemory
     | CapacityOverflow
     | OwnerUnavailable
+
+pub method AllocationError {
+    f code(self) = result: i32 {
+        result = match self {
+            OutOfMemory -> 1,
+            CapacityOverflow -> 2,
+            OwnerUnavailable -> 3,
+        }
+    }
+
+    f fail(self) {
+        storage_fail(self.code())
+    }
+}

@@ -61,9 +61,9 @@ One useful test is:
 > expressed and tested as a normal `.runes` module, it is probably library
 > work.
 
-Some designs need both. `Vec<T>` is library code, but safe typed allocation may
-need compiler support before `Vec<T>` can be implemented without repeating
-fragile size, alignment, cast, and GC-tracing logic.
+Some designs need both. `Vec<T>` is library code, but its safe typed allocation
+layer required compiler and runtime support so the implementation would not
+repeat fragile size, alignment, cast, and GC-tracing logic.
 
 ## 2. What happens to a Runes program
 
@@ -269,18 +269,19 @@ This separation makes caller behavior clearer:
 - whether other aliases exist;
 - whether it points into raw, arena, GC, stack, or external storage.
 
-Runes tracks provenance and realms, but public library types must still make
-cleanup obligations understandable. That is why the current plan uses
-different owning vector families:
+Runes tracks provenance, hidden owner-realm type identity, and realm-sensitive
+methods. The implemented vector therefore keeps one public name:
 
 ```text
-Vec<T>       raw/dynamic storage; explicit deinit
-ArenaVec<T>  arena storage; reclaimed with its regional tree
-GcVec<T>     traced storage; reclaimed by the collector
+Vec<T> in dynamic execution  raw storage; deinit frees backing memory
+Vec<T> in regional execution arena storage; deinit relinquishes the handle
+Vec<T> in GC execution       traced storage; deinit clears traced elements
 ```
 
-The names are slightly longer, but the program does not have to guess what
-`clear`, replacement, or destruction means.
+The caller never writes a realm argument or allocator. The compiler preserves
+the vector's inferred owner realm and selects growth and release from that
+owner. Documentation must still explain that `deinit` has realm-specific
+memory effects and does not clean up external resources stored in elements.
 
 ## 4. `match` is structured case analysis
 
@@ -788,24 +789,45 @@ promise.
 
 ### Make ownership visible when allocation is essential
 
-For dynamic `Vec<T>`:
+For the implemented realm-aware `Vec<T>`:
 
 ```runes
-dynamic f vec_with_capacity<T>(capacity: usize) = result: Vec<T>
-dynamic f push(self: *Vec<T>, value: T)
-dynamic f deinit(self: *Vec<T>)
+use std.vec.Vec
+
+dynamic f dynamic_work() { Vec<i32>.new() }
+regional f regional_work() { Vec<i32>.new() }
+gc f managed_work() { Vec<i32>.new() }
 ```
 
-For an arena container, growth helpers should use the caller's active arena
-rather than accidentally creating storage in a shorter child lifetime. With
-current realm behavior that likely means carefully designed `flex` helpers
-called inside a regional scope.
+The same `flex` implementation grows all three. A regional vector rejects
+growth from a nested child arena rather than changing owner. GC replacement
+becomes collectible, while dynamic replacement frees old backing storage.
 
-For a GC container, replacement storage becomes collectible rather than being
-passed to `raw_free`.
+Normal application code uses the concise operation:
 
-The element algorithm may be shared, but cleanup policy must not be shared
-blindly.
+```runes
+values := Vec<i32>.new()
+values.push(10)
+```
+
+When a caller intends to recover from storage failure, prefix that operation
+with `t`:
+
+```runes
+match Vec<i32>.tnew() {
+    Ok(values) -> {
+        match values.tpush(10) {
+            Ok(_) -> use(values),
+            Err(failure) -> recover(failure),
+        }
+    }
+    Err(failure) -> recover(failure),
+}
+```
+
+The ordinary operation delegates to the `t` implementation and invokes the
+portable storage-failure policy on `Err`; the two names must never contain
+independent allocation algorithms.
 
 ### Memory cleanup is not resource cleanup
 
@@ -970,10 +992,11 @@ fill / copy / equal / find / starts_with
 For `Vec<T>`:
 
 ```text
-new / with_capacity
+new / tnew / with_capacity / twith_capacity
 len / capacity
 as_slice / as_mut_slice
-push / pop / reserve / clear / deinit
+push / tpush / pop / tpop / reserve / treserve
+clear / tclear / truncate / ttruncate / deinit
 ```
 
 Every added operation creates permanent work:
@@ -1188,7 +1211,7 @@ Learn:
 Finish when the syntax and semantics are documented and positive/negative
 tests cover dynamic, regional, GC, flex, and stack behavior.
 
-### Exercise 5: implement dynamic `Vec<T>`
+### Exercise 5: understand the implemented `Vec<T>`
 
 Learn:
 
@@ -1198,20 +1221,20 @@ Learn:
 - pointer operations hidden behind safe methods;
 - explicit cleanup and sanitizer testing.
 
-Finish when a real program uses only public methods and sanitizer runs show no
-leak or invalid access.
+This milestone is complete. Reproduce the executable proof and inspect how one
+source API selects dynamic, regional, and GC storage.
 
-### Exercise 6: implement realm-specific vectors
+### Exercise 6: extend realm-aware containers
 
 Learn:
 
 - shared algorithm versus different ownership policy;
 - regional lifetime constraints;
 - GC tracing;
-- why identical method names do not imply identical destruction.
+- why identical method names can retain predictable realm-specific cleanup.
 
-Finish when `Vec<T>`, `ArenaVec<T>`, and `GcVec<T>` have comparable user-facing
-behavior with distinct, tested ownership.
+Finish when a second container reuses the implicit-owner design without
+requiring allocator or realm arguments at call sites.
 
 ### Exercise 7: build `String`
 
@@ -1311,11 +1334,12 @@ Runes still keeps runtime arithmetic, indexing, range, null-unwrapping, and
 other contract checks inside `unsafe`. The keyword permits specific pointer,
 cast, FFI, assembly, and mutation operations; it does not prove them correct.
 
-### Hiding ownership for prettier spelling
+### Hiding ownership without preserving it
 
-`Vec<T>` that sometimes needs `deinit`, sometimes must not be freed, and
-sometimes is traced looks short but creates a semantic guessing game. Ergonomic
-code is predictable code, not merely code with fewer characters.
+One `Vec<T>` spelling is ergonomic only because the compiler preserves its
+hidden owner realm and methods dispatch from that owner. A single spelling
+without persistent owner identity would be unsafe: a nested regional or GC
+call could otherwise route existing storage through the wrong backend.
 
 ### Documenting only the happy path
 
@@ -1389,9 +1413,9 @@ The next work should remain intentionally small:
 5. expose safe `std.io.read_into`;
 6. build the stdin byte-counter integration program;
 7. settle typed allocation in the language/runtime;
-8. implement raw-owned `RawBox<T>` and `Vec<T>`;
-9. implement `ArenaVec<T>` and `GcVec<T>`;
-10. build owning UTF-8 `String`;
+8. implement realm-aware `Vec<T>`; (done)
+9. implement raw-owned `RawBox<T>`;
+10. build owning UTF-8 `String`; (done)
 11. prove the whole surface with a small compiler-oriented CLI.
 
 Do not treat this order as a measure of sophistication. Finishing a small

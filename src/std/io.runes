@@ -4,8 +4,854 @@
 -- Backend selection is a compile-time target decision. Linux x86-64 is the
 -- first implemented backend.
 
+use std.core.AllocationError
 use std.core.IoError
 use std.core.Result
+use std.string.String
+
+#[safe]
+extern f runes_str_from_bytes(
+    value: *const u8,
+    length: usize,
+    result: *str
+) = result: bool
+
+pub type WriteError =
+    | Io(IoError)
+    | Allocation(AllocationError)
+    | InvalidUtf8
+    | NoProgress
+    | InvalidCount(usize)
+
+pub type ReadError =
+    | Io(IoError)
+    | InvalidCount(usize)
+
+pub type ExactReadError =
+    | Read(ReadError)
+    | UnexpectedEnd(usize)
+
+pub type LineReadError =
+    | Read(ReadError)
+    | EndOfInput
+    | TooLong(usize)
+    | InvalidUtf8
+
+pub type LineRead = {
+    length: usize
+    terminated: bool
+    end_of_input: bool
+}
+
+pub type SeekFrom =
+    | Start(usize)
+    | Current(i64)
+    | End(i64)
+
+-- Statically dispatched byte reader. A successful read may be short.
+-- End-of-input is ReadError.Io(IoError.EndOfInput); Ok(0) is reserved for an
+-- empty destination and is rejected as no progress by complete-read helpers.
+pub interface Reader {
+    flex f read(
+        self: *Reader,
+        bytes: []u8
+    ) = outcome: Result<usize, ReadError>
+}
+
+-- Statically dispatched byte writer. Implementations may make partial
+-- progress; Ok(0) is allowed at this layer so write-all consumers can report
+-- a deterministic no-progress error.
+pub interface Writer {
+    flex f write(
+        self: *Writer,
+        bytes: []const u8
+    ) = outcome: Result<usize, WriteError>
+}
+
+pub interface Flusher {
+    flex f flush(
+        self: *Flusher
+    ) = outcome: Result<usize, WriteError>
+}
+
+pub interface Seeker {
+    flex f seek(
+        self: *Seeker,
+        from: SeekFrom
+    ) = outcome: Result<usize, IoError>
+}
+
+pub interface Closer {
+    flex f close(
+        self: *Closer
+    ) = outcome: Result<bool, IoError>
+}
+
+pub type SliceReader = {
+    source: []const u8
+    position: usize
+}
+
+pub method SliceReader {
+    f new(source: []const u8) = result: SliceReader {
+        result = SliceReader(source: source, position: 0)
+    }
+
+    f remaining(self) = result: usize {
+        result = self.source.len - self.position
+    }
+}
+
+pub method Reader for SliceReader {
+    flex f read(
+        self: *SliceReader,
+        bytes: []u8
+    ) = outcome: Result<usize, ReadError> {
+        unsafe {
+            if bytes.len == 0 {
+                outcome = Result.Ok<usize, ReadError>(0)
+                return
+            }
+            if self.position >= self.source.len {
+                outcome = Result.Err<usize, ReadError>(
+                    ReadError.Io(IoError.EndOfInput())
+                )
+                return
+            }
+            usize count = self.source.len - self.position
+            if count > bytes.len {
+                count = bytes.len
+            }
+            for (0..count) |index| {
+                bytes[index] = self.source[self.position + index]
+            }
+            self.position = self.position + count
+            outcome = Result.Ok<usize, ReadError>(count)
+        }
+    }
+}
+
+f offset_position(
+    base: usize,
+    delta: i64,
+    maximum: usize
+) = outcome: Result<usize, IoError> {
+    usize target = base
+    if delta >= 0 {
+        usize forward = delta as usize
+        if forward > maximum - base {
+            outcome = Result.Err<usize, IoError>(
+                IoError.InvalidInput()
+            )
+            return
+        }
+        target = base + forward
+    } else {
+        i64 adjusted = -(delta + 1)
+        usize backward = (adjusted as usize) + 1
+        if backward > base {
+            outcome = Result.Err<usize, IoError>(
+                IoError.InvalidInput()
+            )
+            return
+        }
+        target = base - backward
+    }
+    outcome = Result.Ok<usize, IoError>(target)
+}
+
+pub method Seeker for SliceReader {
+    flex f seek(
+        self: *SliceReader,
+        from: SeekFrom
+    ) = outcome: Result<usize, IoError> {
+        unsafe {
+            match from {
+                Start(position) -> {
+                    if position > self.source.len {
+                        outcome = Result.Err<usize, IoError>(
+                            IoError.InvalidInput()
+                        )
+                    } else {
+                        self.position = position
+                        outcome = Result.Ok<usize, IoError>(position)
+                    }
+                }
+                Current(delta) -> {
+                    match offset_position(
+                        self.position,
+                        delta,
+                        self.source.len
+                    ) {
+                        Ok(position) -> {
+                            self.position = position
+                            outcome = Result.Ok<usize, IoError>(position)
+                        }
+                        Err(failure) -> {
+                            outcome = Result.Err<usize, IoError>(failure)
+                        }
+                    }
+                }
+                End(delta) -> {
+                    match offset_position(
+                        self.source.len,
+                        delta,
+                        self.source.len
+                    ) {
+                        Ok(position) -> {
+                            self.position = position
+                            outcome = Result.Ok<usize, IoError>(position)
+                        }
+                        Err(failure) -> {
+                            outcome = Result.Err<usize, IoError>(failure)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub type FixedBufferWriter = {
+    buffer: []u8
+    position: usize
+}
+
+pub method FixedBufferWriter {
+    f new(buffer: []u8) = result: FixedBufferWriter {
+        result = FixedBufferWriter(buffer: buffer, position: 0)
+    }
+
+    f written(self) = result: []const u8 {
+        unsafe {
+            result = const_slice(self.buffer.ptr, self.position)
+        }
+    }
+
+    f remaining(self) = result: usize {
+        result = self.buffer.len - self.position
+    }
+}
+
+pub method Writer for FixedBufferWriter {
+    flex f write(
+        self: *FixedBufferWriter,
+        bytes: []const u8
+    ) = outcome: Result<usize, WriteError> {
+        unsafe {
+            usize count = bytes.len
+            usize remaining = self.buffer.len - self.position
+            if count > remaining {
+                count = remaining
+            }
+            for (0..count) |index| {
+                self.buffer[self.position + index] = bytes[index]
+            }
+            self.position = self.position + count
+            outcome = Result.Ok<usize, WriteError>(count)
+        }
+    }
+}
+
+-- A realm-derived adapter. Construct it in the same owner realm as target.
+pub type StringWriter = {
+    target: *String
+}
+
+pub method Writer for StringWriter {
+    flex f write(
+        self: *StringWriter,
+        bytes: []const u8
+    ) = outcome: Result<usize, WriteError> {
+        unsafe {
+            str validated = ""
+            if !runes_str_from_bytes(
+                bytes.ptr,
+                bytes.len,
+                &validated
+            ) {
+                outcome = Result.Err<usize, WriteError>(
+                    WriteError.InvalidUtf8()
+                )
+            } else {
+                match self.target.tpush_str(validated) {
+                    Ok(_) -> {
+                        outcome = Result.Ok<usize, WriteError>(
+                            bytes.len
+                        )
+                    }
+                    Err(failure) -> {
+                        outcome = Result.Err<usize, WriteError>(
+                            WriteError.Allocation(failure)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+-- Complete one logical byte write over an implementation that may report
+-- partial progress. Interrupted I/O is retried. Zero progress and impossible
+-- counts are explicit contract errors rather than infinite loops or overruns.
+pub flex f write_all_to<W: Writer>(
+    writer: *W,
+    bytes: []const u8
+) = outcome: Result<usize, WriteError> {
+    usize written = 0
+    while written < bytes.len {
+        unsafe {
+            []const u8 remaining = bytes[written..bytes.len]
+            match writer.write(remaining) {
+                Ok(count) -> {
+                    if count == 0 {
+                        outcome = Result.Err<usize, WriteError>(
+                            WriteError.NoProgress()
+                        )
+                        return
+                    }
+                    if count > remaining.len {
+                        outcome = Result.Err<usize, WriteError>(
+                            WriteError.InvalidCount(count)
+                        )
+                        return
+                    }
+                    written = written + count
+                }
+                Err(failure) -> {
+                    bool interrupted = match failure {
+                        Io(reason) -> match reason {
+                            Interrupted -> true,
+                            _ -> false,
+                        },
+                        _ -> false,
+                    }
+                    if !interrupted {
+                        outcome = Result.Err<usize, WriteError>(
+                            failure
+                        )
+                        return
+                    }
+                }
+            }
+        }
+    }
+    outcome = Result.Ok<usize, WriteError>(written)
+}
+
+-- Fill the entire destination or report exactly how many bytes were obtained
+-- before end-of-input. Interrupted reads are retried. A reader that reports
+-- zero progress for a nonempty destination is treated as unexpected EOF.
+pub flex f read_exact_from<R: Reader>(
+    reader: *R,
+    bytes: []u8
+) = outcome: Result<usize, ExactReadError> {
+    usize completed = 0
+    while completed < bytes.len {
+        unsafe {
+            []u8 remaining = bytes[completed..bytes.len]
+            match reader.read(remaining) {
+                Ok(count) -> {
+                    if count == 0 {
+                        outcome = Result.Err<usize, ExactReadError>(
+                            ExactReadError.UnexpectedEnd(completed)
+                        )
+                        return
+                    }
+                    if count > remaining.len {
+                        outcome = Result.Err<usize, ExactReadError>(
+                            ExactReadError.Read(
+                                ReadError.InvalidCount(count)
+                            )
+                        )
+                        return
+                    }
+                    completed = completed + count
+                }
+                Err(failure) -> {
+                    bool interrupted = match failure {
+                        Io(reason) -> match reason {
+                            Interrupted -> true,
+                            EndOfInput -> false,
+                            _ -> false,
+                        },
+                        _ -> false,
+                    }
+                    bool end_of_input = match failure {
+                        Io(reason) -> match reason {
+                            EndOfInput -> true,
+                            _ -> false,
+                        },
+                        _ -> false,
+                    }
+                    if end_of_input {
+                        outcome = Result.Err<usize, ExactReadError>(
+                            ExactReadError.UnexpectedEnd(completed)
+                        )
+                        return
+                    }
+                    if !interrupted {
+                        outcome = Result.Err<usize, ExactReadError>(
+                            ExactReadError.Read(failure)
+                        )
+                        return
+                    }
+                }
+            }
+        }
+    }
+    outcome = Result.Ok<usize, ExactReadError>(completed)
+}
+
+-- Read one LF-delimited byte line into caller-owned storage. The LF is
+-- consumed but not copied. EOF after bytes is a successful unterminated line;
+-- EOF before bytes is LineReadError.EndOfInput. A full output buffer is only
+-- accepted when the next byte is LF or EOF, so TooLong never truncates a line
+-- silently.
+pub flex f read_line_bytes_from<R: Reader>(
+    reader: *R,
+    output: []u8
+) = outcome: Result<LineRead, LineReadError> {
+    usize length = 0
+    [1]u8 byte_storage = []
+    []u8 byte = byte_storage
+
+    while true {
+        unsafe {
+        match reader.read(byte) {
+            Ok(count) -> {
+                if count == 0 {
+                    if length == 0 {
+                        outcome = Result.Err<LineRead, LineReadError>(
+                            LineReadError.EndOfInput()
+                        )
+                    } else {
+                        outcome = Result.Ok<LineRead, LineReadError>(
+                            LineRead(
+                                length: length,
+                                terminated: false,
+                                end_of_input: true
+                            )
+                        )
+                    }
+                    return
+                }
+                if count > 1 {
+                    outcome = Result.Err<LineRead, LineReadError>(
+                        LineReadError.Read(
+                            ReadError.InvalidCount(count)
+                        )
+                    )
+                    return
+                }
+                if byte_storage[0] == 0x0a {
+                    outcome = Result.Ok<LineRead, LineReadError>(
+                        LineRead(
+                            length: length,
+                            terminated: true,
+                            end_of_input: false
+                        )
+                    )
+                    return
+                }
+                if length >= output.len {
+                    outcome = Result.Err<LineRead, LineReadError>(
+                        LineReadError.TooLong(output.len)
+                    )
+                    return
+                }
+                output[length] = byte_storage[0]
+                length = length + 1
+            }
+            Err(failure) -> {
+                bool interrupted = match failure {
+                    Io(reason) -> match reason {
+                        Interrupted -> true,
+                        _ -> false,
+                    },
+                    _ -> false,
+                }
+                bool end_of_input = match failure {
+                    Io(reason) -> match reason {
+                        EndOfInput -> true,
+                        _ -> false,
+                    },
+                    _ -> false,
+                }
+                if end_of_input {
+                    if length == 0 {
+                        outcome = Result.Err<LineRead, LineReadError>(
+                            LineReadError.EndOfInput()
+                        )
+                    } else {
+                        outcome = Result.Ok<LineRead, LineReadError>(
+                            LineRead(
+                                length: length,
+                                terminated: false,
+                                end_of_input: true
+                            )
+                        )
+                    }
+                    return
+                }
+                if !interrupted {
+                    outcome = Result.Err<LineRead, LineReadError>(
+                        LineReadError.Read(failure)
+                    )
+                    return
+                }
+            }
+        }
+        }
+    }
+}
+
+-- Text counterpart of read_line_bytes_from. The returned str borrows output.
+pub flex f read_line_from<R: Reader>(
+    reader: *R,
+    output: []u8
+) = outcome: Result<str, LineReadError> {
+    match read_line_bytes_from<R>(reader, output) {
+        Ok(line) -> {
+            unsafe {
+                str value = ""
+                if runes_str_from_bytes(
+                    output.ptr,
+                    line.length,
+                    &value
+                ) {
+                    outcome = Result.Ok<str, LineReadError>(value)
+                } else {
+                    outcome = Result.Err<str, LineReadError>(
+                        LineReadError.InvalidUtf8()
+                    )
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<str, LineReadError>(failure)
+        }
+    }
+}
+
+-- Borrowed buffering adapters. The caller owns both the backend and storage,
+-- so construction allocates nothing and behaves identically in every realm.
+-- A zero-length buffer is valid and falls back to the backend directly.
+pub type BufferedReader<R> = {
+    inner: *R
+    buffer: []u8
+    position: usize
+    filled: usize
+    end_of_input: bool
+}
+
+pub method BufferedReader<R> {
+    f new(
+        inner: *R,
+        buffer: []u8
+    ) = result: BufferedReader<R> {
+        result = BufferedReader<R>(
+            inner: inner,
+            buffer: buffer,
+            position: 0,
+            filled: 0,
+            end_of_input: false
+        )
+    }
+
+    f buffered(self) = result: usize {
+        result = self.filled - self.position
+    }
+}
+
+pub flex f read_buffered<R: Reader>(
+    reader: *BufferedReader<R>,
+    output: []u8
+) = outcome: Result<usize, ReadError> {
+    unsafe {
+        if output.len == 0 {
+            outcome = Result.Ok<usize, ReadError>(0)
+            return
+        }
+
+        usize available = reader.filled - reader.position
+        if available > 0 {
+            usize count = available
+            if count > output.len {
+                count = output.len
+            }
+            for (0..count) |index| {
+                output[index] = reader.buffer[reader.position + index]
+            }
+            reader.position = reader.position + count
+            outcome = Result.Ok<usize, ReadError>(count)
+            return
+        }
+
+        if reader.end_of_input {
+            outcome = Result.Err<usize, ReadError>(
+                ReadError.Io(IoError.EndOfInput())
+            )
+            return
+        }
+
+        -- Large destinations bypass the staging buffer.
+        if reader.buffer.len == 0 or output.len >= reader.buffer.len {
+            match reader.inner.read(output) {
+                Ok(count) -> {
+                    if count > output.len {
+                        outcome = Result.Err<usize, ReadError>(
+                            ReadError.InvalidCount(count)
+                        )
+                    } else if count == 0 {
+                        reader.end_of_input = true
+                        outcome = Result.Err<usize, ReadError>(
+                            ReadError.Io(IoError.EndOfInput())
+                        )
+                    } else {
+                        outcome = Result.Ok<usize, ReadError>(count)
+                    }
+                }
+                Err(failure) -> {
+                    bool eof = match failure {
+                        Io(reason) -> match reason {
+                            EndOfInput -> true,
+                            _ -> false,
+                        },
+                        _ -> false,
+                    }
+                    if eof {
+                        reader.end_of_input = true
+                    }
+                    outcome = Result.Err<usize, ReadError>(failure)
+                }
+            }
+            return
+        }
+
+        reader.position = 0
+        reader.filled = 0
+        match reader.inner.read(reader.buffer) {
+            Ok(count) -> {
+                if count > reader.buffer.len {
+                    outcome = Result.Err<usize, ReadError>(
+                        ReadError.InvalidCount(count)
+                    )
+                    return
+                }
+                if count == 0 {
+                    reader.end_of_input = true
+                    outcome = Result.Err<usize, ReadError>(
+                        ReadError.Io(IoError.EndOfInput())
+                    )
+                    return
+                }
+                reader.filled = count
+                usize copied = count
+                if copied > output.len {
+                    copied = output.len
+                }
+                for (0..copied) |index| {
+                    output[index] = reader.buffer[index]
+                }
+                reader.position = copied
+                outcome = Result.Ok<usize, ReadError>(copied)
+            }
+            Err(failure) -> {
+                bool eof = match failure {
+                    Io(reason) -> match reason {
+                        EndOfInput -> true,
+                        _ -> false,
+                    },
+                    _ -> false,
+                }
+                if eof {
+                    reader.end_of_input = true
+                }
+                outcome = Result.Err<usize, ReadError>(failure)
+            }
+        }
+    }
+}
+
+pub method Reader for BufferedReader<R> {
+    flex f read(
+        self: *BufferedReader<R>,
+        bytes: []u8
+    ) = outcome: Result<usize, ReadError> {
+        outcome = read_buffered<R>(self, bytes)
+    }
+}
+
+pub type BufferedWriter<W> = {
+    inner: *W
+    buffer: []u8
+    used: usize
+}
+
+pub method BufferedWriter<W> {
+    f new(
+        inner: *W,
+        buffer: []u8
+    ) = result: BufferedWriter<W> {
+        result = BufferedWriter<W>(
+            inner: inner,
+            buffer: buffer,
+            used: 0
+        )
+    }
+
+    f pending(self) = result: usize {
+        result = self.used
+    }
+}
+
+pub flex f flush_buffered<W: Writer>(
+    writer: *BufferedWriter<W>
+) = outcome: Result<usize, WriteError> {
+    unsafe {
+        usize sent = 0
+        while sent < writer.used {
+            []const u8 remaining = const_slice(
+                writer.buffer.ptr + sent,
+                writer.used - sent
+            )
+            match writer.inner.write(remaining) {
+                Ok(count) -> {
+                    if count == 0 {
+                        for (0..writer.used - sent) |index| {
+                            writer.buffer[index] =
+                                writer.buffer[sent + index]
+                        }
+                        writer.used = writer.used - sent
+                        outcome = Result.Err<usize, WriteError>(
+                            WriteError.NoProgress()
+                        )
+                        return
+                    }
+                    if count > remaining.len {
+                        for (0..writer.used - sent) |index| {
+                            writer.buffer[index] =
+                                writer.buffer[sent + index]
+                        }
+                        writer.used = writer.used - sent
+                        outcome = Result.Err<usize, WriteError>(
+                            WriteError.InvalidCount(count)
+                        )
+                        return
+                    }
+                    sent = sent + count
+                }
+                Err(failure) -> {
+                    bool interrupted = match failure {
+                        Io(reason) -> match reason {
+                            Interrupted -> true,
+                            _ -> false,
+                        },
+                        _ -> false,
+                    }
+                    if !interrupted {
+                        for (0..writer.used - sent) |index| {
+                            writer.buffer[index] =
+                                writer.buffer[sent + index]
+                        }
+                        writer.used = writer.used - sent
+                        outcome = Result.Err<usize, WriteError>(failure)
+                        return
+                    }
+                }
+            }
+        }
+        writer.used = 0
+        outcome = Result.Ok<usize, WriteError>(sent)
+    }
+}
+
+pub flex f write_buffered<W: Writer>(
+    writer: *BufferedWriter<W>,
+    bytes: []const u8
+) = outcome: Result<usize, WriteError> {
+    unsafe {
+        if bytes.len == 0 {
+            outcome = Result.Ok<usize, WriteError>(0)
+            return
+        }
+
+        if writer.buffer.len == 0 {
+            outcome = writer.inner.write(bytes)
+            return
+        }
+
+        if writer.used == writer.buffer.len {
+            match flush_buffered<W>(writer) {
+                Ok(_) -> {}
+                Err(failure) -> {
+                    outcome = Result.Err<usize, WriteError>(failure)
+                    return
+                }
+            }
+        }
+
+        -- Bypass when no buffered prefix exists and the input is at least one
+        -- whole buffer. This avoids an unnecessary copy for large writes.
+        if writer.used == 0 and bytes.len > writer.buffer.len {
+            outcome = writer.inner.write(bytes)
+            return
+        }
+
+        usize available = writer.buffer.len - writer.used
+        usize count = bytes.len
+        if count > available {
+            count = available
+        }
+        for (0..count) |index| {
+            writer.buffer[writer.used + index] = bytes[index]
+        }
+        writer.used = writer.used + count
+        outcome = Result.Ok<usize, WriteError>(count)
+    }
+}
+
+pub method Writer for BufferedWriter<W> {
+    flex f write(
+        self: *BufferedWriter<W>,
+        bytes: []const u8
+    ) = outcome: Result<usize, WriteError> {
+        outcome = write_buffered<W>(self, bytes)
+    }
+}
+
+pub method Flusher for BufferedWriter<W> {
+    flex f flush(
+        self: *BufferedWriter<W>
+    ) = outcome: Result<usize, WriteError> {
+        outcome = flush_buffered<W>(self)
+    }
+}
+
+-- Zero-sized standard-stream handles. They expose portable contracts while
+-- keeping the platform descriptor private to this module.
+pub type Stdin = { marker: u8 }
+pub type Stdout = { marker: u8 }
+pub type Stderr = { marker: u8 }
+
+pub method Stdin {
+    f new() = result: Stdin {
+        result = Stdin(marker: 0)
+    }
+}
+
+pub method Stdout {
+    f new() = result: Stdout {
+        result = Stdout(marker: 0)
+    }
+}
+
+pub method Stderr {
+    f new() = result: Stderr {
+        result = Stderr(marker: 0)
+    }
+}
 
 #[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
 use std.os.linux.fd as platform_fd
@@ -30,6 +876,112 @@ f error_from_linux(code: i32) = failure: IoError {
         38 -> IoError.Unsupported(),
         95 -> IoError.Unsupported(),
         _ -> IoError.Unknown(),
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+f read_descriptor_once(
+    descriptor: i32,
+    buffer: []u8
+) = outcome: Result<usize, ReadError> {
+    if buffer.len == 0 {
+        outcome = Result.Ok<usize, ReadError>(0)
+        return
+    }
+    match platform_fd.read(descriptor, buffer) {
+        Value(count) -> {
+            if count > buffer.len {
+                outcome = Result.Err<usize, ReadError>(
+                    ReadError.InvalidCount(count)
+                )
+            } else if count == 0 {
+                outcome = Result.Err<usize, ReadError>(
+                    ReadError.Io(IoError.EndOfInput())
+                )
+            } else {
+                outcome = Result.Ok<usize, ReadError>(count)
+            }
+        }
+        Failure(code) -> {
+            outcome = Result.Err<usize, ReadError>(
+                ReadError.Io(error_from_linux(code))
+            )
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+f write_descriptor_once(
+    descriptor: i32,
+    buffer: []const u8
+) = outcome: Result<usize, WriteError> {
+    if buffer.len == 0 {
+        outcome = Result.Ok<usize, WriteError>(0)
+        return
+    }
+    match platform_fd.write(descriptor, buffer) {
+        Value(count) -> {
+            if count > buffer.len {
+                outcome = Result.Err<usize, WriteError>(
+                    WriteError.InvalidCount(count)
+                )
+            } else {
+                outcome = Result.Ok<usize, WriteError>(count)
+            }
+        }
+        Failure(code) -> {
+            outcome = Result.Err<usize, WriteError>(
+                WriteError.Io(error_from_linux(code))
+            )
+        }
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub method Reader for Stdin {
+    flex f read(
+        self: *Stdin,
+        bytes: []u8
+    ) = outcome: Result<usize, ReadError> {
+        outcome = read_descriptor_once(0, bytes)
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub method Writer for Stdout {
+    flex f write(
+        self: *Stdout,
+        bytes: []const u8
+    ) = outcome: Result<usize, WriteError> {
+        outcome = write_descriptor_once(1, bytes)
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub method Writer for Stderr {
+    flex f write(
+        self: *Stderr,
+        bytes: []const u8
+    ) = outcome: Result<usize, WriteError> {
+        outcome = write_descriptor_once(2, bytes)
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub method Flusher for Stdout {
+    flex f flush(
+        self: *Stdout
+    ) = outcome: Result<usize, WriteError> {
+        outcome = Result.Ok<usize, WriteError>(0)
+    }
+}
+
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub method Flusher for Stderr {
+    flex f flush(
+        self: *Stderr
+    ) = outcome: Result<usize, WriteError> {
+        outcome = Result.Ok<usize, WriteError>(0)
     }
 }
 

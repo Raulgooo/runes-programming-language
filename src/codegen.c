@@ -536,6 +536,19 @@ static bool descriptor_name(Codegen *cg, Type *type, char *buffer,
          snprintf(buffer, buffer_size, "runes_type_%s", suffix) > 0;
 }
 
+/*
+ * Emission registries deduplicate generated C names, not language-level type
+ * equivalence. usize and u64 are equivalent during Runes type checking on the
+ * current target, but intentionally retain distinct generated symbol suffixes.
+ */
+static bool same_generated_type_name(Codegen *cg, Type *left, Type *right) {
+  char left_suffix[768];
+  char right_suffix[768];
+  return semantic_type_suffix(cg, left, left_suffix, sizeof(left_suffix)) &&
+         semantic_type_suffix(cg, right, right_suffix, sizeof(right_suffix)) &&
+         strcmp(left_suffix, right_suffix) == 0;
+}
+
 static bool build_semantic_decl(Codegen *cg, Type *type, const char *name,
                                 char *buffer,
                                 size_t buffer_size) {
@@ -1267,6 +1280,8 @@ static bool emit_expr(Codegen *cg, AstNode *expr) {
   case AST_ARRAY_LITERAL: {
     fputc('{', cg->out);
     AstNode *elem = expr->as.array_literal.elems;
+    if (!elem)
+      fputc('0', cg->out);
     while (elem) {
       Type *element_type =
           expr->resolved_type && expr->resolved_type->kind == TY_ARRAY
@@ -1504,8 +1519,8 @@ static bool emit_expr(Codegen *cg, AstNode *expr) {
     bool typed_storage =
         expr->resolved_type && expr->resolved_type->kind == TY_POINTER &&
         storage_builtin &&
-        (strcmp(storage_builtin, "try_allocate") == 0 ||
-         strcmp(storage_builtin, "resize") == 0);
+        (strcmp(storage_builtin, "tstorage_allocate") == 0 ||
+         strcmp(storage_builtin, "tstorage_resize") == 0);
     if (typed_allocation || typed_storage) {
       Type *allocated = expr->resolved_type->as.pointer.inner;
       char descriptor[1024], c_type[1024];
@@ -1531,7 +1546,7 @@ static bool emit_expr(Codegen *cg, AstNode *expr) {
           return false;
         }
         fprintf(cg->out, "runes_storage_%s_%s(",
-                strcmp(storage_builtin, "try_allocate") == 0
+                strcmp(storage_builtin, "tstorage_allocate") == 0
                     ? "try_allocate"
                     : "try_resize",
                 realm_name);
@@ -1836,6 +1851,43 @@ static bool emit_expr(Codegen *cg, AstNode *expr) {
         fputc(')', cg->out);
         return true;
       }
+      if (strcmp(builtin, "tstorage_set_initialized") == 0) {
+        EffectiveRealm realm;
+        if (!current_effective_realm(cg, &realm) ||
+            realm == EFFECTIVE_REALM_STACK) {
+          cg_error(cg, expr,
+                   "initialized storage publication requires a concrete "
+                   "non-stack storage realm");
+          return false;
+        }
+        if (!arg || !arg->resolved_type ||
+            arg->resolved_type->kind != TY_POINTER) {
+          cg_error(cg, expr,
+                   "initialized storage publication requires a typed pointer");
+          return false;
+        }
+        char descriptor[1024];
+        if (!descriptor_name(cg, arg->resolved_type->as.pointer.inner,
+                             descriptor, sizeof(descriptor)))
+          return false;
+        const char *realm_name =
+            realm == EFFECTIVE_REALM_DYNAMIC
+                ? "dynamic"
+                : realm == EFFECTIVE_REALM_REGIONAL ? "regional" : "gc";
+        fprintf(cg->out, "runes_storage_set_initialized_%s((void *)",
+                realm_name);
+        if (!emit_expr(cg, arg))
+          return false;
+        for (AstNode *argument = arg->next; argument;
+             argument = argument->next) {
+          fputs(", ", cg->out);
+          if (!emit_expr(cg, argument))
+            return false;
+        }
+        fprintf(cg->out, ", &%s, %u, %u)", descriptor, expr->line,
+                expr->col);
+        return true;
+      }
       if (strcmp(builtin, "release") == 0) {
         EffectiveRealm realm;
         if (!current_effective_realm(cg, &realm) ||
@@ -1860,6 +1912,13 @@ static bool emit_expr(Codegen *cg, AstNode *expr) {
       }
       if (strcmp(builtin, "storage_error") == 0) {
         fputs("((int32_t)runes_storage_last_error())", cg->out);
+        return true;
+      }
+      if (strcmp(builtin, "storage_fail") == 0) {
+        fputs("runes_storage_fail((int)", cg->out);
+        if (!emit_expr(cg, arg))
+          return false;
+        fprintf(cg->out, ", %u, %u)", expr->line, expr->col);
         return true;
       }
       if (strcmp(builtin, "slice") == 0 ||
@@ -3720,10 +3779,12 @@ static bool emit_extern_declaration(Codegen *cg, AstNode *decl) {
       strcmp(decl->as.extern_decl.name, "memmove") == 0 ||
       strcmp(decl->as.extern_decl.name, "sqrt") == 0 ||
       strcmp(decl->as.extern_decl.name, "alloc") == 0 ||
-      strcmp(decl->as.extern_decl.name, "try_allocate") == 0 ||
-      strcmp(decl->as.extern_decl.name, "resize") == 0 ||
+      strcmp(decl->as.extern_decl.name, "tstorage_allocate") == 0 ||
+      strcmp(decl->as.extern_decl.name, "tstorage_resize") == 0 ||
       strcmp(decl->as.extern_decl.name, "release") == 0 ||
+      strcmp(decl->as.extern_decl.name, "tstorage_set_initialized") == 0 ||
       strcmp(decl->as.extern_decl.name, "storage_error") == 0 ||
+      strcmp(decl->as.extern_decl.name, "storage_fail") == 0 ||
       strcmp(decl->as.extern_decl.name, "raw_alloc") == 0 ||
       strcmp(decl->as.extern_decl.name, "raw_alloc_aligned") == 0 ||
       strcmp(decl->as.extern_decl.name, "raw_free") == 0)
@@ -4240,7 +4301,7 @@ static bool emit_result_definition(Codegen *cg, Type *fallible,
   if (!fallible || fallible->kind != TY_FALLIBLE)
     return true;
   for (int i = 0; i < cg->emitted_result_count; i++) {
-    if (type_equals(cg->emitted_results[i], fallible))
+    if (same_generated_type_name(cg, cg->emitted_results[i], fallible))
       return true;
   }
   if (!GROW_REGISTRY(cg, emitted_results, cg->emitted_result_count,
@@ -4274,7 +4335,7 @@ static bool emit_tuple_definition(Codegen *cg, Type *tuple,
   if (!tuple || tuple->kind != TY_TUPLE)
     return true;
   for (int i = 0; i < cg->emitted_tuple_count; i++) {
-    if (type_equals(cg->emitted_tuples[i], tuple))
+    if (same_generated_type_name(cg, cg->emitted_tuples[i], tuple))
       return true;
   }
   if (!GROW_REGISTRY(cg, emitted_tuples, cg->emitted_tuple_count,
@@ -4304,7 +4365,7 @@ static bool emit_tuple_definition(Codegen *cg, Type *tuple,
 static bool emit_array_definition(Codegen *cg, Type *array,
                                   const AstNode *error_node) {
   for (int i = 0; i < cg->emitted_array_count; i++)
-    if (type_equals(cg->emitted_arrays[i], array))
+    if (same_generated_type_name(cg, cg->emitted_arrays[i], array))
       return true;
   if (!GROW_REGISTRY(cg, emitted_arrays, cg->emitted_array_count,
                      emitted_array_capacity, Type *)) {
@@ -4327,7 +4388,7 @@ static bool emit_slice_definition(Codegen *cg, Type *slice,
   if (!slice || slice->kind != TY_SLICE)
     return true;
   for (int i = 0; i < cg->emitted_slice_count; i++)
-    if (type_equals(cg->emitted_slices[i], slice))
+    if (same_generated_type_name(cg, cg->emitted_slices[i], slice))
       return true;
   Type *mutable_version = NULL;
   char mutable_name[1024] = {0};
@@ -4356,21 +4417,27 @@ static bool emit_slice_definition(Codegen *cg, Type *slice,
     return false;
   }
 
+  char element_name[1024];
+  if (snprintf(element_name, sizeof(element_name), "RunesSliceElement_%s",
+               suffix) < 0)
+    return false;
+  if (!slice->as.slice.readonly) {
+    fputs("typedef ", cg->out);
+    if (!emit_semantic_decl(cg, slice->as.slice.inner, element_name,
+                            error_node))
+      return false;
+    fputs(";\n", cg->out);
+  }
+
   fprintf(cg->out, "typedef struct %s {\n  ", name);
   if (slice->as.slice.readonly)
     fputs("const ", cg->out);
-  Type pointer = {.kind = TY_POINTER};
-  pointer.as.pointer.inner = slice->as.slice.inner;
-  pointer.as.pointer.nullable = false;
-  if (!emit_semantic_decl(cg, &pointer, "ptr", error_node))
-    return false;
-  fprintf(cg->out, ";\n  size_t len;\n} %s;\n", name);
+  fprintf(cg->out, "%s *ptr;\n  size_t len;\n} %s;\n", element_name, name);
 
   fputs("static inline RUNES_MAYBE_UNUSED ", cg->out);
   if (slice->as.slice.readonly)
     fputs("const ", cg->out);
-  if (!emit_semantic_decl(cg, &pointer, "", error_node))
-    return false;
+  fprintf(cg->out, "%s *", element_name);
   fprintf(cg->out,
           " %s_at(%s slice, size_t index, unsigned line, unsigned column) {\n"
           "  return &slice.ptr[runes_checked_index(index, slice.len, line, column)];\n"
@@ -4400,7 +4467,7 @@ static bool emit_closure_definition(Codegen *cg, Type *function,
   if (!function || function->kind != TY_FUNCTION)
     return true;
   for (int i = 0; i < cg->emitted_closure_count; i++)
-    if (type_equals(cg->emitted_closures[i], function))
+    if (same_generated_type_name(cg, cg->emitted_closures[i], function))
       return true;
   if (!GROW_REGISTRY(cg, emitted_closures, cg->emitted_closure_count,
                      emitted_closure_capacity, Type *)) {
@@ -4694,9 +4761,15 @@ static bool emit_type_descriptor(Codegen *cg, Type *type,
     cg_error(cg, error_node, "unsupported type in deep promotion");
     return false;
   }
-  for (int i = 0; i < cg->emitted_descriptor_count; i++)
-    if (type_equals(cg->emitted_descriptors[i], type))
+  char descriptor[1024];
+  if (!descriptor_name(cg, type, descriptor, sizeof(descriptor))) {
+    cg_error(cg, error_node, "unsupported promotion descriptor type");
+    return false;
+  }
+  for (int i = 0; i < cg->emitted_descriptor_count; i++) {
+    if (same_generated_type_name(cg, cg->emitted_descriptors[i], type))
       return true;
+  }
   if (!GROW_REGISTRY(cg, emitted_descriptors, cg->emitted_descriptor_count,
                      emitted_descriptor_capacity, Type *)) {
     cg_error(cg, error_node, "could not grow promotion descriptor registry");
@@ -4704,12 +4777,10 @@ static bool emit_type_descriptor(Codegen *cg, Type *type,
   }
   cg->emitted_descriptors[cg->emitted_descriptor_count++] = type;
 
-  char descriptor[1024];
   char clone[1100];
   char trace[1100];
   char c_type[1024];
-  if (!descriptor_name(cg, type, descriptor, sizeof(descriptor)) ||
-      !build_semantic_decl(cg, type, "", c_type, sizeof(c_type))) {
+  if (!build_semantic_decl(cg, type, "", c_type, sizeof(c_type))) {
     cg_error(cg, error_node, "unsupported promotion descriptor type");
     return false;
   }
@@ -5204,6 +5275,15 @@ static bool emit_ast_tuple_dependencies(Codegen *cg, AstNode *node) {
       if (!emit_ast_tuple_dependencies(cg, node->as.call.callee) ||
           !emit_ast_tuple_dependencies(cg, node->as.call.args))
         return false;
+      if (cg->descriptor_phase &&
+          node->as.call.callee->kind == AST_IDENTIFIER &&
+          strcmp(node->as.call.callee->as.identifier.name,
+                 "tstorage_set_initialized") == 0 &&
+          node->as.call.args && node->as.call.args->resolved_type &&
+          node->as.call.args->resolved_type->kind == TY_POINTER &&
+          !emit_type_descriptor(
+              cg, node->as.call.args->resolved_type->as.pointer.inner, node))
+        return false;
       break;
     case AST_NAMED_ARG:
       if (!emit_ast_tuple_dependencies(cg, node->as.named_arg.value))
@@ -5228,9 +5308,9 @@ static bool emit_ast_tuple_dependencies(Codegen *cg, AstNode *node) {
           (strcmp(node->as.cast.expr->as.call.callee->as.identifier.name,
                   "alloc") == 0 ||
            strcmp(node->as.cast.expr->as.call.callee->as.identifier.name,
-                  "try_allocate") == 0 ||
+                  "tstorage_allocate") == 0 ||
            strcmp(node->as.cast.expr->as.call.callee->as.identifier.name,
-                  "resize") == 0) &&
+                  "tstorage_resize") == 0) &&
           !emit_type_descriptor(cg, node->resolved_type->as.pointer.inner,
                                 node))
         return false;
@@ -5715,11 +5795,18 @@ bool codegen_emit_c(Codegen *cg, AstNode *program) {
         "size_t, size_t, const RunesTypeDescriptor *, unsigned, unsigned);\n"
         "extern void *runes_storage_try_resize_gc(void *, size_t, size_t, "
         "size_t, const RunesTypeDescriptor *, unsigned, unsigned);\n"
+        "extern bool runes_storage_set_initialized_dynamic(void *, size_t, "
+        "size_t, size_t, const RunesTypeDescriptor *, unsigned, unsigned);\n"
+        "extern bool runes_storage_set_initialized_regional(void *, size_t, "
+        "size_t, size_t, const RunesTypeDescriptor *, unsigned, unsigned);\n"
+        "extern bool runes_storage_set_initialized_gc(void *, size_t, size_t, "
+        "size_t, const RunesTypeDescriptor *, unsigned, unsigned);\n"
         "extern void runes_storage_release_dynamic(void *);\n"
         "extern void runes_storage_release_regional(void *, unsigned, "
         "unsigned);\n"
         "extern void runes_storage_release_gc(void *);\n"
         "extern int runes_storage_last_error(void);\n"
+        "extern void runes_storage_fail(int, unsigned, unsigned);\n"
         "extern void runes_gc_scope_enter(unsigned, unsigned);\n"
         "extern void runes_gc_scope_leave(void);\n"
         "extern void *runes_gc_frame_enter(unsigned, unsigned);\n"

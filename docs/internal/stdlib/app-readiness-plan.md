@@ -11,6 +11,12 @@ containers, formatting, files, processes, networking, testing, and portability
 work. The broader [ecosystem roadmap](roadmap.md) remains the long-term catalog;
 this document defines the order in which to build the usable foundation.
 
+The CLI portion is expanded into concrete contracts, failure matrices,
+maintainer decision gates, and per-milestone exit criteria in the
+[application foundation execution plan](application-foundation-execution-plan.md).
+That execution plan controls implementation details; this document remains the
+broader finish-line map through networking and graphical applications.
+
 ## Outcomes
 
 Application readiness is split into three finish lines.
@@ -332,6 +338,9 @@ covered. Freestanding targets reject unavailable calls during compilation.
 
 ## Library milestone 3: borrowed text
 
+Status: implemented and tested (2026-07-29). The public contract is in the
+[borrowed text reference](../../reference/text.md).
+
 Extend borrowed `str` operations before building ownership.
 
 Initial operations:
@@ -357,20 +366,29 @@ Rules:
 
 Acceptance:
 
-- ASCII, multibyte UTF-8, empty strings, invalid external bytes, and boundary
-  failures are tested;
-- operations do not copy the complete source;
-- iteration cannot walk beyond the declared string length.
+- [x] ASCII, multibyte UTF-8, empty strings, invalid external bytes, and
+  boundary failures are tested;
+- [x] operations do not copy the complete source;
+- [x] iteration cannot walk beyond the declared string length.
 
 ## Library milestone 4: typed allocation
 
-Status: implemented and tested as `std.allocation` (2026-07-28).
+Status: implemented and tested (2026-07-29), including paired ordinary and
+recoverable `t` operations, initialized `allocate<T>(value)`, GC
+initialized-prefix publication, pointer-bearing in-place growth and shrink,
+owner validation, and release semantics.
 
 Provide allocation operations that derive size and alignment from `T`:
 
 ```text
+allocate<T>(value)
+tallocate<T>(value)
 allocate_array<T>(count)
+tallocate_array<T>(count)
+publish_initialized<T>(pointer, expected_old, new_initialized, capacity)
+tpublish_initialized<T>(pointer, expected_old, new_initialized, capacity)
 resize_array<T>(pointer, initialized, old_capacity, new_capacity)
+tresize_array<T>(pointer, initialized, old_capacity, new_capacity)
 release_array<T>(pointer)
 ```
 
@@ -379,6 +397,8 @@ Required behavior:
 - checked multiplication and capacity growth;
 - correct alignment;
 - failure is represented, not converted into an unexplained null pointer;
+- ordinary names terminate through the portable storage-failure policy, while
+  the `t` form returns the represented failure;
 - pointer-bearing GC values receive correct metadata;
 - regional allocations are never individually freed;
 - dynamic allocations have an explicit release path;
@@ -389,32 +409,45 @@ Do not spread `alloc(sizeof(T)) as *T` throughout every container.
 The implementation includes deterministic failure injection and backend
 counters, preserves dynamic storage on failed growth, rejects an unavailable
 regional owner, and passes explicit initialized length to GC sequence
-metadata. The internal proof buffer exercises the same API and owner
-preservation through ordinary functions. This does not complete milestone 5:
-the public `Vec<T>` API is still missing.
+metadata. Publication validates the GC allocation base, descriptor, capacity,
+and previous length. The internal proof buffer exercises pointer-bearing
+in-place push, pop, truncate, clear, resize, release, forced collection, and
+owner preservation through ordinary functions. The compiler/runtime gate for
+milestone 5 is complete.
 
 ## Library milestone 5: `Vec<T>`
 
-Start with one predictable owning vector before implementing every realm
-family. The recommended first version is dynamically owned and explicitly
-deinitialized. Regional and GC variants can reuse its algorithms later.
+Status: implemented and tested for dynamic, regional, and GC owners
+(2026-07-29).
+
+The implementation uses one shared algorithm and an inferred hidden owner
+realm. The GC type-family member has the same public layout as the fallback and
+exists to preserve persistent owner identity through receiver dispatch.
+Callers never pass an allocator or write a realm argument.
 
 Minimum API:
 
 - `new`;
+- `tnew`;
 - `with_capacity`;
+- `twith_capacity`;
 - `len`;
 - `capacity`;
 - `is_empty`;
 - `reserve`;
+- `treserve`;
 - `push`;
+- `tpush`;
 - `pop`;
+- `tpop`;
 - `get`;
 - checked mutation;
 - `as_slice`;
 - `as_mut_slice`;
 - `clear`;
+- `tclear`;
 - `truncate`;
+- `ttruncate`;
 - `deinit`.
 
 Required behavior:
@@ -428,11 +461,12 @@ Required behavior:
 
 Acceptance:
 
-- empty, one-element, repeated-growth, maximum-capacity, and allocation-failure
-  cases;
-- pointer-bearing elements under sanitizers and GC tests;
-- no leaks or double frees in normal explicit-deinit use;
-- clear documentation that copying an owning vector is unsafe until C6 lands.
+- [x] empty, one-element, repeated-growth, maximum-capacity, and
+  allocation-failure cases;
+- [x] pointer-bearing elements under sanitizers and forced GC tests;
+- [x] nested regional-owner rejection with state preservation;
+- [x] no leaks or double frees in normal explicit-deinit use;
+- [x] clear documentation that copying an owning vector is unsafe until C6.
 
 ## Library milestone 6: owning UTF-8 `String`
 
@@ -442,12 +476,17 @@ capacity implementation.
 Minimum API:
 
 - `new`;
+- `tnew`;
 - `with_capacity`;
+- `twith_capacity`;
 - validated `from_str`;
 - validated/lossy construction from bytes;
 - `push` Unicode scalar;
+- `tpush` Unicode scalar;
 - `push_str`;
+- `tpush_str`;
 - `reserve`;
+- `treserve`;
 - `truncate` at a scalar boundary;
 - `clear`;
 - `as_str`;
@@ -463,12 +502,12 @@ the invariant.
 
 Acceptance:
 
-- ASCII and multibyte growth;
-- invalid UTF-8 rejection;
-- embedded NUL handling;
-- boundary-safe truncation;
-- allocation failure leaves the original string valid;
-- dynamic cleanup passes sanitizers.
+- [x] ASCII and multibyte growth;
+- [x] invalid UTF-8 rejection;
+- [x] embedded NUL handling;
+- [x] boundary-safe truncation;
+- [x] allocation failure leaves the original string valid;
+- [x] dynamic cleanup passes sanitizers.
 
 ## Library milestone 7: formatting and parsing
 
@@ -708,8 +747,8 @@ The recommended working order is:
 2. Minimal Linux-backed `std.io`. (done)
 3. Borrowed text utilities.
 4. Typed allocation.
-5. Dynamic `Vec<T>`.
-6. Owning UTF-8 `String`.
+5. Realm-aware `Vec<T>`. (done)
+6. Owning UTF-8 `String`. (done)
 7. Formatting and parsing.
 8. Buffered I/O.
 9. Paths and files.
@@ -726,16 +765,10 @@ a blocker for the next library sprint.
 
 ## Immediate next sprint
 
-Milestones 1 and 2 are complete. The next focused sprint is milestone 3:
-
-1. Specify byte-index and Unicode-scalar-index behavior for borrowed `str`.
-2. Implement UTF-8 validation and scalar iteration without allocation.
-3. Add prefix, suffix, search, and trim views.
-4. Add checked substring views that reject non-scalar boundaries.
-5. Test ASCII, multibyte, invalid external bytes, and empty text.
-
-That sprint proves the high-level boundary before allocation, container, and
-UTF-8 ownership make failures harder to isolate.
+Milestones 1 through 6 are complete. The next focused sprint is milestone 7:
+formatting into fixed buffers, owning `String`, and later writer abstractions.
+The design questions, failure matrix, and exit gate are in the
+[application foundation execution plan](application-foundation-execution-plan.md#11-m3-formatting).
 
 ## Definition of “functional for apps”
 

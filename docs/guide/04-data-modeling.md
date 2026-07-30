@@ -65,8 +65,18 @@ Arrays and slices expose `.len`, indexing, ranges, and iteration. Dynamic
 indexes and ranges are checked at runtime. A slice cannot outlive the storage
 it views; the compiler tracks stack, arena, raw, GC, and external provenance.
 
-Use arrays for fixed inline storage, slices for borrowed function parameters,
-and a future owning `Vector`/`String` library type for growable storage.
+Borrowed UTF-8 search, checked substring views, explicit ASCII trimming, and
+Unicode scalar traversal are available through
+[`std.text`](../reference/text.md). Its indexes are byte offsets; text views
+reject offsets that split a UTF-8 scalar.
+
+Use arrays for fixed inline storage and slices for borrowed function
+parameters. The implemented `std.vec.Vec<T>` provides realm-aware growable
+storage, and `std.string.String` provides owning valid UTF-8 over `Vec<u8>`.
+Both are logically move-only, require explicit `deinit`, and have additional
+view-safety rules, so read the complete
+[`Vec<T>` reference](../reference/vec.md) and
+[`String` reference](../reference/string.md) before using them.
 
 ## Structs
 

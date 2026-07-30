@@ -1,0 +1,1149 @@
+-- Locale-independent typed value formatting.
+--
+-- The initial API deliberately has no runtime format-string language.
+-- IntegerCursor is the single conversion/layout engine. Fixed buffers and
+-- owning String adapters drain that cursor, and later writers can do the same.
+
+use std.core.AllocationError
+use std.core.Option
+use std.core.Result
+use std.io.WriteError
+use std.io.Writer
+use std.io.write_all_to
+use std.string.String
+
+#[safe]
+extern f runes_str_decode_next(
+    value: str,
+    index: *usize,
+    scalar: *char
+) = result: bool
+
+#[safe]
+extern f runes_utf8_encode(
+    scalar: char,
+    output: *u8,
+    length: *usize
+) = result: bool
+
+pub type IntegerBase =
+    | Decimal
+    | HexLower
+    | HexUpper
+
+pub type Alignment =
+    | Left
+    | Right
+
+pub type SignPolicy =
+    | NegativeOnly
+    | Always
+    | Space
+
+pub type IntegerFormat = {
+    base: IntegerBase
+    alignment: Alignment
+    sign: SignPolicy
+    prefix: bool
+    width: usize
+    padding: u8
+}
+
+pub method IntegerFormat {
+    f decimal() = result: IntegerFormat {
+        result = IntegerFormat(
+            base: IntegerBase.Decimal(),
+            alignment: Alignment.Right(),
+            sign: SignPolicy.NegativeOnly(),
+            prefix: false,
+            width: 0,
+            padding: 0x20
+        )
+    }
+
+    f hex_lower() = result: IntegerFormat {
+        result = IntegerFormat(
+            base: IntegerBase.HexLower(),
+            alignment: Alignment.Right(),
+            sign: SignPolicy.NegativeOnly(),
+            prefix: false,
+            width: 0,
+            padding: 0x20
+        )
+    }
+
+    f hex_upper() = result: IntegerFormat {
+        result = IntegerFormat(
+            base: IntegerBase.HexUpper(),
+            alignment: Alignment.Right(),
+            sign: SignPolicy.NegativeOnly(),
+            prefix: false,
+            width: 0,
+            padding: 0x20
+        )
+    }
+}
+
+pub type FormatError =
+    | InsufficientSpace(usize)
+    | InvalidPadding(u8)
+    | InvalidUtf8
+    | Allocation(AllocationError)
+    | Writer(WriteError)
+
+pub type TextFormat = {
+    alignment: Alignment
+    width: usize
+    padding: u8
+}
+
+pub method TextFormat {
+    f standard() = result: TextFormat {
+        result = TextFormat(
+            alignment: Alignment.Left(),
+            width: 0,
+            padding: 0x20
+        )
+    }
+}
+
+-- A forward Unicode-scalar cursor over plain or escaped text. Escapes and
+-- padding are ASCII scalars. Ordinary source scalars remain scalars, so every
+-- destination preserves UTF-8 without observing String representation.
+pub type TextCursor = {
+    source: str
+    byte_index: usize
+    single: char
+    has_single: bool
+    single_emitted: bool
+    debug: bool
+    opening_pending: bool
+    closing_pending: bool
+    escape: [6]u8
+    escape_index: usize
+    escape_length: usize
+    padding: u8
+    padding_before: usize
+    padding_after: usize
+    total_length: usize
+    emitted_length: usize
+}
+
+f hex_digit(value: u8) = result: u8 {
+    if value < 10 {
+        result = 0x30 + value
+    } else {
+        result = 0x61 + value - 10
+    }
+}
+
+flex f escaped_scalar_length(
+    scalar: char,
+    encoded_length: usize
+) = result: usize {
+    u32 value = scalar as u32
+    if value == 0 or value == 9 or value == 10 or value == 13 or value == 34 or value == 92 {
+        result = 2
+    } else if value < 0x20 or value == 0x7f {
+        result = 4
+    } else {
+        result = encoded_length
+    }
+}
+
+pub method TextCursor {
+    f len(self) = result: usize {
+        result = self.total_length
+    }
+
+    f remaining(self) = result: usize {
+        result = self.total_length - self.emitted_length
+    }
+
+    f is_done(self) = result: bool {
+        result = self.emitted_length >= self.total_length
+    }
+
+    f prepare_escape(self: *TextCursor, scalar: char) = result: bool {
+        unsafe {
+            result = true
+            u32 value = scalar as u32
+            self.escape[0] = 0x5c
+            self.escape_index = 0
+            self.escape_length = 2
+            if value == 0 {
+                self.escape[1] = 0x30
+            } else if value == 9 {
+                self.escape[1] = 0x74
+            } else if value == 10 {
+                self.escape[1] = 0x6e
+            } else if value == 13 {
+                self.escape[1] = 0x72
+            } else if value == 34 {
+                self.escape[1] = 0x22
+            } else if value == 92 {
+                self.escape[1] = 0x5c
+            } else if value < 0x20 or value == 0x7f {
+                self.escape[1] = 0x78
+                self.escape[2] = hex_digit(((value as u8) >> 4) & 0x0f)
+                self.escape[3] = hex_digit((value as u8) & 0x0f)
+                self.escape_length = 4
+            } else {
+                result = false
+                self.escape_length = 0
+            }
+        }
+    }
+
+    f next(self: *TextCursor) = result: Option<char> {
+        unsafe {
+            result = Option.None<char>()
+            if self.padding_before > 0 {
+                self.padding_before = self.padding_before - 1
+                self.emitted_length = self.emitted_length + 1
+                result = Option.Some<char>((self.padding as u32) as char)
+                return
+            }
+            if self.opening_pending {
+                self.opening_pending = false
+                self.emitted_length = self.emitted_length + 1
+                result = Option.Some<char>('"')
+                return
+            }
+            if self.escape_index < self.escape_length {
+                u8 byte = self.escape[self.escape_index]
+                self.escape_index = self.escape_index + 1
+                self.emitted_length = self.emitted_length + 1
+                result = Option.Some<char>((byte as u32) as char)
+                return
+            }
+
+            char scalar = '\0'
+            bool available = false
+            if self.has_single and !self.single_emitted {
+                scalar = self.single
+                self.single_emitted = true
+                available = true
+            } else if self.byte_index < self.source.len {
+                available = runes_str_decode_next(
+                    self.source,
+                    &self.byte_index,
+                    &scalar
+                )
+            }
+            if available {
+                if self.debug and self.prepare_escape(scalar) {
+                    u8 byte = self.escape[0]
+                    self.escape_index = 1
+                    self.emitted_length = self.emitted_length + 1
+                    result = Option.Some<char>((byte as u32) as char)
+                } else {
+                    [4]u8 encoded = [0, 0, 0, 0]
+                    usize encoded_length = 0
+                    runes_utf8_encode(
+                        scalar,
+                        &encoded,
+                        &encoded_length
+                    )
+                    self.emitted_length =
+                        self.emitted_length + encoded_length
+                    result = Option.Some<char>(scalar)
+                }
+                return
+            }
+            if self.closing_pending {
+                self.closing_pending = false
+                self.emitted_length = self.emitted_length + 1
+                result = Option.Some<char>('"')
+                return
+            }
+            if self.padding_after > 0 {
+                self.padding_after = self.padding_after - 1
+                self.emitted_length = self.emitted_length + 1
+                result = Option.Some<char>((self.padding as u32) as char)
+            }
+        }
+    }
+}
+
+flex f build_text_cursor(
+    source: str,
+    single: char,
+    has_single: bool,
+    debug: bool,
+    options: TextFormat
+) = outcome: Result<TextCursor, FormatError> {
+    if options.padding > 0x7f {
+        outcome = Result.Err<TextCursor, FormatError>(
+            FormatError.InvalidPadding(options.padding)
+        )
+        return
+    }
+
+    usize content_length = 0
+    if has_single {
+        [4]u8 encoded = [0, 0, 0, 0]
+        usize encoded_length = 0
+        unsafe {
+            runes_utf8_encode(single, &encoded, &encoded_length)
+        }
+        if debug {
+            content_length = escaped_scalar_length(
+                single,
+                encoded_length
+            )
+        } else {
+            content_length = encoded_length
+        }
+    } else {
+        usize index = 0
+        while index < source.len {
+            usize before = index
+            char scalar = '\0'
+            bool valid = false
+            unsafe {
+                valid = runes_str_decode_next(source, &index, &scalar)
+            }
+            if !valid {
+                outcome = Result.Err<TextCursor, FormatError>(
+                    FormatError.InvalidUtf8()
+                )
+                return
+            }
+            usize encoded_length = index - before
+            if debug {
+                content_length = content_length +
+                    escaped_scalar_length(scalar, encoded_length)
+            } else {
+                content_length = content_length + encoded_length
+            }
+        }
+    }
+    if debug {
+        content_length = content_length + 2
+    }
+
+    usize padding_count = 0
+    if options.width > content_length {
+        padding_count = options.width - content_length
+    }
+    usize before_padding = 0
+    usize after_padding = 0
+    match options.alignment {
+        Left -> {
+            after_padding = padding_count
+        }
+        Right -> {
+            before_padding = padding_count
+        }
+    }
+    outcome = Result.Ok<TextCursor, FormatError>(
+        TextCursor(
+            source: source,
+            byte_index: 0,
+            single: single,
+            has_single: has_single,
+            single_emitted: false,
+            debug: debug,
+            opening_pending: debug,
+            closing_pending: debug,
+            escape: [0, 0, 0, 0, 0, 0],
+            escape_index: 0,
+            escape_length: 0,
+            padding: options.padding,
+            padding_before: before_padding,
+            padding_after: after_padding,
+            total_length: content_length + padding_count,
+            emitted_length: 0
+        )
+    )
+}
+
+pub flex f text(
+    value: str,
+    options: TextFormat
+) = outcome: Result<TextCursor, FormatError> {
+    outcome = build_text_cursor(value, '\0', false, false, options)
+}
+
+pub flex f debug_text(
+    value: str,
+    options: TextFormat
+) = outcome: Result<TextCursor, FormatError> {
+    outcome = build_text_cursor(value, '\0', false, true, options)
+}
+
+pub flex f boolean(
+    value: bool,
+    options: TextFormat
+) = outcome: Result<TextCursor, FormatError> {
+    if value {
+        outcome = build_text_cursor("true", '\0', false, false, options)
+    } else {
+        outcome = build_text_cursor("false", '\0', false, false, options)
+    }
+}
+
+pub flex f scalar(
+    value: char,
+    options: TextFormat
+) = outcome: Result<TextCursor, FormatError> {
+    outcome = build_text_cursor("", value, true, false, options)
+}
+
+-- A forward byte cursor over one completely planned integer rendering.
+-- Fields are visible only because field privacy is incomplete.
+pub type IntegerCursor = {
+    header: [3]u8
+    header_length: usize
+    digits: [20]u8
+    digit_count: usize
+    padding: u8
+    padding_before_header: usize
+    padding_after_header: usize
+    padding_after_digits: usize
+    position: usize
+    total_length: usize
+}
+
+pub method IntegerCursor {
+    f len(self) = result: usize {
+        result = self.total_length
+    }
+
+    f remaining(self) = result: usize {
+        result = self.total_length - self.position
+    }
+
+    f is_done(self) = result: bool {
+        result = self.position >= self.total_length
+    }
+
+    f next(self: *IntegerCursor) = result: Option<u8> {
+        unsafe {
+            if self.position >= self.total_length {
+                result = Option.None<u8>()
+            } else {
+                usize index = self.position
+                self.position = self.position + 1
+                if index < self.padding_before_header {
+                    result = Option.Some<u8>(self.padding)
+                } else {
+                    index = index - self.padding_before_header
+                    if index < self.header_length {
+                        result = Option.Some<u8>(self.header[index])
+                    } else {
+                        index = index - self.header_length
+                        if index < self.padding_after_header {
+                            result = Option.Some<u8>(self.padding)
+                        } else {
+                            index = index - self.padding_after_header
+                            if index < self.digit_count {
+                                result = Option.Some<u8>(
+                                    self.digits[
+                                        self.digit_count - index - 1
+                                    ]
+                                )
+                            } else {
+                                result = Option.Some<u8>(self.padding)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+-- Build the shared integer cursor. Magnitude is already unsigned so signed
+-- minimum values never need to be negated directly.
+flex f build_integer(
+    magnitude: u64,
+    negative: bool,
+    options: IntegerFormat
+) = outcome: Result<IntegerCursor, FormatError> {
+    if options.padding > 0x7f {
+        outcome = Result.Err<IntegerCursor, FormatError>(
+            FormatError.InvalidPadding(options.padding)
+        )
+    } else {
+        IntegerCursor cursor = IntegerCursor(
+            header: [0, 0, 0],
+            header_length: 0,
+            digits: [
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0
+            ],
+            digit_count: 0,
+            padding: options.padding,
+            padding_before_header: 0,
+            padding_after_header: 0,
+            padding_after_digits: 0,
+            position: 0,
+            total_length: 0
+        )
+        usize radix = 10
+        bool uppercase = false
+        match options.base {
+            Decimal -> {}
+            HexLower -> {
+                radix = 16
+            }
+            HexUpper -> {
+                radix = 16
+                uppercase = true
+            }
+        }
+
+        u64 remaining = magnitude
+        if remaining == 0 {
+            cursor.digits[0] = 0x30
+            cursor.digit_count = 1
+        } else {
+            while remaining != 0 {
+                u8 digit = (remaining % (radix as u64)) as u8
+                if digit < 10 {
+                    cursor.digits[cursor.digit_count] = 0x30 + digit
+                } else if uppercase {
+                    cursor.digits[cursor.digit_count] = 0x41 + digit - 10
+                } else {
+                    cursor.digits[cursor.digit_count] = 0x61 + digit - 10
+                }
+                cursor.digit_count = cursor.digit_count + 1
+                remaining = remaining / (radix as u64)
+            }
+        }
+
+        if negative {
+            cursor.header[cursor.header_length] = 0x2d
+            cursor.header_length = cursor.header_length + 1
+        } else {
+            match options.sign {
+                NegativeOnly -> {}
+                Always -> {
+                    cursor.header[cursor.header_length] = 0x2b
+                    cursor.header_length = cursor.header_length + 1
+                }
+                Space -> {
+                    cursor.header[cursor.header_length] = 0x20
+                    cursor.header_length = cursor.header_length + 1
+                }
+            }
+        }
+        if options.prefix {
+            match options.base {
+                Decimal -> {}
+                HexLower -> {
+                    cursor.header[cursor.header_length] = 0x30
+                    cursor.header[cursor.header_length + 1] = 0x78
+                    cursor.header_length = cursor.header_length + 2
+                }
+                HexUpper -> {
+                    cursor.header[cursor.header_length] = 0x30
+                    cursor.header[cursor.header_length + 1] = 0x58
+                    cursor.header_length = cursor.header_length + 2
+                }
+            }
+        }
+
+        usize core_length = cursor.header_length + cursor.digit_count
+        usize padding_count = 0
+        if options.width > core_length {
+            padding_count = options.width - core_length
+        }
+        match options.alignment {
+            Left -> {
+                cursor.padding_after_digits = padding_count
+            }
+            Right -> {
+                if options.padding == 0x30 {
+                    cursor.padding_after_header = padding_count
+                } else {
+                    cursor.padding_before_header = padding_count
+                }
+            }
+        }
+        cursor.total_length = core_length + padding_count
+        outcome = Result.Ok<IntegerCursor, FormatError>(cursor)
+    }
+}
+
+pub flex f integer_u64(
+    value: u64,
+    options: IntegerFormat
+) = outcome: Result<IntegerCursor, FormatError> {
+    outcome = build_integer(value, false, options)
+}
+
+pub flex f integer_i64(
+    value: i64,
+    options: IntegerFormat
+) = outcome: Result<IntegerCursor, FormatError> {
+    bool negative = value < 0
+    u64 magnitude = 0
+    if negative {
+        -- -(MIN) overflows, but -(MIN + 1) does not.
+        magnitude = ((-(value + 1)) as u64) + 1
+    } else {
+        magnitude = value as u64
+    }
+    outcome = build_integer(magnitude, negative, options)
+}
+
+-- Drain a planned integer into a caller buffer. Capacity is checked before
+-- the first write, so InsufficientSpace never partially modifies the buffer.
+pub flex f write_integer(
+    output: []u8,
+    cursor: IntegerCursor
+) = outcome: Result<usize, FormatError> {
+    usize required = cursor.len()
+    if output.len < required {
+        outcome = Result.Err<usize, FormatError>(
+            FormatError.InsufficientSpace(required)
+        )
+    } else {
+        usize written = 0
+        unsafe {
+            while !cursor.is_done() {
+                match (&cursor).next() {
+                    Some(byte) -> {
+                        output[written] = byte
+                        written = written + 1
+                    }
+                    None -> {}
+                }
+            }
+        }
+        outcome = Result.Ok<usize, FormatError>(written)
+    }
+}
+
+pub flex f append_integer(
+    output: *String,
+    cursor: IntegerCursor
+) = outcome: Result<usize, FormatError> {
+    unsafe {
+        usize additional = cursor.remaining()
+        match output.treserve(additional) {
+            Ok(_) -> {
+                while !cursor.is_done() {
+                    match (&cursor).next() {
+                        Some(byte) -> {
+                            char scalar = (byte as u32) as char
+                            output.push(scalar)
+                        }
+                        None -> {}
+                    }
+                }
+                outcome = Result.Ok<usize, FormatError>(
+                    output.byte_len()
+                )
+            }
+            Err(failure) -> {
+                outcome = Result.Err<usize, FormatError>(
+                    FormatError.Allocation(failure)
+                )
+            }
+        }
+    }
+}
+
+pub flex f write_u64(
+    output: []u8,
+    value: u64,
+    options: IntegerFormat
+) = outcome: Result<usize, FormatError> {
+    match integer_u64(value, options) {
+        Ok(cursor) -> {
+            outcome = write_integer(output, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f write_i64(
+    output: []u8,
+    value: i64,
+    options: IntegerFormat
+) = outcome: Result<usize, FormatError> {
+    match integer_i64(value, options) {
+        Ok(cursor) -> {
+            outcome = write_integer(output, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f append_u64(
+    output: *String,
+    value: u64,
+    options: IntegerFormat
+) = outcome: Result<usize, FormatError> {
+    match integer_u64(value, options) {
+        Ok(cursor) -> {
+            match append_integer(output, cursor) {
+                Ok(length) -> {
+                    outcome = Result.Ok<usize, FormatError>(length)
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, FormatError>(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f append_i64(
+    output: *String,
+    value: i64,
+    options: IntegerFormat
+) = outcome: Result<usize, FormatError> {
+    match integer_i64(value, options) {
+        Ok(cursor) -> {
+            match append_integer(output, cursor) {
+                Ok(length) -> {
+                    outcome = Result.Ok<usize, FormatError>(length)
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, FormatError>(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+-- Width-specific wrappers all feed the same u64/i64 cursor engine.
+pub flex f write_u8(output: []u8, value: u8, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = write_u64(output, value as u64, options)
+}
+pub flex f write_u16(output: []u8, value: u16, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = write_u64(output, value as u64, options)
+}
+pub flex f write_u32(output: []u8, value: u32, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = write_u64(output, value as u64, options)
+}
+pub flex f write_usize(output: []u8, value: usize, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = write_u64(output, value as u64, options)
+}
+pub flex f write_i8(output: []u8, value: i8, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = write_i64(output, value as i64, options)
+}
+pub flex f write_i16(output: []u8, value: i16, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = write_i64(output, value as i64, options)
+}
+pub flex f write_i32(output: []u8, value: i32, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = write_i64(output, value as i64, options)
+}
+pub flex f append_u8(output: *String, value: u8, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = append_u64(output, value as u64, options)
+}
+pub flex f append_u16(output: *String, value: u16, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = append_u64(output, value as u64, options)
+}
+pub flex f append_u32(output: *String, value: u32, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = append_u64(output, value as u64, options)
+}
+pub flex f append_usize(output: *String, value: usize, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = append_u64(output, value as u64, options)
+}
+pub flex f append_i8(output: *String, value: i8, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = append_i64(output, value as i64, options)
+}
+pub flex f append_i16(output: *String, value: i16, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = append_i64(output, value as i64, options)
+}
+pub flex f append_i32(output: *String, value: i32, options: IntegerFormat) = outcome: Result<usize, FormatError> {
+    outcome = append_i64(output, value as i64, options)
+}
+
+pub flex f write_text_cursor(
+    output: []u8,
+    cursor: TextCursor
+) = outcome: Result<usize, FormatError> {
+    usize required = cursor.remaining()
+    if output.len < required {
+        outcome = Result.Err<usize, FormatError>(
+            FormatError.InsufficientSpace(required)
+        )
+    } else {
+        usize written = 0
+        unsafe {
+            while !cursor.is_done() {
+                match (&cursor).next() {
+                    Some(value) -> {
+                        [4]u8 encoded = [0, 0, 0, 0]
+                        usize encoded_length = 0
+                        runes_utf8_encode(
+                            value,
+                            &encoded,
+                            &encoded_length
+                        )
+                        for (0..encoded_length) |index| {
+                            output[written] = encoded[index]
+                            written = written + 1
+                        }
+                    }
+                    None -> {}
+                }
+            }
+        }
+        outcome = Result.Ok<usize, FormatError>(written)
+    }
+}
+
+pub flex f append_text_cursor(
+    output: *String,
+    cursor: TextCursor
+) = outcome: Result<usize, FormatError> {
+    unsafe {
+        match output.treserve(cursor.remaining()) {
+            Ok(_) -> {
+                while !cursor.is_done() {
+                    match (&cursor).next() {
+                        Some(value) -> {
+                            output.push(value)
+                        }
+                        None -> {}
+                    }
+                }
+                outcome = Result.Ok<usize, FormatError>(
+                    output.byte_len()
+                )
+            }
+            Err(failure) -> {
+                outcome = Result.Err<usize, FormatError>(
+                    FormatError.Allocation(failure)
+                )
+            }
+        }
+    }
+}
+
+pub flex f write_str(
+    output: []u8,
+    value: str,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match text(value, options) {
+        Ok(cursor) -> {
+            outcome = write_text_cursor(output, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f write_debug_str(
+    output: []u8,
+    value: str,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match debug_text(value, options) {
+        Ok(cursor) -> {
+            outcome = write_text_cursor(output, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f write_bool(
+    output: []u8,
+    value: bool,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match boolean(value, options) {
+        Ok(cursor) -> {
+            outcome = write_text_cursor(output, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f write_char(
+    output: []u8,
+    value: char,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match scalar(value, options) {
+        Ok(cursor) -> {
+            outcome = write_text_cursor(output, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f append_str(
+    output: *String,
+    value: str,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match text(value, options) {
+        Ok(cursor) -> {
+            match append_text_cursor(output, cursor) {
+                Ok(length) -> {
+                    outcome = Result.Ok<usize, FormatError>(length)
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, FormatError>(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f append_debug_str(
+    output: *String,
+    value: str,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match debug_text(value, options) {
+        Ok(cursor) -> {
+            match append_text_cursor(output, cursor) {
+                Ok(length) -> {
+                    outcome = Result.Ok<usize, FormatError>(length)
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, FormatError>(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f append_bool(
+    output: *String,
+    value: bool,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match boolean(value, options) {
+        Ok(cursor) -> {
+            match append_text_cursor(output, cursor) {
+                Ok(length) -> {
+                    outcome = Result.Ok<usize, FormatError>(length)
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, FormatError>(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f append_char(
+    output: *String,
+    value: char,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match scalar(value, options) {
+        Ok(cursor) -> {
+            match append_text_cursor(output, cursor) {
+                Ok(length) -> {
+                    outcome = Result.Ok<usize, FormatError>(length)
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, FormatError>(failure)
+                }
+            }
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f write_integer_to<W: Writer>(
+    writer: *W,
+    cursor: IntegerCursor
+) = outcome: Result<usize, FormatError> {
+    usize total = 0
+    bool failed = false
+    while !cursor.is_done() and !failed {
+        [32]u8 chunk = []
+        usize count = 0
+        unsafe {
+            while count < 32 and !cursor.is_done() {
+                match (&cursor).next() {
+                    Some(byte) -> {
+                        chunk[count] = byte
+                        count = count + 1
+                    }
+                    None -> {}
+                }
+            }
+            match write_all_to<W>(
+                writer,
+                const_slice(&chunk, count)
+            ) {
+                Ok(written) -> {
+                    total = total + written
+                }
+                Err(failure) -> {
+                    failed = true
+                    outcome = Result.Err<usize, FormatError>(
+                        FormatError.Writer(failure)
+                    )
+                }
+            }
+        }
+    }
+    if !failed {
+        outcome = Result.Ok<usize, FormatError>(total)
+    }
+}
+
+pub flex f write_text_to<W: Writer>(
+    writer: *W,
+    cursor: TextCursor
+) = outcome: Result<usize, FormatError> {
+    usize total = 0
+    bool failed = false
+    unsafe {
+        while !cursor.is_done() and !failed {
+            match (&cursor).next() {
+                Some(value) -> {
+                    [4]u8 encoded = [0, 0, 0, 0]
+                    usize encoded_length = 0
+                    runes_utf8_encode(
+                        value,
+                        &encoded,
+                        &encoded_length
+                    )
+                    match write_all_to<W>(
+                        writer,
+                        const_slice(&encoded, encoded_length)
+                    ) {
+                        Ok(written) -> {
+                            total = total + written
+                        }
+                        Err(failure) -> {
+                            failed = true
+                            outcome = Result.Err<usize, FormatError>(
+                                FormatError.Writer(failure)
+                            )
+                        }
+                    }
+                }
+                None -> {}
+            }
+        }
+    }
+    if !failed {
+        outcome = Result.Ok<usize, FormatError>(total)
+    }
+}
+
+pub flex f write_u64_to<W: Writer>(
+    writer: *W,
+    value: u64,
+    options: IntegerFormat
+) = outcome: Result<usize, FormatError> {
+    match integer_u64(value, options) {
+        Ok(cursor) -> {
+            outcome = write_integer_to<W>(writer, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f write_i64_to<W: Writer>(
+    writer: *W,
+    value: i64,
+    options: IntegerFormat
+) = outcome: Result<usize, FormatError> {
+    match integer_i64(value, options) {
+        Ok(cursor) -> {
+            outcome = write_integer_to<W>(writer, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f write_str_to<W: Writer>(
+    writer: *W,
+    value: str,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match text(value, options) {
+        Ok(cursor) -> {
+            outcome = write_text_to<W>(writer, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f write_debug_str_to<W: Writer>(
+    writer: *W,
+    value: str,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match debug_text(value, options) {
+        Ok(cursor) -> {
+            outcome = write_text_to<W>(writer, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f write_bool_to<W: Writer>(
+    writer: *W,
+    value: bool,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match boolean(value, options) {
+        Ok(cursor) -> {
+            outcome = write_text_to<W>(writer, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}
+
+pub flex f write_char_to<W: Writer>(
+    writer: *W,
+    value: char,
+    options: TextFormat
+) = outcome: Result<usize, FormatError> {
+    match scalar(value, options) {
+        Ok(cursor) -> {
+            outcome = write_text_to<W>(writer, cursor)
+        }
+        Err(failure) -> {
+            outcome = Result.Err<usize, FormatError>(failure)
+        }
+    }
+}

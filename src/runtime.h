@@ -43,6 +43,9 @@ typedef struct {
   size_t dynamic_releases;
   size_t regional_allocations;
   size_t gc_allocations;
+  size_t initialized_publications;
+  size_t initialized_shrinks;
+  size_t rejected_transitions;
 } RunesStorageStats;
 
 void runes_runtime_init(void);
@@ -83,11 +86,25 @@ void *runes_storage_try_resize_gc(
     void *pointer, size_t initialized, size_t old_capacity,
     size_t new_capacity, const RunesTypeDescriptor *element, unsigned line,
     unsigned column);
+bool runes_storage_set_initialized_dynamic(
+    void *pointer, size_t expected_old, size_t new_initialized,
+    size_t capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column);
+bool runes_storage_set_initialized_regional(
+    void *pointer, size_t expected_old, size_t new_initialized,
+    size_t capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column);
+bool runes_storage_set_initialized_gc(
+    void *pointer, size_t expected_old, size_t new_initialized,
+    size_t capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column);
 void runes_storage_release_dynamic(void *pointer);
 void runes_storage_release_regional(void *pointer, unsigned line,
                                     unsigned column);
 void runes_storage_release_gc(void *pointer);
 RunesStorageError runes_storage_last_error(void);
+void runes_storage_fail(RunesStorageError error, unsigned line,
+                        unsigned column);
 RunesStorageStats runes_storage_stats(void);
 void runes_storage_debug_fail_after(size_t successful_allocations);
 void runes_storage_debug_clear_failure(void);
@@ -146,6 +163,7 @@ bool runes_str_decode_next(RunesStr value, size_t *index, uint32_t *scalar);
 bool runes_utf8_encode(uint32_t scalar, uint8_t output[4], size_t *length);
 uint32_t runes_char_from_u64(uint64_t value, unsigned line, unsigned column);
 uint64_t runes_str_hash(RunesStr value);
+RunesStr runes_str_view(const uint8_t *data, size_t length);
 RunesStr runes_str_from_c(const char *value);
 bool runes_str_from_bytes(const uint8_t *data, size_t length,
                           RunesStr *result);

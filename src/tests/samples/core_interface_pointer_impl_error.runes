@@ -1,0 +1,14 @@
+-- EXPECT FAIL: has an incompatible receiver
+interface Writer {
+    f write(self: *Writer, bytes: []const u8) = result: usize
+}
+
+type Buffer = {
+    count: usize
+}
+
+method Writer for Buffer {
+    f write(self, bytes: []const u8) = result: usize {
+        result = bytes.len
+    }
+}

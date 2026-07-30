@@ -1,0 +1,13 @@
+use std.format.IntegerFormat
+use std.format.write_i64
+
+f main() {
+    [32]u8 bytes = []
+    []u8 output = bytes
+    options := IntegerFormat.hex_lower()
+    options.prefix = true
+    match write_i64(output, -42, options) {
+        Ok(_) -> {}
+        Err(_) -> {}
+    }
+}

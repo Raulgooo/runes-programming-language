@@ -163,7 +163,7 @@ The proposal therefore uses a separate `in <realm>` modifier:
 ```runes
 in dynamic f reserve(...)
 in regional f reserve(...)
-in gc f reserve(...)
+in gc f treserve(...)
 ```
 
 `in gc f reserve` means:
@@ -232,7 +232,7 @@ name and ordinary generic arguments.
 | Shared fallback versus exact overload | Exact `in <realm>` wins; the shared fallback is not instantiated for that declaration/realm pair |
 | Blacklist versus an exact overload | Availability is checked first; a blacklisted realm cannot be revived accidentally by an overload |
 | Realm-specific layout versus shared methods | The shared method is specialized and type-checked against each demanded layout; an incompatible layout needs an exact method overload |
-| Runtime allocation realm versus owner-sensitive replacement | Fresh `alloc()` follows effective execution realm; owner-sensitive `resize`/`release` follow the storage owner/dispatch context |
+| Runtime allocation realm versus owner-sensitive replacement | Fresh `alloc()` follows effective execution realm; owner-sensitive `tstorage_resize`/`release` follow the storage owner/dispatch context |
 | Cross-realm container call | The value keeps its hidden owner variant; mutation either uses a valid owner context or is rejected, never silently rehomed |
 | Inactive `when realm` names | The inactive branch is pruned before final resolution/type checking of that specialization |
 | Stack blacklist versus stack allocation errors | An excluded declaration fails at availability selection; an allowed stack specialization may still fail if its selected body uses forbidden allocation |
@@ -277,7 +277,7 @@ A collection whose algorithm is otherwise identical should remain one body:
 
 ```runes
 method Vec<T> {
-    flex f reserve(self: *Vec<T>, additional: usize)
+    flex f treserve(self: *Vec<T>, additional: usize)
         = result: Result<usize, AllocationError> {
         usize required = capacity_for(self.len, additional)?
         self.data = resize(
@@ -292,7 +292,7 @@ method Vec<T> {
 }
 ```
 
-`resize` and `release` are proposed typed, compiler-recognized operations. They
+`tstorage_resize` and `release` are typed, compiler-recognized operations. They
 select dynamic, arena, or GC mechanics from the inferred dispatch/owner
 context. They keep raw `free`, arena retention, and GC tracing out of ordinary
 container source.
@@ -429,17 +429,17 @@ Methods that differ use same-name realm overloads:
 
 ```runes
 method Vec<T> {
-    in dynamic f reserve(self: *Vec<T>, additional: usize)
+    in dynamic f treserve(self: *Vec<T>, additional: usize)
         = result: Result<usize, AllocationError> {
         -- Allocate replacement and release old raw storage.
     }
 
-    in regional f reserve(self: *Vec<T>, additional: usize)
+    in regional f treserve(self: *Vec<T>, additional: usize)
         = result: Result<usize, AllocationError> {
         -- Allocate replacement in the owning arena; do not individually free.
     }
 
-    in gc f reserve(self: *Vec<T>, additional: usize)
+    in gc f treserve(self: *Vec<T>, additional: usize)
         = result: Result<usize, AllocationError> {
         -- Allocate traced replacement; old storage becomes collectible.
     }
@@ -457,7 +457,7 @@ there should be only one `flex` method:
 
 ```runes
 method Vec<T> {
-    flex f reserve(self: *Vec<T>, additional: usize)
+    flex f treserve(self: *Vec<T>, additional: usize)
         = result: Result<usize, AllocationError> {
         self.data = resize(
             self.data,
@@ -866,16 +866,19 @@ mechanics. Keep `alloc()` as the single realm-sensitive allocation operation
 and add the minimum typed/fallible foundation:
 
 ```text
-try_allocate<T>(count)
-resize<T>(pointer, initialized, old_capacity, new_capacity)
+tstorage_allocate<T>(count)
+tstorage_resize<T>(pointer, initialized, old_capacity, new_capacity)
 release<T>(pointer, initialized, capacity)
 ```
 
-These names are placeholders until the typed-allocation API is designed.
+These were placeholders until the typed-allocation API was designed. The
+implemented public pairs are `allocate/tallocate`,
+`allocate_array/tallocate_array`, and `resize_array/tresize_array`; the names
+above remain internal compiler/runtime vocabulary.
 
 Expected lowering:
 
-| Dispatch/owner realm | `resize` policy |
+| Dispatch/owner realm | `tstorage_resize` policy |
 |---|---|
 | dynamic | allocate replacement, move initialized values, free old storage |
 | regional | allocate in owning arena, move values, retain old arena storage |
@@ -1154,7 +1157,10 @@ realm dispatch.
 
 ### Milestone 7: typed realm-sensitive storage
 
-Status: implemented and tested.
+Status: implemented and tested, including allocation, resize, release,
+failure preservation, owner lowering, initialized-prefix publication, and
+pointer-bearing forced-collection proofs; see
+[GC initialized storage before `Vec<T>`](gc-initialized-storage-before-vec-plan.md).
 
 - add fallible typed arrays;
 - add checked layout/capacity operations;
@@ -1170,7 +1176,9 @@ and preserves state on every forced failure.
 ### Milestone 8: proof container
 
 Status: implemented as an internal generic `Buffer<T>` compiler/runtime proof.
-The public standard-library `Vec<T>` remains separate library work.
+The proof covers pointer-bearing in-place push, pop, truncate, clear, resize,
+release, and collection after locals leave scope. Public `std.vec.Vec<T>` now
+uses the proven storage contract in dynamic, regional, and GC realms.
 
 Build a small internal `Vec<T>` using:
 
@@ -1315,10 +1323,14 @@ The sample must use the same:
 
 ```runes
 Vec<Item>
-Vec.new()
+Vec<Item>.new()
 values.push(item)
 values.reserve(count)
 ```
+
+Recoverable versions keep the same inferred realm and prefix only the
+operation: `Vec<Item>.tnew()`, `values.tpush(item)`, and
+`values.treserve(count)`.
 
 inside dynamic, regional, and GC functions.
 

@@ -1,0 +1,175 @@
+-- Raw Linux x86-64 filesystem operations.
+--
+-- This module preserves errno and exposes Linux ABI-shaped data. Portable
+-- ownership, paths, errors, and metadata belong in std.fs.
+
+use std.os.linux.result as linux_result
+use std.os.linux.result.LinuxResult
+use std.os.linux.result.LinuxStatus
+use std.os.linux.syscall
+
+const usize SYS_FSTAT = 5
+const usize SYS_FSYNC = 74
+const usize SYS_FDATASYNC = 75
+const usize SYS_FTRUNCATE = 77
+const usize SYS_MKDIRAT = 258
+const usize SYS_NEWFSTATAT = 262
+const usize SYS_UNLINKAT = 263
+const usize SYS_RENAMEAT = 264
+
+#[repr(C)]
+pub type LinuxStat = {
+    device: u64
+    inode: u64
+    link_count: u64
+    mode: u32
+    user: u32
+    group: u32
+    padding: i32
+    special_device: u64
+    size: i64
+    block_size: i64
+    blocks: i64
+    accessed_seconds: i64
+    accessed_nanoseconds: i64
+    modified_seconds: i64
+    modified_nanoseconds: i64
+    changed_seconds: i64
+    changed_nanoseconds: i64
+    reserved: [3]i64
+}
+
+pub f stat_empty() = result: LinuxStat {
+    result = LinuxStat(
+        device: 0,
+        inode: 0,
+        link_count: 0,
+        mode: 0,
+        user: 0,
+        group: 0,
+        padding: 0,
+        special_device: 0,
+        size: 0,
+        block_size: 0,
+        blocks: 0,
+        accessed_seconds: 0,
+        accessed_nanoseconds: 0,
+        modified_seconds: 0,
+        modified_nanoseconds: 0,
+        changed_seconds: 0,
+        changed_nanoseconds: 0,
+        reserved: []
+    )
+}
+
+pub f sync_all(descriptor: i32) = outcome: LinuxStatus {
+    outcome = linux_result.status_from_raw(
+        syscall.call1(SYS_FSYNC, descriptor as u64)
+    )
+}
+
+pub f sync_data(descriptor: i32) = outcome: LinuxStatus {
+    outcome = linux_result.status_from_raw(
+        syscall.call1(SYS_FDATASYNC, descriptor as u64)
+    )
+}
+
+pub f truncate(
+    descriptor: i32,
+    length: usize
+) = outcome: LinuxStatus {
+    outcome = linux_result.status_from_raw(
+        syscall.call2(
+            SYS_FTRUNCATE,
+            descriptor as u64,
+            length as u64
+        )
+    )
+}
+
+pub f metadata(
+    descriptor: i32,
+    output: *LinuxStat
+) = outcome: LinuxStatus {
+    unsafe {
+        outcome = linux_result.status_from_raw(
+            syscall.call2(
+                SYS_FSTAT,
+                descriptor as u64,
+                output as u64
+            )
+        )
+    }
+}
+
+pub f metadata_at_raw(
+    directory: i32,
+    path: *const u8,
+    output: *LinuxStat,
+    flags: i32
+) = outcome: LinuxStatus {
+    unsafe {
+        outcome = linux_result.status_from_raw(
+            syscall.call4(
+                SYS_NEWFSTATAT,
+                directory as u64,
+                path as u64,
+                output as u64,
+                flags as u64
+            )
+        )
+    }
+}
+
+pub f create_directory_at_raw(
+    directory: i32,
+    path: *const u8,
+    mode: u32
+) = outcome: LinuxStatus {
+    unsafe {
+        outcome = linux_result.status_from_raw(
+            syscall.call3(
+                SYS_MKDIRAT,
+                directory as u64,
+                path as u64,
+                mode as u64
+            )
+        )
+    }
+}
+
+pub f remove_at_raw(
+    directory: i32,
+    path: *const u8,
+    flags: i32
+) = outcome: LinuxStatus {
+    unsafe {
+        outcome = linux_result.status_from_raw(
+            syscall.call3(
+                SYS_UNLINKAT,
+                directory as u64,
+                path as u64,
+                flags as u64
+            )
+        )
+    }
+}
+
+pub f rename_at_raw(
+    old_directory: i32,
+    old_path: *const u8,
+    new_directory: i32,
+    new_path: *const u8
+) = outcome: LinuxStatus {
+    unsafe {
+        outcome = linux_result.status_from_raw(
+            syscall.call4(
+                SYS_RENAMEAT,
+                old_directory as u64,
+                old_path as u64,
+                new_directory as u64,
+                new_path as u64
+            )
+        )
+    }
+}

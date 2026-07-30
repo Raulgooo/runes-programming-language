@@ -124,6 +124,166 @@ test-core: $(TARGET)
 	./$(TARGET) src/tests/samples/core_codegen_std_result.runes --emit-c /tmp/runes_core_std_result.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_result.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_result
 	@test "$$(/tmp/runes_core_std_result)" = "true false false true 5 42 7 21 12 99 64 8 true true true"
+	./$(TARGET) src/tests/samples/core_codegen_associated_methods.runes --emit-c /tmp/runes_core_associated_methods.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_associated_methods.c $(RUNTIME_SRCS) -o /tmp/runes_core_associated_methods
+	@test "$$(/tmp/runes_core_associated_methods)" = "41 42 43 99 10 20 30 1 1 2"
+	@grep -Eq "__runes_realm_method_7_current__.*__dynamic" /tmp/runes_core_associated_methods.c
+	@grep -Eq "__runes_realm_method_7_current__.*__regional" /tmp/runes_core_associated_methods.c
+	@grep -Eq "__runes_realm_method_7_current__.*__gc" /tmp/runes_core_associated_methods.c
+	./$(TARGET) src/tests/samples/core_codegen_std_vec.runes --emit-c /tmp/runes_core_std_vec.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_vec.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_vec
+	@test "$$(/tmp/runes_core_std_vec)" = "true true true true true true"
+	@grep -Fq "runes_storage_try_resize_dynamic" /tmp/runes_core_std_vec.c
+	@grep -Fq "runes_storage_try_resize_regional" /tmp/runes_core_std_vec.c
+	@grep -Fq "runes_storage_try_resize_gc" /tmp/runes_core_std_vec.c
+	@grep -Eq "__runes_gen_10_push_owned__.*__realm_dynamic" /tmp/runes_core_std_vec.c
+	@grep -Eq "__runes_gen_10_push_owned__.*__realm_regional" /tmp/runes_core_std_vec.c
+	@grep -Eq "__runes_gen_10_push_owned__.*__realm_gc" /tmp/runes_core_std_vec.c
+	@grep -Fq "RunesSliceElement_ptr_runes_D4_Cell" /tmp/runes_core_std_vec.c
+	./$(TARGET) src/tests/samples/core_codegen_std_text.runes --emit-c /tmp/runes_core_std_text.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_text.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_text
+	@test "$$(/tmp/runes_core_std_text)" = "true true true true true true true"
+	@if grep -E 'runes_(alloc|alloc_typed|raw_alloc|raw_alloc_aligned|gc_alloc)\(' /tmp/runes_core_std_text.c | grep -v '^extern ' >/dev/null; then \
+		echo 'std.text unexpectedly allocated'; exit 1; \
+	fi
+	@grep -Fq "runes_D3_stdD4_textD9_TextSplit" /tmp/runes_core_std_text.c
+	@grep -Fq "Option__n9_TextSplit" /tmp/runes_core_std_text.c
+	./$(TARGET) src/tests/samples/core_codegen_std_text_edges.runes --emit-c /tmp/runes_core_std_text_edges.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_text_edges.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_text_edges
+	@test "$$(/tmp/runes_core_std_text_edges)" = "true true true true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_text_external.runes --emit-c /tmp/runes_core_std_text_external.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_text_external.c src/tests/fixtures/text_external_utf8.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_text_external
+	@test "$$(/tmp/runes_core_std_text_external)" = "true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_string.runes --emit-c /tmp/runes_core_std_string.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_string.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_string
+	@test "$$(/tmp/runes_core_std_string)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_string_realms.runes --emit-c /tmp/runes_core_std_string_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_string_realms.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_string_realms
+	@test "$$(/tmp/runes_core_std_string_realms)" = "true true true"
+	@grep -Fq "runes_storage_try_resize_dynamic" /tmp/runes_core_std_string_realms.c
+	@grep -Fq "runes_storage_try_resize_regional" /tmp/runes_core_std_string_realms.c
+	@grep -Fq "runes_storage_try_resize_gc" /tmp/runes_core_std_string_realms.c
+	@grep -Eq "__runes_realm_method_13_with_capacity__.*__dynamic" /tmp/runes_core_std_string_realms.c
+	@grep -Eq "__runes_realm_method_13_with_capacity__.*__regional" /tmp/runes_core_std_string_realms.c
+	@grep -Eq "__runes_realm_method_8_from_str__.*__gc" /tmp/runes_core_std_string_realms.c
+	./$(TARGET) src/tests/samples/core_codegen_std_string_failures.runes --emit-c /tmp/runes_core_std_string_failures.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_string_failures.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_string_failures
+	@test "$$(/tmp/runes_core_std_string_failures)" = "true true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_format_integer.runes --emit-c /tmp/runes_core_std_format_integer.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_format_integer.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_format_integer
+	@test "$$(/tmp/runes_core_std_format_integer)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_format_text.runes --emit-c /tmp/runes_core_std_format_text.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_format_text.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_format_text
+	@test "$$(/tmp/runes_core_std_format_text)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_format_realms.runes --emit-c /tmp/runes_core_std_format_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_format_realms.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_format_realms
+	@test "$$(/tmp/runes_core_std_format_realms)" = "true true true"
+	@grep -Fq "runes_storage_try_resize_dynamic" /tmp/runes_core_std_format_realms.c
+	@grep -Fq "runes_storage_try_resize_regional" /tmp/runes_core_std_format_realms.c
+	@grep -Fq "runes_storage_try_resize_gc" /tmp/runes_core_std_format_realms.c
+	./$(TARGET) src/tests/samples/core_codegen_std_format_failures.runes --emit-c /tmp/runes_core_std_format_failures.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_format_failures.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_format_failures
+	@test "$$(/tmp/runes_core_std_format_failures)" = "true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_format_fixed_noalloc.runes --emit-c /tmp/runes_core_std_format_fixed_noalloc.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_format_fixed_noalloc.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_format_fixed_noalloc
+	@if grep -E 'runes_storage_try_(allocate|resize)_' /tmp/runes_core_std_format_fixed_noalloc.c | grep -v '^extern ' >/dev/null; then \
+		echo 'fixed-buffer formatting unexpectedly allocated'; exit 1; \
+	fi
+	./$(TARGET) src/tests/samples/core_codegen_std_format_writer.runes --emit-c /tmp/runes_core_std_format_writer.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_format_writer.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_format_writer
+	@test "$$(/tmp/runes_core_std_format_writer)" = "true"
+	python3 src/tests/format_differential_test.py ./$(TARGET)
+	./$(TARGET) src/tests/samples/core_codegen_std_parse.runes --emit-c /tmp/runes_core_std_parse.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_parse.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_parse
+	@test "$$(/tmp/runes_core_std_parse)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_parse_failures.runes --emit-c /tmp/runes_core_std_parse_failures.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_parse_failures.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_parse_failures
+	@test "$$(/tmp/runes_core_std_parse_failures)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_parse_realms.runes --emit-c /tmp/runes_core_std_parse_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_parse_realms.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_parse_realms
+	@test "$$(/tmp/runes_core_std_parse_realms)" = "true true true"
+	@if grep -E 'runes_(alloc|alloc_typed|raw_alloc|raw_alloc_aligned|gc_alloc|storage_try_allocate|storage_try_resize)\(' /tmp/runes_core_std_parse_realms.c | grep -v '^extern ' >/dev/null; then \
+		echo 'std.parse unexpectedly allocated'; exit 1; \
+	fi
+	python3 src/tests/parse_differential_test.py ./$(TARGET)
+	./$(TARGET) src/tests/samples/core_codegen_std_io_readers.runes --emit-c /tmp/runes_core_std_io_readers.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_readers.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_io_readers
+	@test "$$(/tmp/runes_core_std_io_readers)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_io_buffered_writer.runes --emit-c /tmp/runes_core_std_io_buffered_writer.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_buffered_writer.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_io_buffered_writer
+	@test "$$(/tmp/runes_core_std_io_buffered_writer)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_io_realms.runes --emit-c /tmp/runes_core_std_io_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_realms.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_io_realms
+	@test "$$(/tmp/runes_core_std_io_realms)" = "true true true"
+	@grep -Fq 'read_line_from__n51___runes_gen_2_io_14_BufferedReader__n11_SliceReader__realm_dynamic' /tmp/runes_core_std_io_realms.c
+	@grep -Fq 'read_line_from__n51___runes_gen_2_io_14_BufferedReader__n11_SliceReader__realm_regional' /tmp/runes_core_std_io_realms.c
+	@grep -Fq 'read_line_from__n51___runes_gen_2_io_14_BufferedReader__n11_SliceReader__realm_gc' /tmp/runes_core_std_io_realms.c
+	@if grep -E 'runes_storage_try_(allocate|resize)_' /tmp/runes_core_std_io_realms.c | grep -v '^extern ' >/dev/null; then \
+		echo 'borrowed std.io buffering unexpectedly allocated'; exit 1; \
+	fi
+	./$(TARGET) src/tests/samples/core_codegen_std_io_stream_adapters.runes --emit-c /tmp/runes_core_std_io_stream_adapters.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_stream_adapters.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_io_stream_adapters
+	@test "$$(printf 'connected world\n' | /tmp/runes_core_std_io_stream_adapters)" = "connected world"
+	./$(TARGET) src/tests/samples/core_codegen_std_path.runes --emit-c /tmp/runes_core_std_path.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_path.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_path
+	@test "$$(/tmp/runes_core_std_path)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_path_realms.runes --emit-c /tmp/runes_core_std_path_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_path_realms.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_path_realms
+	@test "$$(/tmp/runes_core_std_path_realms)" = "true true true"
+	@grep -Fq "runes_storage_try_resize_dynamic" /tmp/runes_core_std_path_realms.c
+	@grep -Fq "runes_storage_try_resize_regional" /tmp/runes_core_std_path_realms.c
+	@grep -Fq "runes_storage_try_resize_gc" /tmp/runes_core_std_path_realms.c
+	@grep -Eq "__runes_realm_method_9_normalize__.*__dynamic" /tmp/runes_core_std_path_realms.c
+	@grep -Eq "__runes_realm_method_9_normalize__.*__regional" /tmp/runes_core_std_path_realms.c
+	@grep -Eq "__runes_realm_method_9_normalize__.*__gc" /tmp/runes_core_std_path_realms.c
+	./$(TARGET) src/tests/samples/core_codegen_std_path_failures.runes --emit-c /tmp/runes_core_std_path_failures.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_path_failures.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_path_failures
+	@test "$$(/tmp/runes_core_std_path_failures)" = "true"
+	python3 src/tests/path_differential_test.py ./$(TARGET)
+	./$(TARGET) src/tests/samples/core_codegen_std_fs.runes --emit-c /tmp/runes_core_std_fs.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror -pedantic /tmp/runes_core_std_fs.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_fs
+	@tmp=$$(mktemp -d); actual=$$(cd "$$tmp" && /tmp/runes_core_std_fs); rmdir "$$tmp"; test "$$actual" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_fs_failures.runes --emit-c /tmp/runes_core_std_fs_failures.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror -pedantic /tmp/runes_core_std_fs_failures.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_fs_failures
+	@tmp=$$(mktemp -d); actual=$$(cd "$$tmp" && /tmp/runes_core_std_fs_failures); rmdir "$$tmp"; test "$$actual" = "true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_fs_realms.runes --emit-c /tmp/runes_core_std_fs_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror -pedantic /tmp/runes_core_std_fs_realms.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_fs_realms
+	@tmp=$$(mktemp -d); actual=$$(cd "$$tmp" && /tmp/runes_core_std_fs_realms); rmdir "$$tmp"; test "$$actual" = "true true true"
+	@grep -Eq "__runes_realm_10_realm_case__dynamic" /tmp/runes_core_std_fs_realms.c
+	@grep -Eq "__runes_realm_10_realm_case__regional" /tmp/runes_core_std_fs_realms.c
+	@grep -Eq "__runes_realm_10_realm_case__gc" /tmp/runes_core_std_fs_realms.c
+	./$(TARGET) src/tests/samples/core_codegen_std_fs_fake.runes --emit-c /tmp/runes_core_std_fs_fake.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror -pedantic /tmp/runes_core_std_fs_fake.c src/tests/fixtures/fs_fake_syscall.c src/runtime.c src/utils/arena.c -o /tmp/runes_core_std_fs_fake
+	@test "$$(/tmp/runes_core_std_fs_fake)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_fs_descriptors.runes --emit-c /tmp/runes_core_std_fs_descriptors.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror -pedantic /tmp/runes_core_std_fs_descriptors.c src/tests/fixtures/fs_fd_count.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_fs_descriptors
+	@tmp=$$(mktemp -d); actual=$$(cd "$$tmp" && /tmp/runes_core_std_fs_descriptors); rmdir "$$tmp"; test "$$actual" = "true"
+	@if ./$(TARGET) --target x86_64-unknown-linux-none src/tests/fixtures/std_fs_unsupported.runes >/tmp/runes_core_std_fs_unsupported.out 2>&1; then \
+		echo 'expected hosted std.fs to be unavailable for a freestanding target'; exit 1; \
+	fi
+	@grep -Fq 'could not resolve module path' /tmp/runes_core_std_fs_unsupported.out
+	@if ./$(TARGET) src/tests/samples/core_string_stack_error.runes >/tmp/runes_core_string_stack_error.out 2>&1; then \
+		echo 'expected stack String construction to be rejected'; exit 1; \
+	fi
+	@grep -Fq 'storage intrinsic is not available in a stack function' /tmp/runes_core_string_stack_error.out
+	./$(TARGET) src/tests/samples/core_string_boundary_failure.runes --emit-c /tmp/runes_core_string_boundary_failure.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_string_boundary_failure.c $(RUNTIME_SRCS) -o /tmp/runes_core_string_boundary_failure
+	@if /tmp/runes_core_string_boundary_failure >/tmp/runes_core_string_boundary_failure.out 2>&1; then \
+		echo 'expected invalid ordinary String boundary to terminate'; exit 1; \
+	fi
+	@grep -Fq 'string byte range splits a UTF-8 scalar' /tmp/runes_core_string_boundary_failure.out
+	./$(TARGET) src/tests/samples/core_string_ordinary_failure.runes --emit-c /tmp/runes_core_string_ordinary_failure.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_string_ordinary_failure.c $(RUNTIME_SRCS) -o /tmp/runes_core_string_ordinary_failure
+	@if /tmp/runes_core_string_ordinary_failure >/tmp/runes_core_string_ordinary_failure.out 2>&1; then \
+		echo 'expected ordinary String allocation failure to terminate'; exit 1; \
+	fi
+	@grep -Fq 'storage operation failed: out of memory' /tmp/runes_core_string_ordinary_failure.out
+	./$(TARGET) src/tests/samples/core_vec_ordinary_failure.runes --emit-c /tmp/runes_core_vec_ordinary_failure.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_vec_ordinary_failure.c $(RUNTIME_SRCS) -o /tmp/runes_core_vec_ordinary_failure
+	@if /tmp/runes_core_vec_ordinary_failure >/tmp/runes_core_vec_ordinary_failure.out 2>&1; then \
+		echo 'expected ordinary Vec allocation failure to terminate'; exit 1; \
+	fi
+	@grep -Fq 'storage operation failed: out of memory' /tmp/runes_core_vec_ordinary_failure.out
 	./$(TARGET) src/tests/samples/core_codegen_std_io_output.runes --emit-c /tmp/runes_core_std_io_output.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_std_io_output.c $(RUNTIME_SRCS) -o /tmp/runes_core_std_io_output
 	@if grep -E 'runes_(alloc|alloc_typed|raw_alloc|raw_alloc_aligned|gc_alloc)\(' /tmp/runes_core_std_io_output.c | grep -v '^extern ' >/dev/null; then \
@@ -298,13 +458,19 @@ test-core: $(TARGET)
 	@! grep -Fq "__runes_realm_type_4_Cell__regional" /tmp/runes_core_realm_type_layouts.c
 	./$(TARGET) src/tests/samples/core_codegen_realm_storage.runes --emit-c /tmp/runes_core_realm_storage.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_realm_storage.c $(RUNTIME_SRCS) -o /tmp/runes_core_realm_storage
-	@test "$$(/tmp/runes_core_realm_storage)" = "60 15 42 true"
+	@test "$$(/tmp/runes_core_realm_storage)" = "60 15 42 true 7 8 123 true"
 	@grep -Fq "runes_storage_try_allocate_dynamic" /tmp/runes_core_realm_storage.c
 	@grep -Fq "runes_storage_try_allocate_regional" /tmp/runes_core_realm_storage.c
 	@grep -Fq "runes_storage_try_allocate_gc" /tmp/runes_core_realm_storage.c
 	@grep -Fq "runes_storage_try_resize_dynamic" /tmp/runes_core_realm_storage.c
 	@grep -Fq "runes_storage_try_resize_regional" /tmp/runes_core_realm_storage.c
 	@grep -Fq "runes_storage_try_resize_gc" /tmp/runes_core_realm_storage.c
+	@grep -Fq "runes_storage_set_initialized_dynamic" /tmp/runes_core_realm_storage.c
+	@grep -Fq "runes_storage_set_initialized_regional" /tmp/runes_core_realm_storage.c
+	@grep -Fq "runes_storage_set_initialized_gc" /tmp/runes_core_realm_storage.c
+	./$(TARGET) src/tests/samples/core_codegen_allocate_dynamic.runes --emit-c /tmp/runes_core_allocate_dynamic.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_allocate_dynamic.c $(RUNTIME_SRCS) -o /tmp/runes_core_allocate_dynamic
+	@test "$$(/tmp/runes_core_allocate_dynamic)" = "77 88 true"
 	./$(TARGET) src/tests/samples/core_codegen_realm_type_imports.runes --emit-c /tmp/runes_core_realm_type_imports.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_realm_type_imports.c $(RUNTIME_SRCS) -o /tmp/runes_core_realm_type_imports
 	@test "$$(/tmp/runes_core_realm_type_imports)" = "5 7"
@@ -353,6 +519,13 @@ test-core: $(TARGET)
 	./$(TARGET) src/tests/samples/core_codegen_nested_functions.runes --emit-c /tmp/runes_core_nested.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_nested.c $(RUNTIME_SRCS) -o /tmp/runes_core_nested
 	@test "$$(/tmp/runes_core_nested)" = "42"
+	./$(TARGET) src/tests/samples/core_codegen_main_realm_nesting.runes --emit-c /tmp/runes_core_main_realm_nesting.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_main_realm_nesting.c $(RUNTIME_SRCS) -o /tmp/runes_core_main_realm_nesting
+	@test "$$(/tmp/runes_core_main_realm_nesting)" = "31"
+	@if ./$(TARGET) src/tests/samples/core_stack_nested_dynamic_error.runes >/tmp/runes_core_stack_nested_dynamic_error.out 2>&1; then \
+		echo 'expected stack-to-dynamic nesting to be rejected'; exit 1; \
+	fi
+	@grep -Fq 'Cannot nest dynamic function inside stack realm' /tmp/runes_core_stack_nested_dynamic_error.out
 	./$(TARGET) src/tests/samples/core_codegen_nested_captures.runes --emit-c /tmp/runes_core_nested_captures.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -Werror /tmp/runes_core_nested_captures.c $(RUNTIME_SRCS) -o /tmp/runes_core_nested_captures
 	@test "$$(/tmp/runes_core_nested_captures)" = "15 42 18"
@@ -392,6 +565,14 @@ test-core: $(TARGET)
 	./$(TARGET) src/tests/samples/core_codegen_interfaces.runes --emit-c /tmp/runes_core_interfaces.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_interfaces.c $(RUNTIME_SRCS) -o /tmp/runes_core_interfaces
 	@test "$$(/tmp/runes_core_interfaces)" = "7 9"
+	@if ./$(TARGET) src/tests/samples/core_interface_pointer_declaration_error.runes >/tmp/runes_core_interface_pointer_declaration.out 2>&1; then \
+		echo 'expected invalid pointer interface receiver declaration to fail'; exit 1; \
+	fi
+	@grep -Fq 'must use self or self: *Writer as its first parameter' /tmp/runes_core_interface_pointer_declaration.out
+	@if ./$(TARGET) src/tests/samples/core_interface_pointer_impl_error.runes >/tmp/runes_core_interface_pointer_impl.out 2>&1; then \
+		echo 'expected value receiver implementation of pointer interface to fail'; exit 1; \
+	fi
+	@grep -Fq "Interface method 'write' has an incompatible receiver" /tmp/runes_core_interface_pointer_impl.out
 	./$(TARGET) src/tests/samples/core_codegen_method_name_collision.runes --emit-c /tmp/runes_core_method_collision.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra /tmp/runes_core_method_collision.c $(RUNTIME_SRCS) -o /tmp/runes_core_method_collision
 	@test "$$(/tmp/runes_core_method_collision)" = "41 42"
@@ -569,6 +750,81 @@ test-runtime-sanitize: $(TARGET)
 	./$(TARGET) src/tests/samples/core_codegen_unicode_strings.runes --emit-c /tmp/runes_asan_unicode_strings.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_unicode_strings.c $(RUNTIME_SRCS) -o /tmp/runes_asan_unicode_strings
 	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_unicode_strings)" = "13 true true 108 hé 界"
+	./$(TARGET) src/tests/samples/core_codegen_std_text.runes --emit-c /tmp/runes_asan_std_text.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_text.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_text
+	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_std_text)" = "true true true true true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_text_edges.runes --emit-c /tmp/runes_asan_std_text_edges.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_text_edges.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_text_edges
+	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_std_text_edges)" = "true true true true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_text_external.runes --emit-c /tmp/runes_asan_std_text_external.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_text_external.c src/tests/fixtures/text_external_utf8.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_text_external
+	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_std_text_external)" = "true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_string.runes --emit-c /tmp/runes_asan_std_string.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_string.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_string
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_string)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_string_realms.runes --emit-c /tmp/runes_asan_std_string_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_string_realms.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_string_realms
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_string_realms)" = "true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_string_failures.runes --emit-c /tmp/runes_asan_std_string_failures.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_string_failures.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_string_failures
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_string_failures)" = "true true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_format_integer.runes --emit-c /tmp/runes_asan_std_format_integer.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_format_integer.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_format_integer
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_format_integer)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_format_text.runes --emit-c /tmp/runes_asan_std_format_text.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_format_text.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_format_text
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_format_text)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_format_realms.runes --emit-c /tmp/runes_asan_std_format_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_format_realms.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_format_realms
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_format_realms)" = "true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_format_failures.runes --emit-c /tmp/runes_asan_std_format_failures.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_format_failures.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_format_failures
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_format_failures)" = "true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_format_writer.runes --emit-c /tmp/runes_asan_std_format_writer.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_format_writer.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_format_writer
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_format_writer)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_parse.runes --emit-c /tmp/runes_asan_std_parse.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_parse.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_parse
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_parse)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_parse_failures.runes --emit-c /tmp/runes_asan_std_parse_failures.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_parse_failures.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_parse_failures
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_parse_failures)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_parse_realms.runes --emit-c /tmp/runes_asan_std_parse_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_parse_realms.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_parse_realms
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_parse_realms)" = "true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_io_readers.runes --emit-c /tmp/runes_asan_std_io_readers.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_io_readers.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_io_readers
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_io_readers)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_io_buffered_writer.runes --emit-c /tmp/runes_asan_std_io_buffered_writer.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_io_buffered_writer.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_io_buffered_writer
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_io_buffered_writer)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_io_realms.runes --emit-c /tmp/runes_asan_std_io_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_io_realms.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_io_realms
+	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_std_io_realms)" = "true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_path.runes --emit-c /tmp/runes_asan_std_path.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_path.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_path
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_path)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_path_realms.runes --emit-c /tmp/runes_asan_std_path_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_path_realms.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_path_realms
+	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_std_path_realms)" = "true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_path_failures.runes --emit-c /tmp/runes_asan_std_path_failures.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_path_failures.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_path_failures
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_path_failures)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_fs.runes --emit-c /tmp/runes_asan_std_fs.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_fs.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_fs
+	@tmp=$$(mktemp -d); actual=$$(cd "$$tmp" && ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_fs); rmdir "$$tmp"; test "$$actual" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_fs_failures.runes --emit-c /tmp/runes_asan_std_fs_failures.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_fs_failures.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_fs_failures
+	@tmp=$$(mktemp -d); actual=$$(cd "$$tmp" && ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_fs_failures); rmdir "$$tmp"; test "$$actual" = "true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_fs_realms.runes --emit-c /tmp/runes_asan_std_fs_realms.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_fs_realms.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_fs_realms
+	@tmp=$$(mktemp -d); actual=$$(cd "$$tmp" && ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_std_fs_realms); rmdir "$$tmp"; test "$$actual" = "true true true"
+	./$(TARGET) src/tests/samples/core_codegen_std_fs_fake.runes --emit-c /tmp/runes_asan_std_fs_fake.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_fs_fake.c src/tests/fixtures/fs_fake_syscall.c src/runtime.c src/utils/arena.c -o /tmp/runes_asan_std_fs_fake
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_fs_fake)" = "true"
+	./$(TARGET) src/tests/samples/core_codegen_std_fs_descriptors.runes --emit-c /tmp/runes_asan_std_fs_descriptors.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_fs_descriptors.c src/tests/fixtures/fs_fd_count.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_fs_descriptors
+	@tmp=$$(mktemp -d); actual=$$(cd "$$tmp" && ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_fs_descriptors); rmdir "$$tmp"; test "$$actual" = "true"
 	./$(TARGET) src/tests/samples/core_codegen_regional_fallible_cleanup.runes --emit-c /tmp/runes_asan_regional_cleanup.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_regional_cleanup.c $(RUNTIME_SRCS) -o /tmp/runes_asan_regional_cleanup
 	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_regional_cleanup)" = "42 -1 0 0"
@@ -604,7 +860,16 @@ test-runtime-sanitize: $(TARGET)
 	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_realm_type_layouts)" = "18 36 100 300 40"
 	./$(TARGET) src/tests/samples/core_codegen_realm_storage.runes --emit-c /tmp/runes_asan_realm_storage.c
 	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_realm_storage.c $(RUNTIME_SRCS) -o /tmp/runes_asan_realm_storage
-	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_realm_storage)" = "60 15 42 true"
+	@test "$$(ASAN_OPTIONS=detect_leaks=0 /tmp/runes_asan_realm_storage)" = "60 15 42 true 7 8 123 true"
+	./$(TARGET) src/tests/samples/core_codegen_std_vec.runes --emit-c /tmp/runes_asan_std_vec.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_std_vec.c $(RUNTIME_SRCS) -o /tmp/runes_asan_std_vec
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_std_vec)" = "true true true true true true"
+	./$(TARGET) src/tests/samples/core_codegen_associated_methods.runes --emit-c /tmp/runes_asan_associated_methods.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_associated_methods.c $(RUNTIME_SRCS) -o /tmp/runes_asan_associated_methods
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_associated_methods)" = "41 42 43 99 10 20 30 1 1 2"
+	./$(TARGET) src/tests/samples/core_codegen_allocate_dynamic.runes --emit-c /tmp/runes_asan_allocate_dynamic.c
+	$(CC) -Isrc -std=c11 -Wall -Wextra -g -fsanitize=address,undefined -fno-omit-frame-pointer /tmp/runes_asan_allocate_dynamic.c $(RUNTIME_SRCS) -o /tmp/runes_asan_allocate_dynamic
+	@test "$$(ASAN_OPTIONS=detect_leaks=1 /tmp/runes_asan_allocate_dynamic)" = "77 88 true"
 
 test-sanitize: test-runtime-sanitize
 	$(CC) $(CFLAGS) -fsanitize=address,undefined -fno-omit-frame-pointer $(CORE_SRCS) $(MAIN_SRC) -o /tmp/runes_sanitize

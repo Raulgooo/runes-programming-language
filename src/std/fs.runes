@@ -1,0 +1,919 @@
+-- Portable hosted filesystem API.
+--
+-- File owns exactly one kernel handle. Until move-only values are enforced,
+-- copying File is invalid. Acquire a File into one local, immediately schedule
+-- close with defer, and never use a copied handle.
+
+use std.core.AllocationError
+use std.core.IoError
+use std.core.Result
+use std.io.Closer
+use std.io.Flusher
+use std.io.ReadError
+use std.io.Reader
+use std.io.SeekFrom
+use std.io.Seeker
+use std.io.WriteError
+use std.io.Writer
+use std.path.PathError
+use std.path.PathView
+use std.path.PlatformPath
+use std.string.String
+use std.vec.Vec
+
+-- The operation that failed. FsError stores this separately from the portable
+-- reason so callers can report useful context without retaining a path.
+pub type FsOperation =
+    | Open
+    | SyncData
+    | SyncAll
+    | Metadata
+    | SetLength
+    | CreateDirectory
+    | RemoveFile
+    | RemoveDirectory
+    | Rename
+
+-- Portable filesystem failure.
+--
+-- Paths and raw errno values are intentionally not retained: retaining a path
+-- would require hidden ownership or unsafe borrowing, while applications
+-- should not depend on Linux errno. InvalidPath carries the embedded-NUL byte
+-- offset reported by PlatformPath conversion.
+pub type FsError =
+    | Io(FsOperation, IoError)
+    | Allocation(FsOperation, AllocationError)
+    | InvalidPath(FsOperation, usize)
+
+-- Failure from bounded whole-file reads. Read preserves the underlying M5
+-- ReadError; Allocation is recoverable in every allocating realm;
+-- LimitExceeded reports the caller's bound; InvalidUtf8 is used only by
+-- read_to_string.
+pub type FileReadError =
+    | Read(ReadError)
+    | Allocation(AllocationError)
+    | LimitExceeded(usize)
+    | InvalidUtf8
+
+-- Portable subset of file kinds exposed by initial metadata support.
+pub type FileType =
+    | Regular
+    | Directory
+    | SymbolicLink
+    | Other
+
+-- Portable metadata available in M7. length is clamped to zero if a backend
+-- reports a negative size. permissions contains only the low permission bits.
+pub type Metadata = {
+    kind: FileType
+    length: usize
+    permissions: u32
+    modified_seconds: i64
+}
+
+-- Explicit open policy. Constructors provide common safe starting points;
+-- with_* methods return a changed copy and do not mutate the receiver.
+pub type OpenOptions = {
+    read_access: bool
+    write_access: bool
+    append_access: bool
+    create_file: bool
+    create_new_file: bool
+    truncate_file: bool
+    permissions: u32
+}
+
+pub method OpenOptions {
+    -- Open an existing file for reading.
+    f read_only() = result: OpenOptions {
+        result = OpenOptions(
+            read_access: true,
+            write_access: false,
+            append_access: false,
+            create_file: false,
+            create_new_file: false,
+            truncate_file: false,
+            permissions: 438
+        )
+    }
+
+    -- Open an existing file for writing without implicit truncation.
+    f write_only() = result: OpenOptions {
+        result = OpenOptions(
+            read_access: false,
+            write_access: true,
+            append_access: false,
+            create_file: false,
+            create_new_file: false,
+            truncate_file: false,
+            permissions: 438
+        )
+    }
+
+    -- Open an existing file for reading and writing.
+    f read_write() = result: OpenOptions {
+        result = OpenOptions(
+            read_access: true,
+            write_access: true,
+            append_access: false,
+            create_file: false,
+            create_new_file: false,
+            truncate_file: false,
+            permissions: 438
+        )
+    }
+
+    -- Open for append, creating the file if it does not exist.
+    f append() = result: OpenOptions {
+        result = OpenOptions(
+            read_access: false,
+            write_access: true,
+            append_access: true,
+            create_file: true,
+            create_new_file: false,
+            truncate_file: false,
+            permissions: 438
+        )
+    }
+
+    -- Create or overwrite a file for writing.
+    f create() = result: OpenOptions {
+        result = OpenOptions(
+            read_access: false,
+            write_access: true,
+            append_access: false,
+            create_file: true,
+            create_new_file: false,
+            truncate_file: true,
+            permissions: 438
+        )
+    }
+
+    -- Exclusively create a new file; fail if it already exists.
+    f create_new() = result: OpenOptions {
+        result = OpenOptions(
+            read_access: false,
+            write_access: true,
+            append_access: false,
+            create_file: true,
+            create_new_file: true,
+            truncate_file: false,
+            permissions: 438
+        )
+    }
+
+    f with_create(self, enabled: bool) = result: OpenOptions {
+        result = self
+        result.create_file = enabled
+    }
+
+    f with_create_new(self, enabled: bool) = result: OpenOptions {
+        result = self
+        result.create_new_file = enabled
+        if enabled {
+            result.create_file = true
+        }
+    }
+
+    f with_truncate(self, enabled: bool) = result: OpenOptions {
+        result = self
+        result.truncate_file = enabled
+    }
+
+    f with_append(self, enabled: bool) = result: OpenOptions {
+        result = self
+        result.append_access = enabled
+        if enabled {
+            result.write_access = true
+        }
+    }
+
+    f with_permissions(self, permissions: u32) = result: OpenOptions {
+        result = self
+        result.permissions = permissions
+    }
+}
+
+-- Owning hosted file handle.
+--
+-- descriptor and is_open are library-private by contract until field
+-- visibility is enforced. File must not be copied: the compiler does not yet
+-- enforce move-only ownership. Close exactly once on the original value.
+pub type File = {
+    descriptor: i32
+    is_open: bool
+}
+use std.os.linux.fd as platform_fd
+use std.os.linux.filesystem as platform_fs
+use std.os.linux.filesystem.LinuxStat
+use std.os.linux.result.LinuxResult
+use std.os.linux.result.LinuxStatus
+flex f io_error_from_linux(code: i32) = failure: IoError {
+    failure = match code {
+        1 -> IoError.PermissionDenied(),
+        2 -> IoError.NotFound(),
+        4 -> IoError.Interrupted(),
+        9 -> IoError.InvalidInput(),
+        11 -> IoError.WouldBlock(),
+        13 -> IoError.PermissionDenied(),
+        17 -> IoError.AlreadyExists(),
+        20 -> IoError.InvalidInput(),
+        21 -> IoError.InvalidInput(),
+        22 -> IoError.InvalidInput(),
+        32 -> IoError.BrokenPipe(),
+        38 -> IoError.Unsupported(),
+        95 -> IoError.Unsupported(),
+        _ -> IoError.Unknown(),
+    }
+}
+flex f fs_io_error(
+    operation: FsOperation,
+    code: i32
+) = failure: FsError {
+    failure = FsError.Io(operation, io_error_from_linux(code))
+}
+
+flex f path_error(
+    operation: FsOperation,
+    failure: PathError
+) = result: FsError {
+    result = match failure {
+        Allocation(reason) -> FsError.Allocation(operation, reason),
+        ContainsNul(index) -> FsError.InvalidPath(operation, index),
+    }
+}
+flex f open_flags(options: OpenOptions) = outcome: Result<i32, FsError> {
+    if !options.read_access and !options.write_access {
+        outcome = Result.Err<i32, FsError>(
+            FsError.Io(FsOperation.Open(), IoError.InvalidInput())
+        )
+        return
+    }
+    if (options.create_file or options.create_new_file or
+        options.truncate_file or options.append_access) and
+        !options.write_access {
+        outcome = Result.Err<i32, FsError>(
+            FsError.Io(FsOperation.Open(), IoError.InvalidInput())
+        )
+        return
+    }
+
+    i32 flags = 0
+    if options.read_access and options.write_access {
+        flags = 2
+    } else if options.write_access {
+        flags = 1
+    }
+    if options.create_file { flags = flags | 64 }
+    if options.create_new_file { flags = flags | 128 }
+    if options.truncate_file { flags = flags | 512 }
+    if options.append_access { flags = flags | 1024 }
+    flags = flags | 524288
+    outcome = Result.Ok<i32, FsError>(flags)
+}
+
+pub method File {
+    -- True while this value still owns a descriptor.
+    f opened(self) = result: bool {
+        result = self.is_open
+    }
+    -- Ask the backend to persist file data. Metadata persistence is not
+    -- promised. Success returns zero.
+    f sync_data(self: *File) = outcome: Result<usize, FsError> {
+        unsafe {
+            if !self.is_open {
+                outcome = Result.Err<usize, FsError>(
+                    FsError.Io(
+                        FsOperation.SyncData(),
+                        IoError.InvalidInput()
+                    )
+                )
+                return
+            }
+            outcome = match platform_fs.sync_data(self.descriptor) {
+                Success -> Result.Ok<usize, FsError>(0),
+                Failure(code) -> Result.Err<usize, FsError>(
+                    fs_io_error(FsOperation.SyncData(), code)
+                ),
+            }
+        }
+    }
+    -- Ask the backend to persist file data and associated metadata.
+    f sync_all(self: *File) = outcome: Result<usize, FsError> {
+        unsafe {
+            if !self.is_open {
+                outcome = Result.Err<usize, FsError>(
+                    FsError.Io(
+                        FsOperation.SyncAll(),
+                        IoError.InvalidInput()
+                    )
+                )
+                return
+            }
+            outcome = match platform_fs.sync_all(self.descriptor) {
+                Success -> Result.Ok<usize, FsError>(0),
+                Failure(code) -> Result.Err<usize, FsError>(
+                    fs_io_error(FsOperation.SyncAll(), code)
+                ),
+            }
+        }
+    }
+    -- Truncate or extend the file to length bytes.
+    f set_length(
+        self: *File,
+        length: usize
+    ) = outcome: Result<usize, FsError> {
+        unsafe {
+            if !self.is_open {
+                outcome = Result.Err<usize, FsError>(
+                    FsError.Io(
+                        FsOperation.SetLength(),
+                        IoError.InvalidInput()
+                    )
+                )
+                return
+            }
+            outcome = match platform_fs.truncate(
+                self.descriptor,
+                length
+            ) {
+                Success -> Result.Ok<usize, FsError>(length),
+                Failure(code) -> Result.Err<usize, FsError>(
+                    fs_io_error(FsOperation.SetLength(), code)
+                ),
+            }
+        }
+    }
+}
+flex f metadata_from_linux(raw: LinuxStat) = result: Metadata {
+    u32 kind_bits = raw.mode & 61440
+    FileType kind = FileType.Other()
+    if kind_bits == 32768 {
+        kind = FileType.Regular()
+    } else if kind_bits == 16384 {
+        kind = FileType.Directory()
+    } else if kind_bits == 40960 {
+        kind = FileType.SymbolicLink()
+    }
+    usize length = 0
+    if raw.size > 0 {
+        length = raw.size as usize
+    }
+    result = Metadata(
+        kind: kind,
+        length: length,
+        permissions: raw.mode & 4095,
+        modified_seconds: raw.modified_seconds
+    )
+}
+
+pub method File {
+    -- Read metadata for this open handle.
+    f metadata(self: *File) = outcome: Result<Metadata, FsError> {
+        unsafe {
+            if !self.is_open {
+                outcome = Result.Err<Metadata, FsError>(
+                    FsError.Io(
+                        FsOperation.Metadata(),
+                        IoError.InvalidInput()
+                    )
+                )
+                return
+            }
+            LinuxStat raw = platform_fs.stat_empty()
+            outcome = match platform_fs.metadata(
+                self.descriptor,
+                &raw
+            ) {
+                Success -> Result.Ok<Metadata, FsError>(
+                    metadata_from_linux(raw)
+                ),
+                Failure(code) -> Result.Err<Metadata, FsError>(
+                    fs_io_error(FsOperation.Metadata(), code)
+                ),
+            }
+        }
+    }
+
+    -- Read from the current position through EOF without storing more than
+    -- limit bytes. If exactly limit bytes were read, one probe distinguishes
+    -- EOF from additional input.
+    flex f read_to_end(
+        self: *File,
+        limit: usize
+    ) = outcome: Result<Vec<u8>, FileReadError> {
+        usize initial_capacity = 4096
+        if limit < initial_capacity {
+            initial_capacity = limit
+        }
+        match Vec<u8>.twith_capacity(initial_capacity) {
+            Ok(value) -> {
+                bytes := value
+                bool finished = false
+                bool failed = false
+                FileReadError failure = FileReadError.LimitExceeded(
+                    limit
+                )
+                [4096]u8 storage = []
+
+                unsafe {
+                    while !finished and !failed {
+                        if bytes.length == limit {
+                            [1]u8 probe_storage = []
+                            []u8 probe = probe_storage
+                            match self.read(probe) {
+                                Ok(_) -> {
+                                    failure =
+                                        FileReadError.LimitExceeded(limit)
+                                    failed = true
+                                }
+                                Err(reason) -> {
+                                    bool end = match reason {
+                                        Io(io_reason) -> match io_reason {
+                                            EndOfInput -> true,
+                                            _ -> false,
+                                        },
+                                        _ -> false,
+                                    }
+                                    bool interrupted = match reason {
+                                        Io(io_reason) -> match io_reason {
+                                            Interrupted -> true,
+                                            _ -> false,
+                                        },
+                                        _ -> false,
+                                    }
+                                    if end {
+                                        finished = true
+                                    } else if !interrupted {
+                                        failure =
+                                            FileReadError.Read(reason)
+                                        failed = true
+                                    }
+                                }
+                            }
+                        } else {
+                            usize request = limit - bytes.length
+                            if request > 4096 { request = 4096 }
+                            []u8 all_storage = storage
+                            []u8 destination = all_storage[0..request]
+                            match self.read(destination) {
+                                Ok(count) -> {
+                                    for (0..count) |index| {
+                                        match bytes.tpush(
+                                            destination[index]
+                                        ) {
+                                            Ok(_) -> {}
+                                            Err(reason) -> {
+                                                failure =
+                                                    FileReadError.Allocation(
+                                                        reason
+                                                    )
+                                                failed = true
+                                                break
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(reason) -> {
+                                    bool end = match reason {
+                                        Io(io_reason) -> match io_reason {
+                                            EndOfInput -> true,
+                                            _ -> false,
+                                        },
+                                        _ -> false,
+                                    }
+                                    bool interrupted = match reason {
+                                        Io(io_reason) -> match io_reason {
+                                            Interrupted -> true,
+                                            _ -> false,
+                                        },
+                                        _ -> false,
+                                    }
+                                    if end {
+                                        finished = true
+                                    } else if !interrupted {
+                                        failure =
+                                            FileReadError.Read(reason)
+                                        failed = true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if failed {
+                    bytes.deinit()
+                    outcome = Result.Err<Vec<u8>, FileReadError>(
+                        failure
+                    )
+                } else {
+                    outcome = Result.Ok<Vec<u8>, FileReadError>(bytes)
+                }
+            }
+            Err(failure) -> {
+                outcome = Result.Err<Vec<u8>, FileReadError>(
+                    FileReadError.Allocation(failure)
+                )
+            }
+        }
+    }
+
+    -- Bounded read_to_end followed by strict UTF-8 validation.
+    flex f read_to_string(
+        self: *File,
+        limit: usize
+    ) = outcome: Result<String, FileReadError> {
+        unsafe {
+        match self.read_to_end(limit) {
+            Ok(value) -> {
+                bytes := value
+                match String.from_bytes(bytes.as_slice()) {
+                    Ok(text) -> {
+                        outcome = Result.Ok<String, FileReadError>(text)
+                    }
+                    Err(failure) -> {
+                        outcome = match failure {
+                            InvalidUtf8 -> Result.Err<
+                                String,
+                                FileReadError
+                            >(FileReadError.InvalidUtf8()),
+                            Allocation(reason) -> Result.Err<
+                                String,
+                                FileReadError
+                            >(FileReadError.Allocation(reason)),
+                            InvalidBoundary(_) -> Result.Err<
+                                String,
+                                FileReadError
+                            >(FileReadError.InvalidUtf8()),
+                        }
+                    }
+                }
+                bytes.deinit()
+            }
+            Err(failure) -> {
+                outcome = Result.Err<String, FileReadError>(failure)
+            }
+        }
+        }
+    }
+}
+
+-- Open path without implicit lexical normalization. PlatformPath conversion
+-- preserves the exact bytes, rejects embedded NUL, and allocates according to
+-- the caller's inferred realm.
+pub flex f open(
+    path: PathView,
+    options: OpenOptions
+) = outcome: Result<File, FsError> {
+    match PlatformPath.tfrom_view(path) {
+        Ok(value) -> {
+            platform := value
+            match open_flags(options) {
+                Ok(flags) -> {
+                    outcome = match platform_fd.open_at_raw(
+                        -100,
+                        platform.as_pointer(),
+                        flags,
+                        options.permissions
+                    ) {
+                        Value(descriptor) -> Result.Ok<File, FsError>(
+                            File(
+                                descriptor: descriptor,
+                                is_open: true
+                            )
+                        ),
+                        Failure(code) -> Result.Err<File, FsError>(
+                            fs_io_error(FsOperation.Open(), code)
+                        ),
+                    }
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<File, FsError>(failure)
+                }
+            }
+            platform.deinit()
+        }
+        Err(failure) -> {
+            outcome = Result.Err<File, FsError>(
+                path_error(FsOperation.Open(), failure)
+            )
+        }
+    }
+}
+pub method Reader for File {
+    -- Perform one partial read. A zero-byte backend result is EndOfInput.
+    flex f read(
+        self: *File,
+        bytes: []u8
+    ) = outcome: Result<usize, ReadError> {
+        unsafe {
+            if !self.is_open {
+                outcome = Result.Err<usize, ReadError>(
+                    ReadError.Io(IoError.InvalidInput())
+                )
+                return
+            }
+            if bytes.len == 0 {
+                outcome = Result.Ok<usize, ReadError>(0)
+                return
+            }
+            outcome = match platform_fd.read(self.descriptor, bytes) {
+                Value(count) -> {
+                    if count > bytes.len {
+                        Result.Err<usize, ReadError>(
+                            ReadError.InvalidCount(count)
+                        )
+                    } else if count == 0 {
+                        Result.Err<usize, ReadError>(
+                            ReadError.Io(IoError.EndOfInput())
+                        )
+                    } else {
+                        Result.Ok<usize, ReadError>(count)
+                    }
+                }
+                Failure(code) -> Result.Err<usize, ReadError>(
+                    ReadError.Io(io_error_from_linux(code))
+                ),
+            }
+        }
+    }
+}
+pub method Writer for File {
+    -- Perform one partial write.
+    flex f write(
+        self: *File,
+        bytes: []const u8
+    ) = outcome: Result<usize, WriteError> {
+        unsafe {
+            if !self.is_open {
+                outcome = Result.Err<usize, WriteError>(
+                    WriteError.Io(IoError.InvalidInput())
+                )
+                return
+            }
+            if bytes.len == 0 {
+                outcome = Result.Ok<usize, WriteError>(0)
+                return
+            }
+            outcome = match platform_fd.write(self.descriptor, bytes) {
+                Value(count) -> {
+                    if count > bytes.len {
+                        Result.Err<usize, WriteError>(
+                            WriteError.InvalidCount(count)
+                        )
+                    } else {
+                        Result.Ok<usize, WriteError>(count)
+                    }
+                }
+                Failure(code) -> Result.Err<usize, WriteError>(
+                    WriteError.Io(io_error_from_linux(code))
+                ),
+            }
+        }
+    }
+}
+pub method Seeker for File {
+    -- Reposition the descriptor and return its absolute byte offset.
+    flex f seek(
+        self: *File,
+        from: SeekFrom
+    ) = outcome: Result<usize, IoError> {
+        unsafe {
+            if !self.is_open {
+                outcome = Result.Err<usize, IoError>(
+                    IoError.InvalidInput()
+                )
+                return
+            }
+            i64 offset = 0
+            i32 origin = 0
+            bool valid = true
+            match from {
+                Start(value) -> {
+                    usize maximum = (~(0 as usize)) >> 1
+                    if value > maximum {
+                        valid = false
+                    } else {
+                        offset = value as i64
+                    }
+                    origin = 0
+                }
+                Current(value) -> {
+                    offset = value
+                    origin = 1
+                }
+                End(value) -> {
+                    offset = value
+                    origin = 2
+                }
+            }
+            if !valid {
+                outcome = Result.Err<usize, IoError>(
+                    IoError.InvalidInput()
+                )
+                return
+            }
+            outcome = match platform_fd.seek(
+                self.descriptor,
+                offset,
+                origin
+            ) {
+                Value(position) -> Result.Ok<usize, IoError>(position),
+                Failure(code) -> Result.Err<usize, IoError>(
+                    io_error_from_linux(code)
+                ),
+            }
+        }
+    }
+}
+
+-- File itself has no user-space staging buffer. Flush is therefore a no-op;
+-- sync_data/sync_all are the explicit persistence operations.
+pub method Flusher for File {
+    flex f flush(
+        self: *File
+    ) = outcome: Result<usize, WriteError> {
+        unsafe {
+            if self.is_open {
+                outcome = Result.Ok<usize, WriteError>(0)
+            } else {
+                outcome = Result.Err<usize, WriteError>(
+                    WriteError.Io(IoError.InvalidInput())
+                )
+            }
+        }
+    }
+}
+pub method Closer for File {
+    -- Relinquish ownership before issuing close. Linux close is never retried:
+    -- even if it reports failure, retrying could close a reused descriptor.
+    -- Calling close again on the cleared value succeeds with false.
+    flex f close(
+        self: *File
+    ) = outcome: Result<bool, IoError> {
+        unsafe {
+            if !self.is_open {
+                outcome = Result.Ok<bool, IoError>(false)
+                return
+            }
+            i32 descriptor = self.descriptor
+            self.descriptor = -1
+            self.is_open = false
+            outcome = match platform_fd.close(descriptor) {
+                Success -> Result.Ok<bool, IoError>(true),
+                Failure(code) -> Result.Err<bool, IoError>(
+                    io_error_from_linux(code)
+                ),
+            }
+        }
+    }
+}
+-- Read metadata by path without opening an owning File.
+pub flex f metadata(
+    path: PathView
+) = outcome: Result<Metadata, FsError> {
+    match PlatformPath.tfrom_view(path) {
+        Ok(value) -> {
+            platform := value
+            LinuxStat raw = platform_fs.stat_empty()
+            outcome = match platform_fs.metadata_at_raw(
+                -100,
+                platform.as_pointer(),
+                &raw,
+                0
+            ) {
+                Success -> Result.Ok<Metadata, FsError>(
+                    metadata_from_linux(raw)
+                ),
+                Failure(code) -> Result.Err<Metadata, FsError>(
+                    fs_io_error(FsOperation.Metadata(), code)
+                ),
+            }
+            platform.deinit()
+        }
+        Err(failure) -> {
+            outcome = Result.Err<Metadata, FsError>(
+                path_error(FsOperation.Metadata(), failure)
+            )
+        }
+    }
+}
+-- Create one directory. Parent directories are not created automatically.
+pub flex f create_directory(
+    path: PathView,
+    permissions: u32
+) = outcome: Result<bool, FsError> {
+    match PlatformPath.tfrom_view(path) {
+        Ok(value) -> {
+            platform := value
+            outcome = match platform_fs.create_directory_at_raw(
+                -100,
+                platform.as_pointer(),
+                permissions
+            ) {
+                Success -> Result.Ok<bool, FsError>(true),
+                Failure(code) -> Result.Err<bool, FsError>(
+                    fs_io_error(FsOperation.CreateDirectory(), code)
+                ),
+            }
+            platform.deinit()
+        }
+        Err(failure) -> {
+            outcome = Result.Err<bool, FsError>(
+                path_error(FsOperation.CreateDirectory(), failure)
+            )
+        }
+    }
+}
+-- Remove a non-directory entry.
+pub flex f remove_file(
+    path: PathView
+) = outcome: Result<bool, FsError> {
+    match PlatformPath.tfrom_view(path) {
+        Ok(value) -> {
+            platform := value
+            outcome = match platform_fs.remove_at_raw(
+                -100,
+                platform.as_pointer(),
+                0
+            ) {
+                Success -> Result.Ok<bool, FsError>(true),
+                Failure(code) -> Result.Err<bool, FsError>(
+                    fs_io_error(FsOperation.RemoveFile(), code)
+                ),
+            }
+            platform.deinit()
+        }
+        Err(failure) -> {
+            outcome = Result.Err<bool, FsError>(
+                path_error(FsOperation.RemoveFile(), failure)
+            )
+        }
+    }
+}
+-- Remove an empty directory.
+pub flex f remove_directory(
+    path: PathView
+) = outcome: Result<bool, FsError> {
+    match PlatformPath.tfrom_view(path) {
+        Ok(value) -> {
+            platform := value
+            outcome = match platform_fs.remove_at_raw(
+                -100,
+                platform.as_pointer(),
+                512
+            ) {
+                Success -> Result.Ok<bool, FsError>(true),
+                Failure(code) -> Result.Err<bool, FsError>(
+                    fs_io_error(FsOperation.RemoveDirectory(), code)
+                ),
+            }
+            platform.deinit()
+        }
+        Err(failure) -> {
+            outcome = Result.Err<bool, FsError>(
+                path_error(FsOperation.RemoveDirectory(), failure)
+            )
+        }
+    }
+}
+-- Rename one path to another without implicit normalization.
+pub flex f rename(
+    source: PathView,
+    destination: PathView
+) = outcome: Result<bool, FsError> {
+    match PlatformPath.tfrom_view(source) {
+        Ok(old_value) -> {
+            old_path := old_value
+            match PlatformPath.tfrom_view(destination) {
+                Ok(new_value) -> {
+                    new_path := new_value
+                    outcome = match platform_fs.rename_at_raw(
+                        -100,
+                        old_path.as_pointer(),
+                        -100,
+                        new_path.as_pointer()
+                    ) {
+                        Success -> Result.Ok<bool, FsError>(true),
+                        Failure(code) -> Result.Err<bool, FsError>(
+                            fs_io_error(FsOperation.Rename(), code)
+                        ),
+                    }
+                    new_path.deinit()
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<bool, FsError>(
+                        path_error(FsOperation.Rename(), failure)
+                    )
+                }
+            }
+            old_path.deinit()
+        }
+        Err(failure) -> {
+            outcome = Result.Err<bool, FsError>(
+                path_error(FsOperation.Rename(), failure)
+            )
+        }
+    }
+}

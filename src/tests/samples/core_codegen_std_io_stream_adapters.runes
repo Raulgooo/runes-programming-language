@@ -1,0 +1,30 @@
+use std.core.Result
+use std.io.BufferedReader
+use std.io.Stdin
+use std.io.Stdout
+use std.io.WriteError
+use std.io.read_line_from
+use std.io.write_all_to
+
+dynamic f main() {
+    input := Stdin.new()
+    output := Stdout.new()
+    [4]u8 read_storage = []
+    []u8 read_buffer = read_storage
+    buffered := BufferedReader<Stdin>.new(&input, read_buffer)
+    [32]u8 line_storage = []
+    []u8 line = line_storage
+
+    match read_line_from<BufferedReader<Stdin>>(&buffered, line) {
+        Ok(value) -> {
+            unsafe {
+                []const u8 bytes = const_slice(value.ptr, value.len)
+                match write_all_to<Stdout>(&output, bytes) {
+                    Ok(_) -> {}
+                    Err(_) -> {}
+                }
+            }
+        }
+        Err(_) -> {}
+    }
+}

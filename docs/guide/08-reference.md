@@ -164,9 +164,12 @@ The compiler runtime provides only machinery required by generated programs:
 - string/UTF-8 primitives;
 - generated-code descriptors and support.
 
-Collections, filesystem/path APIs, buffered input, networking, HTTP, scanners,
+Collections, filesystem APIs, networking, HTTP, scanners,
 formatting, threading, graphics, tensors, and ML belong in the standard library
-or separate packages. See the runtime requirements and stdlib roadmap.
+or separate packages rather than the compiler runtime. `Vec<T>`, `String`,
+formatting, parsing, generic buffered I/O, and lexical paths are already
+implemented library examples; the remaining items are tracked in the stdlib
+roadmap.
 
 ## Implemented feature inventory
 
@@ -192,11 +195,13 @@ library work.
 | Systems | extern functions/globals, selected ABI/layout attributes, volatile/MMIO, inline assembly |
 | Backend | readable C11 emission, GCC/Clang build driver, runtime linking |
 | Tooling | check/run/build/emit-C/project commands, Zed and VS Code highlighting, test/fuzz targets |
+| Standard library | `Option`, `Result`, bytes, borrowed text, `Vec<T>`, `String`, typed allocation, formatting, parsing, static readers/writers, buffering, bounded lines, safe hosted terminal I/O, lexical paths, owning hosted files |
 
-Not listed as implemented: general collections, owning strings, filesystem,
-safe input, networking, concurrency library APIs, graphics, numerical arrays,
-ML, async, or a remote package ecosystem. Those are roadmap work rather than
-hidden compiler builtins.
+Not listed as implemented: general collections beyond `Vec<T>` and `String`,
+filesystem backends beyond hosted Linux x86-64, directory iteration,
+canonicalization, networking, concurrency library APIs, graphics, numerical
+arrays, ML, async, or a remote package ecosystem. Those are roadmap work
+rather than hidden compiler builtins.
 
 ## Current limitations
 
@@ -231,9 +236,11 @@ Garbage collection:
 
 Standard library:
 
-- the `std` namespace and module root exist;
-- most general library modules are not implemented yet;
-- raw input currently uses unsafe FFI until safe stdlib wrappers are written.
+- the `std` namespace exports `core`, `bytes`, `text`, `allocation`, `vec`,
+  `string`, `format`, `parse`, `io`, `path`, and `os`;
+- safe standard-stream I/O currently targets hosted Linux x86-64;
+- files, networking, processes, time, and concurrency
+  remain future library milestones.
 
 ## Keywords
 

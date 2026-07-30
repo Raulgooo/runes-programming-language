@@ -1,0 +1,10 @@
+use std.string.String
+
+dynamic f main() {
+    value := String.from_str("A\0é界🌍")
+    value.push('!')
+    value.push_str(" tail")
+    value.truncate(10)
+    value.clear()
+    value.deinit()
+}

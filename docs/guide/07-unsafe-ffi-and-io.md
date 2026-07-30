@@ -217,9 +217,15 @@ scans for NUL, creates a borrowed view, and does not copy or extend the buffer's
 lifetime. Only `*u8` and pointers to fixed `u8` arrays may use this cast, and it
 requires `unsafe`.
 
-The future `read_line`/`input` APIs need an owning realm-aware `String`, bounded
-growth, buffering, UTF-8 validation, explicit EOF, and typed I/O errors. The
-complete work list is in the standard-library roadmap.
+The owning realm-aware `String`, UTF-8 validation, typed I/O errors, static
+`Reader`/`Writer` contracts, exact operations, caller-buffered streams, and
+bounded byte or UTF-8 line reads now exist. `read_line_from` returns a `str`
+borrowing caller storage; `read_line_bytes_from` skips UTF-8 validation.
+Owning hosted files now implement the same static I/O contracts through
+`std.fs.File`. Growing convenience input and owning socket adapters remain
+future work.
+See the [I/O reference](../reference/io.md) for EOF, capacity, flushing, and
+partial-progress rules.
 
 ## Runes strings versus C strings
 

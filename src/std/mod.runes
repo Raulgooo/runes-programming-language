@@ -4,5 +4,13 @@
 pub mod core
 pub mod os
 pub mod bytes
+pub mod text
 pub mod io
 pub mod allocation
+pub mod vec
+pub mod string
+pub mod format
+pub mod parse
+pub mod path
+#[cfg(all(target_os = "linux", target_arch = "x86_64", hosted))]
+pub mod fs

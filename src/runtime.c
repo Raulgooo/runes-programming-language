@@ -33,6 +33,7 @@ typedef struct RunesGcObject {
   size_t size;
   const RunesTypeDescriptor *sequence_element;
   size_t sequence_length;
+  size_t sequence_capacity;
   bool marked;
   bool transient;
   void *transient_owner;
@@ -125,6 +126,28 @@ static bool storage_forced_failure(void) {
   }
   runes_storage_error = RUNES_STORAGE_OUT_OF_MEMORY;
   return true;
+}
+
+static bool storage_validate_initialized(void *pointer, size_t expected_old,
+                                         size_t new_initialized,
+                                         size_t capacity,
+                                         const RunesTypeDescriptor *element) {
+  size_t ignored;
+  if (!pointer || expected_old > capacity || new_initialized > capacity ||
+      !storage_layout(capacity, element, &ignored)) {
+    runes_storage_error = RUNES_STORAGE_CAPACITY_OVERFLOW;
+    runes_storage_counters.rejected_transitions++;
+    return false;
+  }
+  return true;
+}
+
+static void storage_record_initialized(size_t expected_old,
+                                       size_t new_initialized) {
+  runes_storage_error = RUNES_STORAGE_OK;
+  runes_storage_counters.initialized_publications++;
+  if (new_initialized < expected_old)
+    runes_storage_counters.initialized_shrinks++;
 }
 
 static Arena *active_arena_root(void) {
@@ -488,6 +511,38 @@ void *runes_storage_try_resize_regional(
   return replacement;
 }
 
+bool runes_storage_set_initialized_dynamic(
+    void *pointer, size_t expected_old, size_t new_initialized,
+    size_t capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column) {
+  (void)line;
+  (void)column;
+  if (!storage_validate_initialized(pointer, expected_old, new_initialized,
+                                    capacity, element))
+    return false;
+  storage_record_initialized(expected_old, new_initialized);
+  return true;
+}
+
+bool runes_storage_set_initialized_regional(
+    void *pointer, size_t expected_old, size_t new_initialized,
+    size_t capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column) {
+  (void)line;
+  (void)column;
+  if (!storage_validate_initialized(pointer, expected_old, new_initialized,
+                                    capacity, element))
+    return false;
+  if (!runes_active_arena ||
+      !arena_owns_direct(runes_active_arena, pointer)) {
+    runes_storage_error = RUNES_STORAGE_OWNER_UNAVAILABLE;
+    runes_storage_counters.rejected_transitions++;
+    return false;
+  }
+  storage_record_initialized(expected_old, new_initialized);
+  return true;
+}
+
 void runes_storage_release_dynamic(void *pointer) {
   if (pointer) {
     free(pointer);
@@ -508,12 +563,46 @@ void runes_storage_release_regional(void *pointer, unsigned line,
 }
 
 void runes_storage_release_gc(void *pointer) {
-  (void)pointer;
+  if (!pointer) {
+    runes_storage_error = RUNES_STORAGE_OK;
+    return;
+  }
+  RunesGcObject *object = gc_find_object(pointer);
+  if (!object || object->payload != pointer) {
+    runes_storage_error = RUNES_STORAGE_OWNER_UNAVAILABLE;
+    runes_storage_counters.rejected_transitions++;
+    return;
+  }
+  if (object->sequence_element) {
+    if (object->sequence_length)
+      runes_storage_counters.initialized_shrinks++;
+    object->sequence_length = 0;
+  }
   runes_storage_error = RUNES_STORAGE_OK;
 }
 
 RunesStorageError runes_storage_last_error(void) {
   return runes_storage_error;
+}
+
+void runes_storage_fail(RunesStorageError error, unsigned line,
+                        unsigned column) {
+  const char *message = "storage operation failed";
+  switch (error) {
+  case RUNES_STORAGE_OUT_OF_MEMORY:
+    message = "storage operation failed: out of memory";
+    break;
+  case RUNES_STORAGE_CAPACITY_OVERFLOW:
+    message = "storage operation failed: capacity overflow";
+    break;
+  case RUNES_STORAGE_OWNER_UNAVAILABLE:
+    message = "storage operation failed: owner unavailable";
+    break;
+  case RUNES_STORAGE_OK:
+    message = "storage operation failed without an error";
+    break;
+  }
+  runes_runtime_fail(message, line, column);
 }
 
 RunesStorageStats runes_storage_stats(void) {
@@ -645,7 +734,8 @@ void runes_gc_collect(void) {
 
 static void *gc_allocate(size_t size, size_t align,
                          const RunesTypeDescriptor *descriptor,
-                         size_t initialized_sequence, bool fallible,
+                         size_t initialized_sequence,
+                         size_t sequence_capacity, bool fallible,
                          unsigned line, unsigned column) {
   gc_claim_owner(line, column);
   if (!is_power_of_two(align)) {
@@ -716,6 +806,12 @@ static void *gc_allocate(size_t size, size_t align,
                                    : (descriptor_sequence
                                           ? size / descriptor->size
                                           : 0),
+                           .sequence_capacity =
+                               explicit_sequence
+                                   ? sequence_capacity
+                                   : (descriptor_sequence
+                                          ? size / descriptor->size
+                                          : 0),
                            .marked = false,
                            .transient = false,
                            .transient_owner = NULL};
@@ -733,7 +829,8 @@ static void *gc_allocate(size_t size, size_t align,
 void *runes_gc_alloc(size_t size, size_t align,
                      const RunesTypeDescriptor *descriptor, unsigned line,
                      unsigned column) {
-  return gc_allocate(size, align, descriptor, SIZE_MAX, false, line, column);
+  return gc_allocate(size, align, descriptor, SIZE_MAX, SIZE_MAX, false, line,
+                     column);
 }
 
 void *runes_storage_try_allocate_gc(
@@ -742,7 +839,8 @@ void *runes_storage_try_allocate_gc(
   size_t bytes;
   if (!storage_layout(count, element, &bytes))
     return NULL;
-  return gc_allocate(bytes, element->align, element, 0, true, line, column);
+  return gc_allocate(bytes, element->align, element, 0, count, true, line,
+                     column);
 }
 
 void *runes_storage_try_resize_gc(
@@ -760,20 +858,48 @@ void *runes_storage_try_resize_gc(
     return NULL;
   (void)old_bytes;
   RunesGcObject *old_object = pointer ? gc_find_object(pointer) : NULL;
-  if (pointer && (!old_object || old_object->payload != pointer)) {
+  if (pointer &&
+      (!old_object || old_object->payload != pointer ||
+       old_object->sequence_element != element ||
+       old_object->sequence_capacity != old_capacity ||
+       old_object->sequence_length != initialized)) {
     runes_storage_error = RUNES_STORAGE_OWNER_UNAVAILABLE;
+    runes_storage_counters.rejected_transitions++;
     return NULL;
   }
   runes_gc_no_collect_depth++;
   void *replacement =
-      gc_allocate(new_bytes, element->align, element, initialized, true, line,
-                  column);
+      gc_allocate(new_bytes, element->align, element, initialized,
+                  new_capacity, true, line, column);
   runes_gc_no_collect_depth--;
   if (!replacement)
     return NULL;
   if (pointer && initialized_bytes)
     memcpy(replacement, pointer, initialized_bytes);
   return replacement;
+}
+
+bool runes_storage_set_initialized_gc(
+    void *pointer, size_t expected_old, size_t new_initialized,
+    size_t capacity, const RunesTypeDescriptor *element, unsigned line,
+    unsigned column) {
+  (void)line;
+  (void)column;
+  if (!storage_validate_initialized(pointer, expected_old, new_initialized,
+                                    capacity, element))
+    return false;
+  RunesGcObject *object = gc_find_object(pointer);
+  if (!object || object->payload != pointer ||
+      object->sequence_element != element ||
+      object->sequence_capacity != capacity ||
+      object->sequence_length != expected_old) {
+    runes_storage_error = RUNES_STORAGE_OWNER_UNAVAILABLE;
+    runes_storage_counters.rejected_transitions++;
+    return false;
+  }
+  object->sequence_length = new_initialized;
+  storage_record_initialized(expected_old, new_initialized);
+  return true;
 }
 
 RunesGcStats runes_gc_stats(void) {
@@ -1081,6 +1207,10 @@ uint64_t runes_str_hash(RunesStr value) {
     hash *= UINT64_C(1099511628211);
   }
   return hash;
+}
+
+RunesStr runes_str_view(const uint8_t *data, size_t length) {
+  return (RunesStr){.ptr = data, .len = length};
 }
 
 RunesStr runes_str_from_c(const char *value) {

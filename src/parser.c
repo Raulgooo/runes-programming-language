@@ -2199,6 +2199,34 @@ static bool is_generic_call_lookahead(Parser *p) {
   return type_lookahead_current(&lookahead).kind == TOKEN_LPAREN;
 }
 
+static bool is_associated_owner_lookahead(Parser *p) {
+  if (!check(p, TOKEN_LT))
+    return false;
+  TypeLookahead lookahead = {
+      .lexer = *p->lexer,
+      .buffered = {p->current, p->next, p->next2},
+      .position = 0,
+  };
+  type_lookahead_advance(&lookahead);
+  do {
+    if (!scan_type_lookahead(&lookahead, 0))
+      return false;
+    Token token = type_lookahead_current(&lookahead);
+    if (token.kind != TOKEN_COMMA)
+      break;
+    type_lookahead_advance(&lookahead);
+  } while (true);
+  if (!type_lookahead_consume_gt(&lookahead) ||
+      type_lookahead_current(&lookahead).kind != TOKEN_DOT)
+    return false;
+  type_lookahead_advance(&lookahead);
+  if (type_lookahead_current(&lookahead).kind != TOKEN_IDENTIFIER)
+    return false;
+  type_lookahead_advance(&lookahead);
+  Token next = type_lookahead_current(&lookahead);
+  return next.kind == TOKEN_LPAREN || next.kind == TOKEN_LT;
+}
+
 static bool is_var_decl_lookahead(Parser *p) {
   if (check(p, TOKEN_CONST) || check(p, TOKEN_VOLATILE))
     return true;
@@ -2736,7 +2764,27 @@ static AstNode *parse_postfix(Parser *p) {
     return NULL;
 
   while (true) {
-    if (is_generic_call_lookahead(p)) {
+    if (is_associated_owner_lookahead(p) &&
+        (left->kind == AST_IDENTIFIER ||
+         (left->kind == AST_FIELD_EXPR &&
+          left->as.field.target &&
+          left->as.field.target->kind == AST_IDENTIFIER))) {
+      AstNode *type_args = parse_type_argument_list(p);
+      if (!type_args)
+        return NULL;
+      AstNode *owner = NULL;
+      if (left->kind == AST_IDENTIFIER) {
+        owner = ast_new_type_named(p->arena, left->as.identifier.name);
+      } else {
+        owner = ast_new_type_qualified(
+            p->arena, left->as.field.target->as.identifier.name,
+            left->as.field.field);
+      }
+      owner->as.type_expr.type_args = type_args;
+      owner->line = left->line;
+      owner->col = left->col;
+      left = owner;
+    } else if (is_generic_call_lookahead(p)) {
       AstNode *type_args = parse_type_argument_list(p);
       if (!type_args)
         return NULL;

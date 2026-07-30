@@ -1,4 +1,4 @@
+-- EXPECT FAIL: defer is only allowed inside a function
 defer print("invalid")
 
 f main() {}
--- expect-error: defer is only allowed inside a function

@@ -1,0 +1,19 @@
+use std.core.Result
+use std.format.FormatError
+use std.format.IntegerFormat
+use std.format.TextFormat
+use std.format.write_debug_str
+use std.format.write_i64
+
+f main() {
+    [64]u8 bytes = []
+    []u8 output = bytes
+    match write_i64(output, -42, IntegerFormat.decimal()) {
+        Ok(_) -> {}
+        Err(_) -> {}
+    }
+    match write_debug_str(output, "é\n", TextFormat.standard()) {
+        Ok(_) -> {}
+        Err(_) -> {}
+    }
+}

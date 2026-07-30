@@ -1,0 +1,10 @@
+-- EXPECT FAIL: storage intrinsic is not available in a stack function
+
+use std.string.String
+
+stack f invalid() {
+    value := String.new()
+    value.deinit()
+}
+
+f main() {}

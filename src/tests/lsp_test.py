@@ -38,6 +38,10 @@ assert initialized["result"]["capabilities"]["documentSymbolProvider"]
 
 uri = "file:///tmp/lsp-test.runes"
 source = """type Point = { x: i32, y: i32 }
+method Point {
+    f origin() = result: Point { result = Point(x: 0, y: 0) }
+    f sum(self) = result: i32 { result = self.x + self.y }
+}
 dynamic f answer(value: i32) = result: i32 {
     when realm dynamic { result = value } else { result = 0 }
 }
@@ -77,11 +81,15 @@ send(
 symbols = receive(server)["result"]
 assert [symbol["name"] for symbol in symbols] == [
     "Point",
+    "origin",
+    "sum",
     "answer",
     "selected",
     "selected",
 ]
 assert [child["name"] for child in symbols[0]["children"]] == ["x", "y"]
+assert symbols[1]["kind"] == 12
+assert symbols[2]["kind"] == 6
 
 send(
     server,
@@ -91,7 +99,7 @@ send(
         "method": "textDocument/hover",
         "params": {
             "textDocument": {"uri": uri},
-            "position": {"line": 1, "character": 11},
+            "position": {"line": 5, "character": 11},
         },
     },
 )
@@ -105,7 +113,7 @@ send(
         "method": "textDocument/definition",
         "params": {
             "textDocument": {"uri": uri},
-            "position": {"line": 1, "character": 11},
+            "position": {"line": 5, "character": 11},
         },
     },
 )

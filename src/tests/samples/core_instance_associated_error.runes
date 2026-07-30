@@ -1,0 +1,15 @@
+-- EXPECT FAIL: Field or method 'new' not found in struct 'Box'
+type Box = {
+    value: i32
+}
+
+method Box {
+    f new(value: i32) = result: Box {
+        result = Box(value: value)
+    }
+}
+
+f main() {
+    Box value = Box.new(1)
+    print(value.new(2).value)
+}

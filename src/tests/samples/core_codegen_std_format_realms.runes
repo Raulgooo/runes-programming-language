@@ -1,0 +1,99 @@
+use std.core.Result
+use std.format.FormatError
+use std.format.IntegerFormat
+use std.format.TextFormat
+use std.format.append_debug_str
+use std.format.append_str
+use std.format.append_u64
+use std.format.write_str_to
+use std.format.write_u64_to
+use std.io.StringWriter
+use std.string.String
+
+regional f nested_owner_rejected(value: *String) = result: bool {
+    unsafe {
+        result = match append_str(
+            value,
+            "x",
+            TextFormat.standard()
+        ) {
+            Ok(_) -> false,
+            Err(failure) -> match failure {
+                Allocation(owner) -> match owner {
+                    OwnerUnavailable -> value.as_str() == "outer",
+                    _ -> false,
+                },
+                _ -> false,
+            },
+        }
+    }
+}
+
+flex f fill(value: *String) = result: bool {
+    result = match append_u64(
+        value,
+        42,
+        IntegerFormat.decimal()
+    ) {
+        Ok(_) -> true,
+        Err(_) -> false,
+    }
+    match append_str(value, "é", TextFormat.standard()) {
+        Ok(_) -> {}
+        Err(_) -> { result = false }
+    }
+    match append_debug_str(value, "\n", TextFormat.standard()) {
+        Ok(_) -> { result = result }
+        Err(_) -> { result = false }
+    }
+    writer := StringWriter(target: value)
+    match write_str_to<StringWriter>(
+        &writer,
+        "/",
+        TextFormat.standard()
+    ) {
+        Ok(_) -> { result = result }
+        Err(_) -> { result = false }
+    }
+    match write_u64_to<StringWriter>(
+        &writer,
+        7,
+        IntegerFormat.decimal()
+    ) {
+        Ok(_) -> { result = result }
+        Err(_) -> { result = false }
+    }
+    unsafe {
+        if value.as_str() != "realm:42é\"\\n\"/7" {
+            result = false
+        }
+    }
+}
+
+dynamic f dynamic_case() = result: bool {
+    value := String.from_str("realm:")
+    result = fill(&value)
+    value.deinit()
+}
+
+regional f regional_case() = result: bool {
+    value := String.from_str("realm:")
+    result = fill(&value)
+    value.deinit()
+    outer := String.with_capacity(16)
+    outer.push_str("outer")
+    if !nested_owner_rejected(&outer) {
+        result = false
+    }
+    outer.deinit()
+}
+
+gc f gc_case() = result: bool {
+    value := String.from_str("realm:")
+    result = fill(&value)
+    value.deinit()
+}
+
+f main() {
+    print(dynamic_case(), " ", regional_case(), " ", gc_case())
+}

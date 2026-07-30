@@ -1,0 +1,25 @@
+use std.core.Result
+use std.parse.IntegerParse
+use std.parse.parse_bool
+use std.parse.parse_char
+use std.parse.parse_i64_with
+use std.parse.parse_u64_with
+
+f main() {
+    match parse_i64_with("-0x8000000000000000", IntegerParse.auto()) {
+        Ok(_) -> {}
+        Err(_) -> {}
+    }
+    match parse_u64_with("+0b101010", IntegerParse.auto()) {
+        Ok(_) -> {}
+        Err(_) -> {}
+    }
+    match parse_bool("false") {
+        Ok(_) -> {}
+        Err(_) -> {}
+    }
+    match parse_char("界") {
+        Ok(_) -> {}
+        Err(_) -> {}
+    }
+}

@@ -158,7 +158,9 @@ reference to a local stack value is invalid.
 **Standard library**
 
 Reusable Runes modules for text, collections, files, networking, and other
-common tasks. The `std` namespace exists, but most APIs are still planned.
+common tasks. The implemented foundation includes bytes, borrowed/owning text,
+realm-aware vectors, typed allocation, formatting, parsing, writers, and
+hosted terminal I/O; broader application modules remain planned.
 
 **Trap**
 

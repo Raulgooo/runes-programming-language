@@ -155,7 +155,7 @@ pub f duplicate_to(
 -- duration of the call. A safe path/string adapter belongs above this layer.
 pub f open_at_raw(
     directory: i32,
-    path: *u8,
+    path: *const u8,
     flags: i32,
     mode: u32
 ) = outcome: LinuxResult<i32> {

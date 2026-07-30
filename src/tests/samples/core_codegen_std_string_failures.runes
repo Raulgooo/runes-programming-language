@@ -1,0 +1,114 @@
+use std.core.Result
+use std.string.String
+
+#[safe]
+extern f runes_storage_debug_fail_after(count: usize)
+
+#[safe]
+extern f runes_storage_debug_clear_failure()
+
+dynamic f construction_failure() = result: bool {
+    runes_storage_debug_fail_after(0)
+    result = match String.tnew() {
+        Ok(unexpected) -> {
+            unexpected.deinit()
+            false
+        }
+        Err(_) -> true,
+    }
+    runes_storage_debug_clear_failure()
+}
+
+dynamic f growth_failure() = result: bool {
+    value := String.from_str("a")
+    runes_storage_debug_fail_after(0)
+    result = match value.tpush('x') {
+        Ok(_) -> false,
+        Err(_) -> value.as_str() == "a",
+    }
+    runes_storage_debug_clear_failure()
+    if value.byte_len() != 1 {
+        result = false
+    }
+    value.deinit()
+}
+
+dynamic f validated_copy_failure() = result: bool {
+    [1]u8 valid = [0x61]
+    runes_storage_debug_fail_after(0)
+    unsafe {
+        result = match String.from_bytes(const_slice(&valid, 1)) {
+            Ok(unexpected) -> {
+                unexpected.deinit()
+                false
+            }
+            Err(failure) -> match failure {
+                Allocation(_) -> true,
+                _ -> false,
+            },
+        }
+    }
+    runes_storage_debug_clear_failure()
+}
+
+dynamic f malformed_matrix() = result: bool {
+    result = true
+    [2]u8 overlong = [0xc0, 0x80]
+    [3]u8 surrogate = [0xed, 0xa0, 0x80]
+    [3]u8 truncated = [0xe2, 0x82, 0x00]
+    [1]u8 continuation = [0x80]
+    [8]u8 valid = [0x41, 0x00, 0xc3, 0xa9, 0xf0, 0x9f, 0x8c, 0x8d]
+    unsafe {
+        match String.from_bytes(const_slice(&overlong, 2)) {
+            Ok(unexpected) -> {
+                unexpected.deinit()
+                result = false
+            }
+            Err(_) -> {}
+        }
+        match String.from_bytes(const_slice(&surrogate, 3)) {
+            Ok(unexpected) -> {
+                unexpected.deinit()
+                result = false
+            }
+            Err(_) -> {}
+        }
+        match String.from_bytes(const_slice(&truncated, 2)) {
+            Ok(unexpected) -> {
+                unexpected.deinit()
+                result = false
+            }
+            Err(_) -> {}
+        }
+        match String.from_bytes(const_slice(&continuation, 1)) {
+            Ok(unexpected) -> {
+                unexpected.deinit()
+                result = false
+            }
+            Err(_) -> {}
+        }
+        match String.from_bytes(const_slice(&valid, 8)) {
+            Ok(value) -> {
+                if value.as_str() != "A\0é🌍" {
+                    result = false
+                }
+                value.deinit()
+            }
+            Err(_) -> {
+                result = false
+            }
+        }
+    }
+}
+
+f main() {
+    print(
+        construction_failure(),
+        " ",
+        growth_failure(),
+        " ",
+        validated_copy_failure(),
+        " ",
+        malformed_matrix()
+    )
+}

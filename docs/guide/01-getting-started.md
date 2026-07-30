@@ -135,8 +135,11 @@ a digit. Keywords such as `f`, `type`, and `if` cannot be identifiers.
 
 Normal `runec` commands automatically load `src/std/prelude.runes`. The prelude
 declares compiler/runtime functions such as allocation and string primitives.
-It is not a general standard library and does not add collections, files, or
-networking.
+The prelude itself is not the general standard library: library modules are
+loaded through explicit `std.*` imports. `Vec<T>`, `String`, formatting,
+parsing, readers/writers, and buffering exist today. Purely lexical borrowed
+and owning paths are available through `std.path`; hosted Linux x86-64
+provides owning files through `std.fs`. Networking is not implemented.
 
 Freestanding or kernel code can disable it:
 

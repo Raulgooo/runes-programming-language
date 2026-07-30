@@ -1,0 +1,9 @@
+-- EXPECT RUNTIME FAIL: string byte range splits a UTF-8 scalar
+
+use std.string.String
+
+dynamic f main() {
+    value := String.from_str("é")
+    value.truncate(1)
+    value.deinit()
+}

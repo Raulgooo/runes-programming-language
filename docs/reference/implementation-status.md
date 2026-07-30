@@ -59,11 +59,56 @@ on every target.
   their owner type arguments. Owner-sensitive calls continue to select the
   dynamic, regional, or GC implementation after the value passes through an
   automatically specialized ordinary function.
-- Typed fallible array allocation, resize, and release are implemented through
-  `std.allocation`. Lowering is static, GC sequences receive an explicit
-  initialized count, failed growth preserves the old allocation, and nested
-  regional owner mismatches are rejected by the runtime. A public `Vec<T>` is
-  still library work.
+- Paired ordinary and recoverable `t` array allocation, resize, and release
+  are implemented through `std.allocation`, together with initialized
+  `allocate<T>(value)`/`tallocate<T>(value)` and initialized-prefix
+  publication. Lowering is static, GC sequences store an
+  explicit descriptor, capacity, and initialized count, stale metadata updates
+  are rejected, failed growth preserves the old allocation, and nested
+  regional owner mismatches are rejected. Pointer-bearing in-place push,
+  shrink, release, and forced-collection proofs pass.
+- Public `std.vec.Vec<T>` is implemented over that storage contract for
+  dynamic, regional, and GC owners. Ordinary construction and mutation are
+  concise and terminate through the portable storage-failure policy;
+  recoverable `tnew`, `tpush`, `treserve`, and related `t` forms return
+  `AllocationError`. It also provides access, slices, pop, truncate, clear,
+  and idempotent same-value `deinit`. Stack construction is rejected.
+- Public `std.string.String` is implemented as a realm-owned `Vec<u8>`
+  wrapper. Validated construction, transactional scalar/text append,
+  boundary-checked truncation, read-only views, explicit deinitialization,
+  nested regional rejection, and GC/dynamic cleanup are tested. Lossy UTF-8
+  conversion and mutable raw-byte access are intentionally absent.
+- Public `std.format` covers every integer width, bool, char, str, and
+  escaped/debug text through shared cursors and fixed-buffer, owning-String,
+  and statically dispatched Writer destinations. Partial/interrupted writes,
+  invalid counts, zero progress, invalid UTF-8 chunks, and realm-derived
+  String writers are tested. Float formatting is a later sub-gate and pointer
+  formatting is intentionally excluded.
+- Public `std.parse` strictly and allocation-freely parses every integer
+  width, `usize`, lowercase booleans, and exactly one Unicode scalar. Decimal,
+  explicit binary/octal/hexadecimal, automatic prefixes, exact byte-offset
+  failures, extrema, differential vectors, malformed UTF-8, and all execution
+  realms are tested. Float and partial/prefix parsing remain future contracts.
+- Public `std.io` provides statically dispatched `Reader`, `Writer`,
+  `Flusher`, `Seeker`, and `Closer` capability contracts; exact reads and
+  complete writes; slice, fixed-buffer, String, and hosted standard-stream
+  adapters; borrowed buffered readers/writers; bounded byte lines; and
+  UTF-8-validating text lines. Partial progress, interruption, impossible
+  counts, zero progress, EOF positions, cross-buffer delimiters, overlong and
+  malformed lines, failure-preserving flush retry, Linux pipes, realm
+  specialization, zero allocation, and sanitizers are tested. Owning file and
+  socket close implementations remain later resource milestones.
+- Match-pattern payload bindings feed their concrete generic and hidden owner
+  types into monomorphization. Shared generic helpers taking imported
+  realm-family owners such as `*Vec<T>` specialize correctly for dynamic,
+  regional, and GC values produced by ordinary constructors or constructor
+  `Result` matches.
+- No-`self` functions in inherent method blocks are associated methods.
+  Type-qualified calls support generic owners, method generics, imported
+  aliases, argument-based owner inference, realm overloads and blacklists, and
+  compile-time `flex` specialization. `std.vec` exposes
+  `Vec<T>.new()`/`Vec<T>.tnew()` and the corresponding capacity constructors;
+  the former module functions remain compatibility wrappers.
 - Realm-specific interface contracts remain planned work.
 - Erased flex function values retain the earlier runtime behavior; direct-call
   specialization does not yet define a realm-polymorphic function-value ABI.
@@ -81,6 +126,9 @@ on every target.
   visibility.
 - `use` is private and cannot re-export.
 - Grouped imports and wildcard imports are unavailable.
+- A public concrete type declared in one module can specialize a generic
+  imported from another module. A private nested-module concrete type cannot
+  yet cross that monomorphization boundary; root private types are unaffected.
 
 These are implementation gaps, not recommendations for long-term API design.
 
@@ -117,8 +165,19 @@ library surface is:
   foundational errors;
 - `std.bytes`: allocation-free `fill`, `copy`, `equal`, `find`, and
   `starts_with`;
-- `std.io`: allocation-free safe stdin/stdout/stderr operations with portable
-  `Result<usize, IoError>` signatures on hosted Linux x86-64;
+- `std.text`: allocation-free borrowed UTF-8 observation, exact search,
+  checked substring views, explicit ASCII trimming, split-once, and scalar
+  traversal;
+- `std.io`: static reader/writer capability contracts, exact operations,
+  borrowed buffering, bounded byte/UTF-8 line input, memory/String adapters,
+  and safe standard streams on hosted Linux x86-64;
+- `std.path`: borrowed and realm-owning arbitrary-byte lexical paths,
+  component traversal, filename/parent views, explicit normalization/join,
+  and checked exact-byte NUL-terminated platform conversion;
+- `std.allocation`: initialized typed allocation and container storage
+  operations;
+- `std.vec`: realm-aware growable `Vec<T>` with explicit deinitialization;
+- `std.string`: realm-aware owning valid UTF-8 text over `Vec<u8>`;
 - `std.os.linux`: raw syscall, errno-preserving result, descriptor, and virtual
   memory operations for Linux x86-64.
 
@@ -131,16 +190,20 @@ yet exist.
 
 Not currently supplied as complete safe library APIs:
 
-- owning/growable strings and collections;
-- filesystem and path operations;
-- buffered input/output and formatting;
+- owning collections beyond `Vec<T>` and `String`; borrowed text is
+  implemented under `std.text`;
+- filesystem backends beyond hosted Linux x86-64, directory iteration, and
+  canonicalization (safe owning files and basic operations are implemented);
+- owning socket I/O adapters (owning files, generic buffering, and formatting
+  are implemented);
 - networking, HTTP, and protocol helpers;
 - threads, synchronization, or async runtime;
 - graphics, numerical arrays, tensors, or ML APIs;
 - package registry or remote package client.
 
-The Linux layer encapsulates its syscall FFI, but its mapping and raw-path
-operations still require caller-maintained pointer and lifetime invariants.
+The Linux layer encapsulates its syscall FFI. Raw descriptor and mapping
+operations still require caller-maintained resource, pointer, and lifetime
+invariants; `PlatformPath` now supplies checked NUL-terminated path storage.
 
 ## Unsupported language features
 

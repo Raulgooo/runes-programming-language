@@ -1,0 +1,208 @@
+use std.core.Option
+use std.text.ScalarCursor
+use std.text.byte_len
+use std.text.contains
+use std.text.ends_with
+use std.text.find
+use std.text.is_empty
+use std.text.is_scalar_boundary
+use std.text.is_valid_utf8
+use std.text.scalar_count
+use std.text.scalars
+use std.text.substring
+use std.text.split_once
+use std.text.starts_with
+use std.text.trim_ascii
+use std.text.trim_ascii_end
+use std.text.trim_ascii_start
+
+f main() {
+    str value = " héllo\0世界 \n"
+
+    bool observations = !is_empty(value)
+    if byte_len(value) != 16 {
+        observations = false
+    }
+    if !is_valid_utf8(value) {
+        observations = false
+    }
+    if scalar_count(value) != 11 {
+        observations = false
+    }
+
+    bool boundaries = is_scalar_boundary(value, 0)
+    if !is_scalar_boundary(value, 2) {
+        boundaries = false
+    }
+    if is_scalar_boundary(value, 3) {
+        boundaries = false
+    }
+    if !is_scalar_boundary(value, value.len) {
+        boundaries = false
+    }
+
+    bool search = starts_with(value, " h")
+    if !ends_with(value, " \n") {
+        search = false
+    }
+    if !contains(value, "llo\0世") {
+        search = false
+    }
+    match find(value, "世界") {
+        Some(position) -> {
+            if position != 8 {
+                search = false
+            }
+        }
+        None -> {
+            search = false
+        }
+    }
+    match find(value, "") {
+        Some(position) -> {
+            if position != 0 {
+                search = false
+            }
+        }
+        None -> {
+            search = false
+        }
+    }
+
+    bool slicing = true
+    match substring(value, 1, 8) {
+        Some(part) -> {
+            if part != "héllo\0" {
+                slicing = false
+            }
+        }
+        None -> {
+            slicing = false
+        }
+    }
+    match substring(value, 3, 8) {
+        Some(_) -> {
+            slicing = false
+        }
+        None -> {
+            slicing = slicing
+        }
+    }
+    match substring(value, 9, 8) {
+        Some(_) -> {
+            slicing = false
+        }
+        None -> {
+            slicing = slicing
+        }
+    }
+
+    bool trimming = trim_ascii(value) == "héllo\0世界"
+    if trim_ascii_start(" \tvalue ") != "value " {
+        trimming = false
+    }
+    if trim_ascii_end(" value\r\n") != " value" {
+        trimming = false
+    }
+    if trim_ascii("\t\n\r ") != "" {
+        trimming = false
+    }
+    if trim_ascii("\u00a0value\u00a0") != "\u00a0value\u00a0" {
+        trimming = false
+    }
+
+    bool splitting = true
+    match split_once("alpha::beta::gamma", "::") {
+        Some(parts) -> {
+            if parts.before != "alpha" {
+                splitting = false
+            }
+            if parts.after != "beta::gamma" {
+                splitting = false
+            }
+        }
+        None -> {
+            splitting = false
+        }
+    }
+    match split_once("abc", "") {
+        Some(parts) -> {
+            if parts.before != "" {
+                splitting = false
+            }
+            if parts.after != "abc" {
+                splitting = false
+            }
+        }
+        None -> {
+            splitting = false
+        }
+    }
+
+    bool cursor_ok = true
+    ScalarCursor cursor = scalars("h\u00e9世界")
+    match cursor.next() {
+        Some(scalar) -> {
+            if scalar != 'h' {
+                cursor_ok = false
+            }
+        }
+        None -> {
+            cursor_ok = false
+        }
+    }
+    if cursor.position() != 1 {
+        cursor_ok = false
+    }
+    match cursor.next() {
+        Some(scalar) -> {
+            if scalar != '\u00e9' {
+                cursor_ok = false
+            }
+        }
+        None -> {
+            cursor_ok = false
+        }
+    }
+    match cursor.next() {
+        Some(scalar) -> {
+            if scalar != '世' {
+                cursor_ok = false
+            }
+        }
+        None -> {
+            cursor_ok = false
+        }
+    }
+    match cursor.next() {
+        Some(scalar) -> {
+            if scalar != '界' {
+                cursor_ok = false
+            }
+        }
+        None -> {
+            cursor_ok = false
+        }
+    }
+    if !cursor.is_done() {
+        cursor_ok = false
+    }
+    match cursor.next() {
+        Some(_) -> {
+            cursor_ok = false
+        }
+        None -> {
+            cursor_ok = cursor_ok
+        }
+    }
+
+    print(
+        observations, " ",
+        boundaries, " ",
+        search, " ",
+        slicing, " ",
+        trimming, " ",
+        splitting, " ",
+        cursor_ok
+    )
+}

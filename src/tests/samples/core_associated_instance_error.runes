@@ -1,0 +1,14 @@
+-- EXPECT FAIL: Associated method 'get' not found on type 'Box'
+type Box = {
+    value: i32
+}
+
+method Box {
+    f get(self) = result: i32 {
+        result = self.value
+    }
+}
+
+f main() {
+    print(Box.get())
+}

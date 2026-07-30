@@ -23,8 +23,12 @@ gc f run_userspace() {
 
 **Status:** Experimental C bootstrap compiler. The v0.1 language core and its
 compiler-required runtime are implemented and under hardening. The `std`
-project structure exists, but the general standard library is not implemented.
-Not production-ready or self-hosted.
+application foundation includes bytes, borrowed/owning UTF-8 text, realm-aware
+vectors, typed allocation, formatting, parsing, static readers/writers,
+explicit buffering, bounded line input, safe hosted terminal I/O, and
+byte-preserving lexical paths, plus owning files and basic filesystem
+operations on hosted Linux x86-64. Networking, concurrency, and broader
+application libraries remain unfinished. Not production-ready or self-hosted.
 
 ---
 
@@ -32,7 +36,12 @@ Not production-ready or self-hosted.
 
 Runes sits between C and Rust. You get algebraic types, pattern matching, and a proper error model. You also get explicit memory strategies per function — no borrow checker, no GC tax unless you ask for it.
 
-The core bet: **memory strategy belongs to the function, not the data**. You pick stack, arena, heap, or GC at the callsite. The compiler checks the implemented nesting rules and supports low-level constructs such as raw pointers and inline assembly in the frontend.
+The core bet: **memory strategy begins at the function boundary instead of
+being passed manually through ordinary calls**. You choose stack, regional,
+dynamic, or GC execution; the compiler specializes realm-polymorphic code, and
+owning values retain their inferred persistent owner realm. The compiler also
+checks the implemented nesting rules and supports low-level constructs such as
+raw pointers and inline assembly.
 
 ---
 
@@ -61,6 +70,8 @@ For manifests, module roots, and local dependencies, see
 [Projects and Modules](docs/projects-and-modules.md).
 For the planned standard library and official ecosystem surface, see
 [standard-library internal documentation](docs/internal/stdlib/README.md).
+For the library APIs that work today, see
+[Using the Standard Library](docs/guide/10-using-the-standard-library.md).
 
 ---
 

@@ -1,0 +1,470 @@
+-- Realm-aware growable contiguous storage.
+--
+-- Vec<T> is an owning value. Until Runes has move-only types, copying a Vec
+-- duplicates its ownership handle and must be avoided. Call deinit() exactly
+-- once for each live dynamic Vec. Regional and GC deinit use their selected
+-- owner policy and never route through the dynamic free backend.
+--
+-- Representation invariants for every live Vec:
+--   length <= reserved
+--   data != null
+--   reserved >= 1
+--   the storage runtime's initialized prefix equals length
+-- The fields are public only because field privacy is not implemented. Library
+-- users must not modify them directly.
+--
+-- This is the reference implementation for future owning collections. Keep
+-- the ordinary/t-prefixed operation pairs, checked capacity arithmetic,
+-- realm-preserving typed storage, initialized-prefix publication, and explicit
+-- deinit discipline aligned with docs/reference/vec.md.
+
+use std.allocation.release_array
+use std.allocation.tallocate_array
+use std.allocation.tpublish_initialized
+use std.allocation.tresize_array
+use std.core.AllocationError
+use std.core.Option
+use std.core.Result
+
+pub type Vec<T> = {
+    data: ?*T
+    length: usize
+    reserved: usize
+}
+
+-- The GC member gives Vec a persistent hidden owner identity. Its public
+-- fields intentionally match the shared layout; only storage policy differs.
+pub in gc type Vec<T> = {
+    data: ?*T
+    length: usize
+    reserved: usize
+}
+
+pub method Vec<T> {
+    -- Recoverably construct an empty Vec with capacity 1.
+    flex f tnew() = outcome: Result<Vec<T>, AllocationError> {
+        match tallocate_array<T>(1) {
+            Ok(pointer) -> {
+                outcome = Result.Ok<Vec<T>, AllocationError>(
+                    Vec<T>(
+                        data: pointer,
+                        length: 0,
+                        reserved: 1
+                    )
+                )
+            }
+            Err(failure) -> {
+                outcome = Result.Err<Vec<T>, AllocationError>(failure)
+            }
+        }
+    }
+
+    -- Recoverably construct an empty Vec with at least capacity 1.
+    flex f twith_capacity(
+        capacity: usize
+    ) = outcome: Result<Vec<T>, AllocationError> {
+        usize actual = capacity
+        if actual == 0 {
+            actual = 1
+        }
+        match tallocate_array<T>(actual) {
+            Ok(pointer) -> {
+                outcome = Result.Ok<Vec<T>, AllocationError>(
+                    Vec<T>(
+                        data: pointer,
+                        length: 0,
+                        reserved: actual
+                    )
+                )
+            }
+            Err(failure) -> {
+                outcome = Result.Err<Vec<T>, AllocationError>(failure)
+            }
+        }
+    }
+
+    -- Return the logical number of initialized elements.
+    flex f len(self) = result: usize {
+        result = self.length
+    }
+
+    -- Return the number of elements the current allocation can hold.
+    flex f capacity(self) = result: usize {
+        result = self.reserved
+    }
+
+    -- Return whether the logical initialized prefix is empty.
+    flex f is_empty(self) = result: bool {
+        result = self.length == 0
+    }
+
+    -- Construct an empty Vec or terminate through AllocationError.fail().
+    flex f new() = outcome: Vec<T> {
+        match Vec<T>.tnew() {
+            Ok(values) -> {
+                outcome = values
+            }
+            Err(failure) -> {
+                failure.fail()
+                outcome = Vec<T>(
+                    data: null,
+                    length: 0,
+                    reserved: 0
+                )
+            }
+        }
+    }
+
+    -- Construct with requested capacity or terminate on allocation failure.
+    flex f with_capacity(capacity: usize) = outcome: Vec<T> {
+        match Vec<T>.twith_capacity(capacity) {
+            Ok(values) -> {
+                outcome = values
+            }
+            Err(failure) -> {
+                failure.fail()
+                outcome = Vec<T>(
+                    data: null,
+                    length: 0,
+                    reserved: 0
+                )
+            }
+        }
+    }
+
+    -- Ensure capacity for length + additional and return actual capacity.
+    -- Allocation failure preserves the old allocation and all vector fields.
+    flex f treserve(
+        self: *Vec<T>,
+        additional: usize
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            usize maximum = ~(0 as usize)
+            if additional > maximum - self.length {
+                outcome = Result.Err<usize, AllocationError>(
+                    AllocationError.CapacityOverflow()
+                )
+            } else {
+                usize required = self.length + additional
+                if required <= self.reserved {
+                    outcome = Result.Ok<usize, AllocationError>(
+                        self.reserved
+                    )
+                } else if self.data == null {
+                    outcome = Result.Err<usize, AllocationError>(
+                        AllocationError.OwnerUnavailable()
+                    )
+                } else {
+                    usize next = self.reserved
+                    if next == 0 {
+                        next = 1
+                    }
+                    while next < required {
+                        if next > maximum / 2 {
+                            next = required
+                        } else {
+                            next = next * 2
+                        }
+                    }
+                    match tresize_array<T>(
+                        unwrap(self.data),
+                        self.length,
+                        self.reserved,
+                        next
+                    ) {
+                        Ok(replacement) -> {
+                            self.data = replacement
+                            self.reserved = next
+                            outcome = Result.Ok<usize, AllocationError>(next)
+                        }
+                        Err(failure) -> {
+                            outcome = Result.Err<usize, AllocationError>(
+                                failure
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    -- Append a copied value and return the new length.
+    -- On error, length and existing elements remain valid. Capacity may have
+    -- grown before initialized-prefix publication reports a later failure.
+    flex f tpush(
+        self: *Vec<T>,
+        value: T
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            match self.treserve(1) {
+                Ok(_) -> {
+                    *T pointer = unwrap(self.data)
+                    pointer[self.length] = value
+                    match tpublish_initialized<T>(
+                        pointer,
+                        self.length,
+                        self.length + 1,
+                        self.reserved
+                    ) {
+                        Ok(new_length) -> {
+                            self.length = new_length
+                            outcome = Result.Ok<usize, AllocationError>(
+                                new_length
+                            )
+                        }
+                        Err(failure) -> {
+                            outcome = Result.Err<usize, AllocationError>(
+                                failure
+                            )
+                        }
+                    }
+                }
+                Err(failure) -> {
+                    outcome = Result.Err<usize, AllocationError>(failure)
+                }
+            }
+        }
+    }
+
+    -- Remove and copy the last value, or return None when empty.
+    -- On error, length and the logical element sequence are unchanged.
+    flex f tpop(
+        self: *Vec<T>
+    ) = outcome: Result<Option<T>, AllocationError> {
+        unsafe {
+            if self.length == 0 {
+                outcome = Result.Ok<Option<T>, AllocationError>(
+                    Option.None<T>()
+                )
+            } else if self.data == null {
+                outcome = Result.Err<Option<T>, AllocationError>(
+                    AllocationError.OwnerUnavailable()
+                )
+            } else {
+                usize new_length = self.length - 1
+                *T pointer = unwrap(self.data)
+                T value = pointer[new_length]
+                match tpublish_initialized<T>(
+                    pointer,
+                    self.length,
+                    new_length,
+                    self.reserved
+                ) {
+                    Ok(_) -> {
+                        self.length = new_length
+                        outcome = Result.Ok<Option<T>, AllocationError>(
+                            Option.Some<T>(value)
+                        )
+                    }
+                    Err(failure) -> {
+                        outcome = Result.Err<Option<T>, AllocationError>(
+                            failure
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    -- Copy the element at index, returning None when index is out of bounds.
+    flex f get(self, index: usize) = result: Option<T> {
+        if index >= self.length {
+            result = Option.None<T>()
+        } else {
+            unsafe {
+                result = Option.Some<T>(unwrap(self.data)[index])
+            }
+        }
+    }
+
+    -- Replace an initialized element. Return false without writing when OOB.
+    flex f set(
+        self: *Vec<T>,
+        index: usize,
+        value: T
+    ) = result: bool {
+        result = false
+        unsafe {
+            if index < self.length {
+                unwrap(self.data)[index] = value
+                result = true
+            }
+        }
+    }
+
+    -- Borrow a read-only view. The caller must end the view before mutating or
+    -- deinitializing this Vec; Runes does not enforce that rule yet.
+    flex f as_slice(self) = result: []const T {
+        unsafe {
+            result = const_slice(unwrap(self.data), self.length)
+        }
+    }
+
+    -- Borrow a mutable view. No other access to this Vec may overlap the view;
+    -- Runes does not enforce that rule yet.
+    flex f as_mut_slice(self: *Vec<T>) = result: []T {
+        unsafe {
+            result = slice(unwrap(self.data), self.length)
+        }
+    }
+
+    -- Shrink to new_length, or do nothing when it is not smaller.
+    -- Removed values are forgotten; user-defined resource cleanup is not run.
+    flex f ttruncate(
+        self: *Vec<T>,
+        new_length: usize
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            if new_length >= self.length {
+                outcome = Result.Ok<usize, AllocationError>(self.length)
+            } else if self.data == null {
+                outcome = Result.Err<usize, AllocationError>(
+                    AllocationError.OwnerUnavailable()
+                )
+            } else {
+                match tpublish_initialized<T>(
+                    unwrap(self.data),
+                    self.length,
+                    new_length,
+                    self.reserved
+                ) {
+                    Ok(_) -> {
+                        self.length = new_length
+                        outcome = Result.Ok<usize, AllocationError>(new_length)
+                    }
+                    Err(failure) -> {
+                        outcome = Result.Err<usize, AllocationError>(failure)
+                    }
+                }
+            }
+        }
+    }
+
+    -- Recoverably truncate to zero.
+    flex f tclear(
+        self: *Vec<T>
+    ) = outcome: Result<usize, AllocationError> {
+        unsafe {
+            outcome = self.ttruncate(0)
+        }
+    }
+
+    -- Ordinary reserve: delegates to treserve and terminates on failure.
+    flex f reserve(
+        self: *Vec<T>,
+        additional: usize
+    ) = outcome: usize {
+        unsafe {
+            match self.treserve(additional) {
+                Ok(capacity) -> {
+                    outcome = capacity
+                }
+                Err(failure) -> {
+                    failure.fail()
+                    outcome = 0
+                }
+            }
+        }
+    }
+
+    -- Ordinary push: delegates to tpush and terminates on failure.
+    flex f push(
+        self: *Vec<T>,
+        value: T
+    ) = outcome: usize {
+        unsafe {
+            match self.tpush(value) {
+                Ok(length) -> {
+                    outcome = length
+                }
+                Err(failure) -> {
+                    failure.fail()
+                    outcome = 0
+                }
+            }
+        }
+    }
+
+    -- Ordinary pop: delegates to tpop and terminates on failure.
+    flex f pop(self: *Vec<T>) = outcome: Option<T> {
+        unsafe {
+            match self.tpop() {
+                Ok(value) -> {
+                    outcome = value
+                }
+                Err(failure) -> {
+                    failure.fail()
+                    outcome = Option.None<T>()
+                }
+            }
+        }
+    }
+
+    -- Ordinary truncate: delegates to ttruncate and terminates on failure.
+    flex f truncate(
+        self: *Vec<T>,
+        new_length: usize
+    ) = outcome: usize {
+        unsafe {
+            match self.ttruncate(new_length) {
+                Ok(length) -> {
+                    outcome = length
+                }
+                Err(failure) -> {
+                    failure.fail()
+                    outcome = 0
+                }
+            }
+        }
+    }
+
+    -- Ordinary clear: delegates to tclear and terminates on failure.
+    flex f clear(self: *Vec<T>) = outcome: usize {
+        unsafe {
+            match self.tclear() {
+                Ok(length) -> {
+                    outcome = length
+                }
+                Err(failure) -> {
+                    failure.fail()
+                    outcome = 0
+                }
+            }
+        }
+    }
+
+    -- Relinquish backing storage according to its persistent owner realm and
+    -- clear the handle. This does not run cleanup for stored external resources.
+    flex f deinit(self: *Vec<T>) {
+        unsafe {
+            if self.data != null {
+                release_array<T>(unwrap(self.data))
+                self.data = null
+                self.length = 0
+                self.reserved = 0
+            }
+        }
+    }
+}
+
+-- Module-level compatibility wrappers follow the same ordinary/t-prefixed
+-- convention as the associated constructors.
+pub flex f new<T>() = outcome: Vec<T> {
+    outcome = Vec<T>.new()
+}
+
+pub flex f with_capacity<T>(
+    capacity: usize
+) = outcome: Vec<T> {
+    outcome = Vec<T>.with_capacity(capacity)
+}
+
+pub flex f tnew<T>() = outcome: Result<Vec<T>, AllocationError> {
+    outcome = Vec<T>.tnew()
+}
+
+pub flex f twith_capacity<T>(
+    capacity: usize
+) = outcome: Result<Vec<T>, AllocationError> {
+    outcome = Vec<T>.twith_capacity(capacity)
+}

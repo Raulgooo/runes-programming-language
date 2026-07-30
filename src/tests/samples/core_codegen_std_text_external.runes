@@ -1,0 +1,24 @@
+use std.text.is_valid_utf8
+
+#[safe]
+extern f runes_test_external_text(kind: u32) = result: str
+
+f main() {
+    bool rejected = true
+    for (0..4) |kind| {
+        if is_valid_utf8(runes_test_external_text(kind as u32)) {
+            rejected = false
+        }
+    }
+
+    str valid = runes_test_external_text(4)
+    bool accepted = is_valid_utf8(valid)
+    if valid.len != 4 {
+        accepted = false
+    }
+    if valid[1] != 0 {
+        accepted = false
+    }
+
+    print(rejected, " ", accepted)
+}

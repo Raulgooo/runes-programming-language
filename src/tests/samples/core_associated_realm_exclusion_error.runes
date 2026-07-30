@@ -1,0 +1,18 @@
+-- EXPECT FAIL: method 'make' excludes the regional realm
+type Box = {
+    value: i32
+}
+
+method Box {
+    except(regional) flex f make() = result: Box {
+        result = Box(value: 1)
+    }
+}
+
+regional f invalid() {
+    Box.make()
+}
+
+f main() {
+    invalid()
+}

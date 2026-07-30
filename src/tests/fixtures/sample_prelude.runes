@@ -13,7 +13,7 @@ extern f raw_free(ptr: *void)
 #[safe]
 extern f memset(ptr: *void, value: i32, size: usize) = result: *void
 #[safe]
-extern f memcpy(dst: *void, src: *void, len: usize) = result: *void
+extern f memcpy(dst: *void, src: *const void, len: usize) = result: *void
 #[safe]
 extern f alloc(size: usize) = result: *void
 #[safe]
